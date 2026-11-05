@@ -215,6 +215,49 @@ export function plannerOptions(gpuLayers = PLANNER_GPU_LAYERS) {
 export const isMissingModel = (msg) => /404/.test(String(msg)) && /not found/i.test(String(msg));
 let defaultMissing = false;
 
+// The planner model that really answers plans. After the 404 fallback this is the menu model,
+// and /mind must say so, not keep naming the one that is not installed.
+export const plannerModelInUse = () => (defaultMissing ? MODEL : PLANNER_MODEL);
+
+// The 404 fallback, shared by real plans and the warm-up.
+const canFallBack = (err) => !PLANNER_PINNED && MODEL !== PLANNER_MODEL && isMissingModel(err && err.message);
+
+// Loading the 35B cold took 31 s, longer than the grace, so the first plan of a session was cut
+// short by a menu turn. The bridge loads it once at start with a one token request. It carries
+// the same model, options (num_ctx, num_gpu) and keep_alive as a real plan, because Ollama
+// reloads a model whenever those differ. It is not a tactical call and has no cancel handle, so
+// it never delays a menu turn and a menu turn never cuts it off.
+let warmup = null;
+export function warmPlanner() {
+  if (warmup) return warmup;
+  warmup = (async () => {
+    if (BACKEND !== 'ollama') return { ok: false, model: PLANNER_MODEL, error: 'backend is not ollama' };
+    const model = plannerModelInUse();
+    // The fallback model is the menu model, which the menu turns keep loaded.
+    if (model === MODEL) return { ok: true, model, skipped: true };
+    try {
+      await postJSON(BASE() + '/api/chat', {
+        model,
+        stream: false,
+        think: false,
+        keep_alive: KEEP_ALIVE,
+        options: { ...plannerOptions(plannerGpuLayers(model)), num_predict: 1 },
+        messages: [{ role: 'user', content: 'ok' }],
+      }, 'ollama', PLANNER_TIMEOUT);
+      return { ok: true, model };
+    } catch (err) {
+      if (canFallBack(err)) defaultMissing = true;
+      return { ok: false, model, error: String(err && err.message || err).slice(0, 200) };
+    }
+  })();
+  return warmup;
+}
+// For tests: forget the fallback and the warm-up.
+export function resetPlannerState() {
+  defaultMissing = false;
+  warmup = null;
+}
+
 // Models Ollama said cannot think. Asked once, remembered, so the next plan does not fail twice.
 const cannotThink = new Set();
 
@@ -222,12 +265,15 @@ export const thinkRefused = (msg) => /think/i.test(String(msg)) && /not support|
 
 // gpuLayers: leave undefined for the default, pass null to let Ollama place the model.
 export async function callPlanner(req) {
+  // The first plan waits for the warm-up so it does not start a second load. warmPlanner never
+  // rejects, and the wait happens before the plan is cancellable.
+  if (warmup) await warmup;
   const useDefault = !req.model;
   if (useDefault && defaultMissing) return planWith({ ...req, model: MODEL });
   try {
     return await planWith(req);
   } catch (err) {
-    if (!useDefault || PLANNER_PINNED || MODEL === PLANNER_MODEL || !isMissingModel(err && err.message)) throw err;
+    if (!useDefault || !canFallBack(err)) throw err;
     defaultMissing = true;
     return planWith({ ...req, model: MODEL });
   }

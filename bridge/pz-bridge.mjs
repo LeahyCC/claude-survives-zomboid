@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { callLLM, callChoice, parseChoice, callPlanner, tacticalBusy, BACKEND, MODEL, PLANNER_MODEL } from './llm.mjs';
+import { callLLM, callChoice, parseChoice, callPlanner, warmPlanner, plannerModelInUse, tacticalBusy, BACKEND, MODEL } from './llm.mjs';
 import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside } from './decide.mjs';
 import { isV2, holdReason } from './senses.mjs';
 import { loadMemory, updateMemory, recordOrder, memoryStats, memorySlice } from './memory.mjs';
@@ -148,6 +148,8 @@ setInterval(readPercept, 1000);
 
 // The slow layer. tick() never blocks: it starts a plan in the background only when no
 // tactical turn is on the model and no fight is on, and the loop below does not wait for it.
+// Load the planner model now, in the background, so the first plan is not a cold start.
+warmPlanner().then((w) => log(w.ok ? 'plan' : 'error', w.ok ? `planner model ready: ${w.model}` : `planner warm-up failed (${w.model}): ${w.error}`));
 const planner = createPlanner({
   plan: state.plan && typeof state.plan.goal === 'string' && Array.isArray(state.plan.steps) ? state.plan : null,
   ask: callPlanner,
@@ -822,7 +824,7 @@ http.createServer((req, res) => {
       map: memoryStats(map),
       plan: planner.plan,
       planner: {
-        model: PLANNER_MODEL,
+        model: plannerModelInUse(),
         running: planner.running,
         pending: [...planner.pending],
         lastError: planner.lastError,
