@@ -225,7 +225,9 @@ Windows of calls close together overlap, so a hit can count for two stances. Wit
 
 The percept's `reflex` field is a summary (`docs/percept.md`).
 
-Loot has a higher floor than the reflex. A weapon is only worth carrying at a score of 8 (`Core.LOOT.WEAPON_MIN`): a kitchen knife (9) and a saucepan pass, a plunger (6.3) does not. See "Loot table" in `docs/skills.md`.
+Loot has a higher floor than the reflex. A weapon is only worth carrying at a score of 8 (`Core.LOOT.WEAPON_MIN`): a kitchen knife (9) and a saucepan pass, a plunger (6.3) does not. With no real weapon at all the bar is 6.5 (`Core.LOOT.WEAPON_MIN_BARE`), so a worn pan still comes along. See "Loot table" in `docs/skills.md`.
+
+Checked against the 42.21 item scripts (`media/scripts/generated/items/weapon.txt`), every common improvised weapon is over the floor of 5 at full condition and counts as armed: saucepan 12.1, frying pan 8.6, rolling pin 9, kitchen knife 8.7, hammer 18.7, plank 12.6, crowbar 30.2, baseball bat 33.7, closed umbrella 14.6, pipe wrench 17.5. Only shivs (4.8), a smashed bottle, scissors, butter knives, forks, spoons and pens are under it. The condition factor takes up to 40% off a worn one, so a weapon scoring under 5 is nearly broken.
 
 ## Guns
 

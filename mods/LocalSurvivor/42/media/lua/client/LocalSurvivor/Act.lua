@@ -173,6 +173,31 @@ function Act.doEquip(p)
   LS.lastError = "equip: no weapon"
 end
 
+-- A weapon in the pack and nothing in her hands: take it up without waiting for a brain turn.
+-- The brain only gets a turn between jobs, and a job can run for minutes, so she walked past a
+-- crowbar she was carrying. Only empty hands (or a pen) are filled here; swapping for a better
+-- weapon stays with EQUIP. A gun in hand and a weapon Colin picked are never touched, because
+-- equipPlan returns nothing for them, and a pick that is out of her hand is put back as before.
+-- It waits for a quiet moment: no job running, nothing queued, the reflex idle, awake.
+Act.AUTO_EQUIP_EVERY = 60     -- ticks between looks, about a second
+Act.AUTO_EQUIP_BACKOFF = 600  -- ticks to wait after one try, so an equip that never lands is not retried every second
+function Act.autoEquip(p, acted)
+  local tick = LS.tick or 0
+  if acted or tick % Act.AUTO_EQUIP_EVERY ~= 0 or tick < (LS.autoEquipAt or 0) then return false end
+  if LS.skill or LS.needsJob or Core.queueLength(p) > 0 then return false end
+  local asleep = false
+  pcall(function() asleep = p:isAsleep() == true end)
+  if asleep or Act.heldScore(p) >= Core.WEAPON.MIN_SCORE then return false end
+  local gun = false
+  pcall(function() gun = Core.isGun(p:getPrimaryHandItem()) end)
+  if gun then return false end
+  local c = Act.equipPlan(p)
+  if not c then return false end
+  LS.autoEquipAt = tick + Act.AUTO_EQUIP_BACKOFF
+  Act.queueEquip(p, c)
+  return true
+end
+
 -- ---------- other actions ----------
 -- close the nearest open door (buys time when fleeing indoors, zombies must thump through)
 function Act.doCloseDoor(p)
@@ -693,6 +718,7 @@ end
 function Act.update(p, acted)
   -- A weapon Colin puts in her hand is noticed the tick it happens, not when the next order asks.
   pcall(Act.watchHand, p)
+  pcall(Act.autoEquip, p, acted)
   local fired = Move.watchUnstick(p)
   local s = LS.skill
   if not s then Act.watchMove(p, fired); return end
@@ -1014,6 +1040,23 @@ end
 -- the body is in.
 local searchStep
 
+-- Pure. How likely a room is to hold something to fight with, 1 best. The weights come from the
+-- 42.21 loot tables: a kitchen rolls pans, saucepans, rolling pins and knives; a garage, shed or
+-- storage room rolls hammers, crowbars, planks and wrenches; a closet rolls bats and golf clubs.
+-- A bedroom or bathroom almost never does. key is a room key, "name@x,y,z".
+function Act.weaponRoomRank(key)
+  local name = string.lower(string.match(tostring(key), "^[^@]*") or "")
+  if string.find(name, "kitchen", 1, true) then return 1 end
+  for _, w in ipairs({ "garage", "shed", "storage", "tool", "workshop", "mechanic", "barn" }) do
+    if string.find(name, w, 1, true) then return 1 end
+  end
+  if string.find(name, "closet", 1, true) then return 2 end
+  return 3
+end
+-- SEARCH goes weapon-room first until the best weapon carried scores this much. It is the bridge
+-- weapon score line (WEAK_WEAPON in senses.mjs), so a saucepan still sends her to the garage.
+Act.HUNT_BELOW = 20
+
 local function startSearch(p, s, rooms, bid)
   s.bid = bid
   s.phase = "room"
@@ -1136,11 +1179,16 @@ searchStep = function(p, s)
 
   if s.phase == "room" then
     if Act.searchLeft(p) <= 0 then return finishSearch(p, s, true) end
-    local best, bestD = nil, 99999
+    -- With no real weapon the kitchen, garage and sheds come first, whatever the walk. Rooms of
+    -- the same kind are taken nearest first, and once a weapon is in the pack the order is just
+    -- the walk again.
+    local hunt = (tonumber(s.have and s.have.weaponValue) or 0) < Act.HUNT_BELOW
+    local best, bestD, bestRank = nil, 99999, 99
     for _, r in ipairs(s.rooms) do
       if not done[r.key] and not s.skipRoom[r.key] then
         local d = roomDistance(p, r)
-        if d < bestD then best, bestD = r, d end
+        local rank = hunt and Act.weaponRoomRank(r.key) or 0
+        if rank < bestRank or (rank == bestRank and d < bestD) then best, bestD, bestRank = r, d, rank end
       end
     end
     if not best then return finishSearch(p, s, false) end
