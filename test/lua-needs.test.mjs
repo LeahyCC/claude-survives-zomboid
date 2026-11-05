@@ -282,12 +282,11 @@ test('a new order drops the job, and the same verb again keeps it', () => {
   assert.equal(result(lua).verb, 'WAIT');
 });
 
-test('holdsSpot covers an action in place but not a walk', () => {
+test('the unstick helper leaves a drink alone however long it takes', () => {
   const lua = body('items = { __makeItem({ type = "Base.WaterBottle", fluid = { water = 1 } }) }');
   order(lua, '1|DRINK|0|0|||');
-  assert.equal(lua.run('return LocalSurvivor.Needs.holdsSpot(__players[0])'), true);
-  lua.run('ISTimedActionQueue.clear(__players[0]); ISTimedActionQueue.add(ISWalkToTimedAction:new(__players[0]))');
-  assert.equal(lua.run('return LocalSurvivor.Needs.holdsSpot(__players[0])'), false);
+  for (let i = 0; i < 300; i++) lua.run('LocalSurvivor.tick = LocalSurvivor.tick + 1; LocalSurvivor.Reflex.releaseDoor(__players[0])');
+  assert.deepEqual(queue(lua), ['ISDrinkFluidAction']);
 });
 
 test('BANDAGE disinfects first, then bandages the bleeding part', () => {

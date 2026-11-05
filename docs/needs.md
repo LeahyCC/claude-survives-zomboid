@@ -27,7 +27,7 @@ a step           read the world again
 - A pause longer than 1200 ticks fails the job with `zombie`.
 - A job with no update for 600 ticks (manual mode) fails with `interrupted`.
 
-`Reflex.releaseDoor` treats a body that stands still with a queue as stuck on a door. The entry file skips it while a job's action runs in place (`Needs.holdsSpot`), so eating or bandaging is not cut off.
+`Reflex.releaseDoor` only acts on a stuck walk, so eating, bandaging and sleeping in place are never cut off by it.
 
 ### Shared fails
 
