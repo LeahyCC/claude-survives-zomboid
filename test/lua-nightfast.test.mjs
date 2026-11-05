@@ -67,26 +67,22 @@ test('asleep outside is not fast forwarded by the mod', () => {
   assert.equal(speed(lua), 2);
 });
 
-test('daylight keeps today\'s rule: speed 2 with room, 1 near a zombie', () => {
+test('a safe wait speeds up in daylight too, and a zombie close still stops it', () => {
   const lua = house('__time.hour = 12');
   manage(lua);
-  assert.equal(speed(lua), 2);
-  lua.run(zombieAt(30, 10));
-  manage(lua);
+  assert.equal(speed(lua), 3);
+  lua.run(zombieAt(16, 10));
+  lua.run('LocalSurvivor.Reflex.guardSpeed(P)');
   assert.equal(speed(lua), 1);
 });
 
-test('the night hours match the bridge: 21:00 up to 06:00', () => {
+test('a safe wait speeds up at every hour, dusk included', () => {
   const at = (hour) => {
     const lua = house(`__time.hour = ${hour}`);
     manage(lua);
     return speed(lua);
   };
-  assert.equal(at(20), 2);
-  assert.equal(at(21), 3);
-  assert.equal(at(3), 3);
-  assert.equal(at(5), 3);
-  assert.equal(at(6), 2);
+  for (const h of [6, 12, 19, 20, 21, 3]) assert.equal(at(h), 3, `hour ${h}`);
 });
 
 // One condition broken each time. None may reach speed 3, and each falls back to today's rule.

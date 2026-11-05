@@ -759,7 +759,9 @@ end
 -- that goes above 2, and every condition has to hold.
 function Reflex.pickSpeed(f)
   if f.manual then return 1 end
-  if f.nightFast and f.night and f.inside and f.calm and not f.cooling
+  -- Any hour, not only the night: a wait the brain chose, safe inside, is worth nothing in real
+  -- time. At 19:00 she sat out the dusk at speed 1 because the night rule had not started yet.
+  if f.nightFast and f.inside and f.calm and not f.cooling
     and f.nd > Reflex.FAST_CLEAR and not f.seen and not f.chasing and not f.bleeding then
     return Reflex.NIGHT_SPEED
   end
@@ -792,7 +794,7 @@ function Reflex.speedFacts(p)
   pcall(function() f.asleep = p:isAsleep() == true end)
   pcall(function() f.inside = (not p:isOutside()) and p:getSquare():getBuilding() ~= nil end)
   -- The scans below are only worth paying for once everything cheaper says fast forward is on.
-  if f.nightFast and f.night and f.inside and f.nd > Reflex.FAST_CLEAR then
+  if f.nightFast and f.inside and f.nd > Reflex.FAST_CLEAR then
     pcall(function() f.chasing = LS.Needs.chasing(p) end)
     pcall(function() f.seen = p:getStats():getNumVisibleZombies() > 0 end)
     pcall(function() f.bleeding = p:getBodyDamage():getNumPartsBleeding() > 0 end)
