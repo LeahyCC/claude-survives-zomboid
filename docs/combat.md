@@ -21,9 +21,9 @@ ReflexLog.note(...)    logs a new stance, and the outcome of one taken 5 seconds
 
 | stance | when | what she does (perform kinds) |
 | --- | --- | --- |
-| FIGHT | one standing zombie (two with a weapon scoring 30 or more), armed and fit | `swing` in reach, `close` to walk in (6 tiles at most), `stomp` a downed one |
+| FIGHT | one standing zombie within reach (two with a weapon scoring 30 or more), armed and fit | `swing` in reach, `close` to walk in (6 tiles at most), `stomp` a downed one |
 | HOLD | inside with a chaser outside and a hold spot, or a low fence or window between her and up to 2 chasers, or a short blade | `hold`: stand at the spot (or where she is) facing it, swing when it is in reach |
-| SHOVE | one on her while she cannot fight, two within 2 tiles, or unfit with a chaser within 4 | `shove` (it falls), `backoff` 3 tiles, `stomp` when it is down and she cannot fight |
+| SHOVE | a crowd within reach (the crowd test below), one on her while she cannot fight, two within 2 tiles, or unfit with a chaser within 4 | `shove` (it falls), `backoff` 3 tiles, `stomp` when it is down and she cannot fight |
 | BREAK | getting away with endurance 0.5 or more and not overloaded | `break`: one 10 tile walk along the best open line, sprint asked for |
 | HIDE | getting away, and every chaser has lost sight of her | `hide`: crouch, drop the walk and keep still (nearest chaser 7 or more tiles), or creep 4 tiles away (4 to 7) |
 | SNEAK | unaware zombies about and nothing chasing | `sneak`: crouch and let the order walk on. An unaware group within 7 tiles: creep away from it |
@@ -39,6 +39,7 @@ The first rule that matches wins.
 ```
 mid climb (the action has left the queue, the body is going over) .... CLIMB wait
 nothing living within 11 tiles ......................................... SNEAK if an unaware one is within 14 and nothing chases, else none
+more standing within 2.5 tiles than her weapon takes on (the crowd test) .. SHOVE the nearest if within 1.5 and she has the breath, else get away
 a standing zombie on her (1.2 tiles) .................................. FIGHT swing if armed, fit and alone, else SHOVE shove
 hp under 30 ............................................................ get away if one is within 8, else none
 a pack: 3 or more living within 7 ...................................... SNEAK away if none is chasing, else get away
@@ -63,6 +64,17 @@ otherwise .............................................................. none
 ```
 
 "Worth fighting" means chasing her, or within 2 tiles, or within 4 tiles and in the way of her walk. An unaware zombie farther off is left to sneaking.
+
+**The crowd test.** It runs before every swing, so no fight starts with a crowd on her. It counts standing zombies within 2.5 tiles (`REACH_R`) that are chasing her or within 2 tiles. Downed ones and crawlers do not count. One behind a fence or window (`across`) does not either: it comes over alone, and the fence rule holds it. A weapon under 30 takes on 1, a weapon of 30 or more takes on 2, and 3 is too many for anything. Bare hands count as weak. A posture does not change this: `clear` used to let a weak weapon take two, and that is the fight that cost 95 hp for 3 kills in the soak.
+
+```
+too many in reach, breath 0.3 or more, the nearest within 1.5 ... SHOVE it (why "crowd"), it falls and costs no hp
+too many in reach, no breath or none within 1.5 ................ get away at once (why "crowd")
+the next look, within 4 s of a crowd shove, one still standing
+  within 2.5 and none on her ................................... get away (why "crowd"), not a swing
+```
+
+"Get away" is the usual `escape`, so a fence or window within 4 tiles that leads away from them comes first, then HIDE, BREAK and FLEE. A door she can close is not done: that is the brain's escape menu (see "Not done"). The shove memory is `R.crowdShoveTick`, read as `snap.crowdShoved` for `CROWD_TICKS` (240).
 
 "On her" is within 1.2 tiles. Turning to walk away there gets her bitten, so she swings or shoves. This now comes before the pack and hp rules, which used to turn her away from one in reach.
 
@@ -143,6 +155,7 @@ So BREAK asks for a sprint (`setSprinting(true)` each time it acts, false when t
 | `escapeFails` | escape tries in a row that ended with a chaser still there (`ReflexLog.tally`) |
 | `lastDir` | the compass index of the last run, so a loop breaker takes another heading |
 | `kills` | `getZombieKills`, for the log only |
+| `crowdShoved` | a crowd shove happened in the last 240 ticks |
 
 `down` is on the floor, knocked down or playing dead. `chase` is "this zombie's target is her". If the target cannot be read, `chase` is true, which is how the reflex treated every zombie before. `sees` is `isTargetVisible()` for a chaser. Unknown counts as seeing her. Lines and barriers are read at most every 30 ticks, or after she moves 2 tiles.
 
@@ -168,6 +181,10 @@ All in `Stance.N` (`Reflex.N` is the same table). Distances are in tiles.
 | `STEP_R` | 4 | unfit: back off from a chaser this close, get away from one farther |
 | `FIGHT_MAX` | 1 | standing chasers a weak weapon takes on |
 | `STRONG` | 30 | the weapon score that takes on two |
+| `REACH_R` | 2.5 | standing zombies this close count toward the crowd test |
+| `CROWD_WEAK` | 1 | standing within `REACH_R` a weapon under `STRONG` takes on |
+| `CROWD_STRONG` | 2 | and a `STRONG` one |
+| `SHOVE_R` | 1.5 | a shove only connects this close; farther, a crowd is left, not shoved |
 | `BARRIER_R` | 6 | a fence or window between them this close can be held |
 | `HOLD_N` | 2 | hold a fence against this many at most |
 | `CLIMB_R` | 4 | climb a fence or window this close |
@@ -217,7 +234,7 @@ A call is written when the stance changes, or when the same stance comes back af
 | `stance`, `act`, `why` | the decision. A `why` starting `stuck` is an escape loop that hit its limit (see "Stuck in a chase"); `act` says what came next: `climb`, `hold` (stand and shove) or `flee` or `break` (walk on, brain asked) |
 | `stuck` | only on such a call: the number of failed tries when the limit was hit |
 | `threat`, `level` | the assessment |
-| `f` | facts: `near`, `chasers` (within 10), `seen` (of those, the ones that see her), `standing` (within 7), `within3`, `downed`, `unaware`, `armed`, `score`, `endurance`, `hp`, `panic`, `bleeding`, `load`, `inside`, `door` (a hold spot), `barriers`, `lines`, `open`, `posture` |
+| `f` | facts: `near`, `chasers` (within 10), `seen` (of those, the ones that see her), `standing` (within 7), `reach` (standing within 2.5), `within3`, `downed`, `unaware`, `armed`, `score`, `endurance`, `hp`, `panic`, `bleeding`, `load`, `inside`, `door` (a hold spot), `barriers`, `lines`, `open`, `posture` |
 
 `out` line, 5 seconds after the call:
 
@@ -229,6 +246,16 @@ A call is written when the stance changes, or when the same stance comes back af
 | `kills` | zombies killed in the window |
 | `next` | the stance at the end |
 | `sprint` | BREAK only: did `isSprinting()` ever read true |
+
+`count` line, when the number of standing zombies within 7 tiles rises while she is fighting or shoving (or did within the last 5 seconds):
+
+| field | meaning |
+| --- | --- |
+| `tick`, `stance` | when, and the stance she was in |
+| `from`, `to` | the standing count before and now |
+| `f` | the same facts as a call |
+
+A call line only comes when the stance changes, so a fight that grew from 2 standing to 3 showed nothing for 35 seconds in the soak's last death. This line is at most one a second. It is only in `local_reflex.txt` for now: `bridge/reflexlog.mjs` copies `call` and `out` lines only, so it needs to let `count` through before it reaches `decisions.jsonl`.
 
 Windows of calls close together overlap, so a hit can count for two stances. With one call per stance change that is rare.
 
@@ -409,6 +436,7 @@ A swap needs the new weapon to score 25% over the one in hand (`Core.WEAPON.SWAP
 | stomp, shove call failed | `STOMP (reflex)` | It's down. Hitting it before it gets up. |
 | shove | `SHOVE (reflex)` | Too close. Shove it off me. |
 | shove, unarmed | `SHOVE (reflex)` | No weapon. Shove it down and stomp. |
+| shove, a crowd | `SHOVE (reflex)` | Too many on me. Shove one down and get out. |
 | back off | `BACK OFF (reflex)` | one line per `why`: spacing, winded, panic, heavy, tired, bleeding, hurt |
 | hold a door | `HOLD (reflex)` | Holding inside. Let it come through and fall. |
 | hold a fence | `HOLD (reflex)` | Fence between us. Let it climb over and fall. |
@@ -474,7 +502,7 @@ Every method was checked with `node tools/pz-api.mjs` against the 42.21 jar, and
 ## Not done
 
 - Standing at the head end of a downed zombie. The snapshot cannot tell which end is the head, so she stomps from where she stands.
-- Closing the door behind her when she disengages.
+- Closing the door behind her when she disengages. This includes the crowd test: it prefers a fence or window (the climb), but nothing makes it prefer a door she can close.
 - Holding a window against a pack of 3 or more. That still gets away (CLIMB, BREAK or FLEE).
 - Choosing a posture for each job in the bridge. The field and the Lua side are in, and only the escape menu sets one.
 - Going inside and shutting a door from the reflex. In a loop that is left to the brain's escape menu (ENTER, SECURE).
