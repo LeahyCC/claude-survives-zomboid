@@ -1,0 +1,75 @@
+{
+ "name": "tired-day-bed",
+ "note": "Midday, fatigue at 0.65, searched house with a bed. Sleeping now beats pushing on.",
+ "patch": {
+  "fatigue": 0.65,
+  "moodle": {
+   "tired": 2
+  },
+  "outside": false,
+  "room": "kitchen",
+  "bldgDir": "HERE",
+  "bldgDist": 0,
+  "inBldg": {
+   "explored": false,
+   "id": "4021",
+   "room": "kitchen",
+   "rooms": 6,
+   "water": false
+  },
+  "bed": {
+   "d": 6,
+   "x": 10645,
+   "y": 9835,
+   "z": 0
+  },
+  "buildings": [
+   {
+    "d": 0,
+    "door": {
+     "x": 10650,
+     "y": 9826
+    },
+    "dx": 0,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   },
+   {
+    "d": 20,
+    "door": {
+     "x": 10670,
+     "y": 9830
+    },
+    "dx": 20,
+    "dy": 0,
+    "id": "4022",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "memory": {
+  "current": "4021",
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "searched": true,
+    "partly": true,
+    "res": true,
+    "enteredAt": 38,
+    "lastVisit": 40
+   }
+  }
+ },
+ "accept": [
+  "sleep"
+ ],
+ "wrong": [
+  "wait",
+  "b1"
+ ]
+}

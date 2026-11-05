@@ -1,0 +1,23 @@
+{
+ "name": "can-with-opener",
+ "note": "Hungry, a can and an opener in the bag. Open it and eat.",
+ "patch": {
+  "hunger": 0.7,
+  "moodle": {
+   "hungry": 2
+  },
+  "foods": 0,
+  "inv": {
+   "foodReady": 0,
+   "cans": 2,
+   "canOpener": true
+  }
+ },
+ "accept": [
+  "eat"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

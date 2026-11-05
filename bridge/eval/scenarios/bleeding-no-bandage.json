@@ -1,0 +1,26 @@
+{
+ "name": "bleeding-no-bandage",
+ "note": "Bleeding with no bandage. Ripping cloth is the only fix.",
+ "patch": {
+  "bleeding": 1,
+  "hp": 62,
+  "wounds": [
+   {
+    "part": "Leg_L",
+    "bleed": true,
+    "deep": true
+   }
+  ],
+  "inv": {
+   "bandages": 0
+  }
+ },
+ "accept": [
+  "bandage"
+ ],
+ "wrong": [
+  "wait",
+  "explore",
+  "b1"
+ ]
+}

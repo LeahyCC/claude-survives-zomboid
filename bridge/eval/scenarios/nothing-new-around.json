@@ -1,0 +1,38 @@
+{
+ "name": "nothing-new-around",
+ "note": "Daylight, the only nearby house is searched. Walk off to find new ones.",
+ "patch": {
+  "buildings": [
+   {
+    "d": 12,
+    "door": {
+     "x": 10662,
+     "y": 9830
+    },
+    "dx": 12,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "searched": true,
+    "partly": true,
+    "res": true
+   }
+  }
+ },
+ "accept": [
+  "explore"
+ ],
+ "wrong": [
+  "wait",
+  "b1"
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "name": "thirsty-bottle",
+ "note": "Thirsty with water in the bottle, outside by day. Drink it.",
+ "patch": {
+  "thirst": 0.7,
+  "moodle": {
+   "thirsty": 2
+  }
+ },
+ "accept": [
+  "drink"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

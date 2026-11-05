@@ -1,0 +1,14 @@
+{
+ "name": "bag-not-worn",
+ "note": "A backpack sits in the inventory and nothing is on the back. Put it on.",
+ "patch": {
+  "bag": "none",
+  "weight": 3
+ },
+ "accept": [
+  "wearbag"
+ ],
+ "wrong": [
+  "wait"
+ ]
+}

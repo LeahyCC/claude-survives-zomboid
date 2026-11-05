@@ -1,0 +1,57 @@
+{
+ "name": "tired-outside-safehouse-known",
+ "note": "Tired and outside. A known safe house is 20 tiles away; a new house is closer. Go home.",
+ "patch": {
+  "fatigue": 0.7,
+  "moodle": {
+   "tired": 2
+  },
+  "buildings": [
+   {
+    "d": 8,
+    "door": {
+     "x": 10650,
+     "y": 9822
+    },
+    "dx": 0,
+    "dy": -8,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 20,
+    "door": {
+     "x": 10630,
+     "y": 9830
+    },
+    "dx": -20,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "searched": true,
+    "res": true,
+    "water": true,
+    "bed": true
+   }
+  }
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "explore",
+  "b2"
+ ]
+}

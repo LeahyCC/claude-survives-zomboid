@@ -1,0 +1,48 @@
+{
+ "name": "night-outside-sleepy",
+ "note": "Night, outside, tired. The nearest house is the answer, not a wander.",
+ "patch": {
+  "hour": 23,
+  "dark": true,
+  "fatigue": 0.65,
+  "moodle": {
+   "tired": 2
+  },
+  "buildings": [
+   {
+    "d": 9,
+    "door": {
+     "x": 10650,
+     "y": 9821
+    },
+    "dx": 0,
+    "dy": -9,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 18,
+    "door": {
+     "x": 10666,
+     "y": 9838
+    },
+    "dx": 16,
+    "dy": 8,
+    "id": "4062",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "explore",
+  "b2"
+ ]
+}

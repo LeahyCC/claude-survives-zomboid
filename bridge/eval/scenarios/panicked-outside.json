@@ -1,0 +1,58 @@
+{
+ "name": "panicked-outside",
+ "note": "Shaken, panic at 0.5, no zombie in sight. Back to safety, not a new building.",
+ "patch": {
+  "panic": 50,
+  "panic01": 0.5,
+  "moodle": {
+   "panic": 2
+  },
+  "buildings": [
+   {
+    "d": 8,
+    "door": {
+     "x": 10650,
+     "y": 9822
+    },
+    "dx": 0,
+    "dy": -8,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 18,
+    "door": {
+     "x": 10632,
+     "y": 9830
+    },
+    "dx": -18,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "searched": true,
+    "res": true,
+    "water": true,
+    "bed": true
+   }
+  }
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "explore",
+  "wait",
+  "b2"
+ ]
+}

@@ -1,0 +1,51 @@
+{
+ "name": "night-inside-unsecured",
+ "note": "Night, just walked into a house. Shut the doors and curtains.",
+ "patch": {
+  "hour": 22,
+  "dark": true,
+  "outside": false,
+  "room": "kitchen",
+  "bldgDir": "HERE",
+  "bldgDist": 0,
+  "inBldg": {
+   "explored": false,
+   "id": "4021",
+   "room": "kitchen",
+   "rooms": 6,
+   "water": false
+  },
+  "buildings": [
+   {
+    "d": 0,
+    "door": {
+     "x": 10650,
+     "y": 9826
+    },
+    "dx": 0,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "current": "4021",
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "enteredAt": 40,
+    "res": true
+   }
+  }
+ },
+ "accept": [
+  "secure"
+ ],
+ "wrong": [
+  "wait",
+  "search"
+ ]
+}

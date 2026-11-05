@@ -18,6 +18,7 @@ import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside
 import { isV2, holdReason } from './senses.mjs';
 import { loadMemory, updateMemory, recordOrder, memoryStats } from './memory.mjs';
 import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
+import { loadStats, observe as observeStats, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8799);
@@ -56,10 +57,11 @@ try {
 const map = loadMemory(state.map);
 state.map = map;
 if (!Array.isArray(state.recent)) state.recent = [];
+const stats = loadStats(state.stats);
 
 const saveState = () => {
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ ...state, log: state.log.slice(-200) }));
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ ...state, stats: saveableStats(stats), log: state.log.slice(-200) }));
   } catch { /* disk */ }
 };
 
@@ -93,6 +95,7 @@ function readPercept() {
     percept = JSON.parse(fs.readFileSync(PERCEPT_FILE, 'utf8'));
     perceptMtime = mt;
     perceptAt = Date.now();
+    if (observeStats(stats, percept, perceptAt)) saveState();
   } catch { /* partial write, or the game is not up */ }
 }
 setInterval(readPercept, 1000);
@@ -333,6 +336,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 #options{list-style:none;padding:0;margin:0}#options li{padding:4px 10px;border-radius:4px;margin:2px 0;background:#151b22}
 #options li.chosen{background:#1f3b33;border-left:3px solid #7fd1b9}#options code{color:#ffd479;margin-right:8px}
 #rules{margin:0;padding-left:18px;color:#c4ccd6}
+#runs{border-collapse:collapse;width:100%}#runs th,#runs td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
+#runs th{font-size:11px;color:#8899aa;text-transform:uppercase}#runs tr.live td{color:#7fd1b9}
 </style>
 <h1>Local survivor</h1>
 <div class="note" id="note"></div>
@@ -351,6 +356,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <ul id="options"></ul>
 <h2>Playbook rules used</h2>
 <ul id="rules"></ul>
+<h2>Runs</h2>
+<table id="runs"><thead><tr><th>started</th><th>hours</th><th>kills</th><th>day</th><th>damage</th><th>searched</th><th>ended by</th></tr></thead><tbody></tbody></table>
 <h2>Voice</h2>
 <div id="chat"></div>
 <p style="display:flex;gap:8px"><input id="god" placeholder="say something" onkeydown="if(event.key==='Enter')sendGod()"><button onclick="sendGod()">send</button></p>
@@ -384,6 +391,17 @@ async function tick(){
     return li;
   });
   fill('rules', t.rules || [], (r) => { const li = document.createElement('li'); li.textContent = r; return li; });
+  const st = await (await fetch('/api/stats')).json();
+  const body = document.querySelector('#runs tbody');
+  body.replaceChildren(...[st.current, ...st.runs].filter(Boolean).map((r) => {
+    const tr = document.createElement('tr');
+    if (r.live) tr.className = 'live';
+    const when = r.start ? r.start.slice(5, 16).replace('T', ' ') : '-';
+    for (const v of [when, r.hoursSurvived, r.kills, r.day, r.damage, r.searched, r.live ? 'alive' : r.cause]) {
+      const td = document.createElement('td'); td.textContent = v; tr.append(td);
+    }
+    return tr;
+  }));
   document.getElementById('chat').textContent = (s.chat || []).map(m => m.t + ' ' + m.from + ': ' + m.text).join('\\n');
   document.getElementById('log').textContent = (s.log || []).slice().reverse().map(l => '[' + l.t + '] ' + l.kind + ': ' + l.text).join('\\n');
 }
@@ -418,6 +436,10 @@ http.createServer((req, res) => {
       turn,
       map: memoryStats(map),
     }));
+  }
+  if (url.pathname === '/api/stats') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(statsSummary(stats)));
   }
   if (url.pathname === '/god') {
     const text = (url.searchParams.get('text') || '').slice(0, 300);

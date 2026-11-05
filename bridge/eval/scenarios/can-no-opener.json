@@ -1,0 +1,23 @@
+{
+ "name": "can-no-opener",
+ "note": "Hungry with only a sealed can and no opener. Look for an opener in a house.",
+ "patch": {
+  "hunger": 0.7,
+  "moodle": {
+   "hungry": 2
+  },
+  "foods": 0,
+  "inv": {
+   "foodReady": 0,
+   "cans": 2,
+   "canOpener": false
+  }
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "eat"
+ ]
+}

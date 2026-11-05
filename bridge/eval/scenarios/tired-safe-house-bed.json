@@ -1,0 +1,64 @@
+{
+ "name": "tired-safe-house-bed",
+ "note": "Late, tired, house secured, a bed seven tiles away. Sleep.",
+ "patch": {
+  "hour": 23,
+  "dark": true,
+  "fatigue": 0.78,
+  "moodle": {
+   "tired": 2
+  },
+  "outside": false,
+  "room": "kitchen",
+  "bldgDir": "HERE",
+  "bldgDist": 0,
+  "inBldg": {
+   "explored": false,
+   "id": "4021",
+   "room": "kitchen",
+   "rooms": 6,
+   "water": false
+  },
+  "bed": {
+   "d": 7,
+   "x": 10645,
+   "y": 9835,
+   "z": 0
+  },
+  "buildings": [
+   {
+    "d": 0,
+    "door": {
+     "x": 10650,
+     "y": 9826
+    },
+    "dx": 0,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "current": "4021",
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "res": true,
+    "bed": true,
+    "enteredAt": 38,
+    "securedAt": 39
+   }
+  }
+ },
+ "accept": [
+  "sleep"
+ ],
+ "wrong": [
+  "wait",
+  "search",
+  "explore"
+ ]
+}

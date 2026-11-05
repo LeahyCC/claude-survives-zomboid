@@ -1,0 +1,44 @@
+{
+ "name": "idle-zombie-near-door",
+ "note": "A zombie that has not seen you, nine tiles from the only house, on the path. Go round.",
+ "patch": {
+  "zNear": 1,
+  "zDist": 9,
+  "zDir": "N",
+  "zdx": 0,
+  "zdy": -9,
+  "zVisible": 1,
+  "zList": [
+   {
+    "chase": false,
+    "crawl": false,
+    "d": 9,
+    "down": false,
+    "dx": 0,
+    "dy": -9
+   }
+  ],
+  "buildings": [
+   {
+    "d": 14,
+    "door": {
+     "x": 10650,
+     "y": 9816
+    },
+    "dx": 0,
+    "dy": -14,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "accept": [
+  "away",
+  "explore"
+ ],
+ "wrong": [
+  "wait"
+ ]
+}

@@ -1,0 +1,15 @@
+{
+ "name": "night-outside",
+ "note": "Ten at night, outside, an unvisited house nine tiles off. Get inside.",
+ "patch": {
+  "hour": 22,
+  "dark": true
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

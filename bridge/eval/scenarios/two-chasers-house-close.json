@@ -1,0 +1,59 @@
+{
+ "name": "two-chasers-house-close",
+ "note": "Two zombies chasing from the south, 14 and 17 tiles. A house sits 8 tiles north.",
+ "patch": {
+  "zChasing": 2,
+  "zVisible": 2,
+  "zNear": 2,
+  "zDist": 14,
+  "zDir": "S",
+  "zdx": 2,
+  "zdy": 14,
+  "panic": 30,
+  "panic01": 0.3,
+  "moodle": {
+   "panic": 1
+  },
+  "zList": [
+   {
+    "chase": true,
+    "crawl": false,
+    "d": 14.1,
+    "down": false,
+    "dx": 2,
+    "dy": 14
+   },
+   {
+    "chase": true,
+    "crawl": false,
+    "d": 17.3,
+    "down": false,
+    "dx": -3,
+    "dy": 17
+   }
+  ],
+  "buildings": [
+   {
+    "d": 8,
+    "door": {
+     "x": 10650,
+     "y": 9822
+    },
+    "dx": 0,
+    "dy": -8,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "accept": [
+  "b1",
+  "away"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}
