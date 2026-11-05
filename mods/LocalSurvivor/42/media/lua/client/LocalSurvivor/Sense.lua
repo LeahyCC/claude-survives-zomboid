@@ -60,7 +60,35 @@ function Sense.zombieScan(px, py)
   return zTotal, zNear, zClose, nearestD, dir, ndx, ndy
 end
 
--- Living zombies within 40 tiles as plain tables. Only those pay for the extra Java calls.
+Sense.ZLIST_MAX = 6             -- zombies listed in the percept, nearest first
+Sense.ZLIST_RANGE = 25
+
+-- LosUtil.lineClear says what a look from her square to the zombie's runs into. A wall or a closed
+-- door means nothing walks through before the door is opened, so it is not a threat yet. A window
+-- counts as clear: glass stops no zombie that has noticed her. Any failure reads as no wall, so a
+-- zombie is never ignored on a guess. A tree or a tall fence can also read as Blocked.
+function Sense.wallBetween(p, z)
+  local wall = false
+  pcall(function()
+    local r = LosUtil.lineClear(getCell(), math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ()),
+      math.floor(z:getX()), math.floor(z:getY()), math.floor(z:getZ()), false)
+    local name = tostring(r)
+    wall = name == "Blocked" or name == "ClearThroughClosedDoor"
+  end)
+  return wall
+end
+
+-- True when the zombie stands in the building she is in. Outdoors there is no such building.
+function Sense.sameBuilding(playerBuilding, z)
+  if not playerBuilding then return false end
+  local yes = false
+  pcall(function() yes = z:getSquare():getBuilding() == playerBuilding end)
+  return yes
+end
+
+-- Living zombies within 40 tiles as plain tables. Only those pay for the extra Java calls. The wall
+-- and building checks cost more, so only the nearest ZLIST_MAX within ZLIST_RANGE get them: the
+-- same ones summarizeZombies puts in the percept.
 function Sense.zombieFacts(p, px, py)
   local out = {}
   pcall(function()
@@ -69,7 +97,7 @@ function Sense.zombieFacts(p, px, py)
       local z = zl:get(i)
       local dx, dy = z:getX() - px, z:getY() - py
       if dx * dx + dy * dy <= 1600 and Core.zombieAlive(z) then
-        local f = { dx = dx, dy = dy, chase = false, down = false, crawl = false }
+        local f = { dx = dx, dy = dy, chase = false, down = false, crawl = false, wall = false, inside = false, ref = z }
         pcall(function() f.chase = z:getTarget() == p end)
         pcall(function() f.down = z:isOnFloor() or z:isKnockedDown() end)
         pcall(function() f.crawl = z:isCrawling() end)
@@ -77,21 +105,36 @@ function Sense.zombieFacts(p, px, py)
       end
     end
   end)
+  local listed = {}
+  for _, f in ipairs(out) do
+    f.d = math.sqrt(f.dx * f.dx + f.dy * f.dy)
+    if f.d <= Sense.ZLIST_RANGE then table.insert(listed, f) end
+  end
+  table.sort(listed, function(a, b) return a.d < b.d end)
+  local mine = nil
+  pcall(function() mine = p:getSquare():getBuilding() end)
+  for i = 1, math.min(Sense.ZLIST_MAX, #listed) do
+    local f = listed[i]
+    f.wall = Sense.wallBetween(p, f.ref)
+    f.inside = Sense.sameBuilding(mine, f.ref)
+  end
+  for _, f in ipairs(out) do f.ref, f.d = nil, nil end
   return out
 end
 
--- Pure. zs: { {dx, dy, chase, down, crawl} }. Counts chasers within 40, downed within 3, and lists
--- the nearest few within 25.
+-- Pure. zs: { {dx, dy, chase, down, crawl, wall, inside} }. Counts chasers within 40, downed within
+-- 3, and lists the nearest few within 25.
 function Sense.summarizeZombies(zs, limit)
-  limit = limit or 6
+  limit = limit or Sense.ZLIST_MAX
   local chasing, downed, near = 0, 0, {}
   for _, z in ipairs(zs or {}) do
     local d = math.sqrt(z.dx * z.dx + z.dy * z.dy)
     if d <= 40 and z.chase then chasing = chasing + 1 end
     if d <= 3 and z.down then downed = downed + 1 end
-    if d <= 25 then
+    if d <= Sense.ZLIST_RANGE then
       table.insert(near, { dx = round(z.dx), dy = round(z.dy), d = round1(d), chase = z.chase and true or false,
-        down = z.down and true or false, crawl = z.crawl and true or false, sort = d })
+        down = z.down and true or false, crawl = z.crawl and true or false,
+        wall = z.wall and true or false, inside = z.inside and true or false, sort = d })
     end
   end
   table.sort(near, function(a, b) return a.sort < b.sort end)

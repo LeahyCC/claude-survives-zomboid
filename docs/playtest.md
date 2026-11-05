@@ -87,7 +87,7 @@ Turn tracing on (`ls_trace.txt`) so `console.txt` gets a `run` line for each bre
 7. Inside with two coming at a door: `HOLD (reflex)` at the spot one tile in. Outside with two coming over a low fence: `HOLD (reflex)` on her side, swings as each comes over.
 8. Winded (endurance under 0.3) with one close: shoves and steps back, never walks in. Bleeding or hp under 50: the same.
 9. An order line with `|avoid` as a ninth field (write it by hand into `local_intent.txt` with a higher seq): she gets away from a chaser at 5 tiles instead of walking to it. `|clear`: she walks to one at 7.
-10. After a session, `node bridge/tools/review.mjs` prints "Reflex by stance" with calls, escapes, hits and hp lost.
+10. After a session, `node bridge/tools/review.mjs` prints "Reflex by stance" with calls, escapes, hits and hp lost. It counts only calls that had a chaser, and leaves out climb waits. A "Left out" line gives both counts. Escaped is checked at 5 s and at 30 s. The 30 s check uses the next decision or reflex line after that mark (up to a minute late) and says "no data" when there is none. An "unknown" death at hp 100 (or with no record) and nothing in the last 10 s is printed apart as a session end.
 
 ## Checking a death
 

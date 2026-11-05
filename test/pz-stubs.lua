@@ -236,6 +236,14 @@ function getCell()
     getBuildingList = function() return __javaList(__buildings) end,
   }
 end
+-- The game's sight check. __los maps "x,y" of the far end to a result name ("Blocked",
+-- "ClearThroughClosedDoor", "ClearThroughWindow"); anything not listed is "Clear".
+__los = {}
+LosUtil = {
+  lineClear = function(cell, x1, y1, z1, x2, y2, z2, ignoreDoors)
+    return __los[x2 .. "," .. y2] or "Clear"
+  end,
+}
 function getSpecificPlayer(i) return __players[i] end
 function getGameTime()
   return {
@@ -435,12 +443,16 @@ function __makeItem(opts)
   return it
 end
 
--- A zombie. opts: x, y, dead, target (what getTarget returns), floor, knocked, crawling.
+-- A zombie. opts: x, y, z, dead, target (what getTarget returns), floor, knocked, crawling,
+-- building (what the square under it reports). For a wall, set __los["x,y"] to what LosUtil.lineClear
+-- answers for a look at that square.
 function __makeZombie(opts)
   opts = opts or {}
   local z = {}
   function z:getX() return opts.x or 0 end
   function z:getY() return opts.y or 0 end
+  function z:getZ() return opts.z or 0 end
+  function z:getSquare() return { getBuilding = function() return opts.building end } end
   function z:isDead() return opts.dead or false end
   function z:getTarget() return opts.target end
   function z:isOnFloor() return opts.floor or false end

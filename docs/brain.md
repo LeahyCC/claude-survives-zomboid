@@ -108,10 +108,10 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `drink` | DRINK | thirst 0.25 or more (or the moodle); water in a bottle, or a tap in this building |
 | `eat` | EAT | hunger 0.25 or more (or the moodle); food ready, or a can and a can opener |
 | `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count. Never with a gun in hand (`heldGun`), and never when the weapon in hand is the player's own pick (`weaponByHand`) |
-| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie within 8 |
+| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie that can reach her soon (see below) |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
-| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie within 8. The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first" |
+| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie that can reach her soon (see below). The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first" |
 | `wearbag` | WEARBAG | no bag worn and a bag in the item names |
 | `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00. With no real weapon, houses come before shops and an unsearched house says "no real weapon yet, look here" |
 | `home` | GOTO | the plan's home is a building the map knows, with a door on record, but the percept does not list it, within 120 tiles, path clear. It goes to that door, and ENTER takes over once the building is listed. It leads the menu from 17:00 or when she needs shelter, and sits low by day. At night outside it is left off when a listed house is nearer |
@@ -123,6 +123,10 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `keep` | none | a skill or needs job is running. Picking it sends nothing |
 
 While a skill or needs job runs, any new order cancels it. So the menu then has only `keep` and what is worth stopping for: `bandage`, `drink`, `eat`, `away`, and `secure` when a zombie is chasing. A walk (`GOTO`, `ENTER`) can still switch to another house. If `keep` is the only option, the model is not asked.
+
+**A zombie that can reach her soon.** `search` and `drop` wait only for these (`reaches` in `bridge/senses.mjs`). A zombie in `zList` counts when it is chasing her within 15 tiles (`REACH_CHASE_R`), or it is in her building (`inside`), or it is under 8 tiles away with no wall or closed door between (`wall` false). A zombie outside behind a wall that is not chasing does not block. Before this the test was 8 tiles and nothing else, and she sat in houses with rooms left for 41 minutes (`docs/pro-rules.md`). The weight gates are unchanged. An older mod sends no `wall` or `inside`, and then only the 8 tiles count, as before.
+
+When `search` is off the menu with her inside and rooms left, `options.mjs` prints one line to the bridge console: `[hh:mm:ss] menu: no SEARCH, too heavy, zombie close, no wall 5 tiles (3 rooms left)`. The reasons are `already searched`, `too heavy`, `zombie chasing|in the building|close, no wall N tiles` and `retry timer after a fail`, all that apply. It prints once per menu built, so a review can count them. It is not in the page's log yet: the bridge log is not reachable from the menu code.
 
 Building labels come from map memory: `not visited`, `visited, not searched`, `partly searched`, `searched`, `safe house` or `has water`, `has a bed`, and `N zombies seen`.
 
@@ -147,8 +151,8 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 | `night-outside` | 21:00 to 06:00 and outside | the nearest house on the menu (`ENTER`) |
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
-| `find-weapon` | bare hands (weapon `none`, no gun in hand, no real weapon in the `weapons` list), inside, no chaser, and `search` is on the menu (so the building is not done, she is not heavy and no zombie is within 8) | `search` |
-| `overloaded` | heavy, no chaser (and `drop` is on the menu, so no zombie within 8) | `drop` |
+| `find-weapon` | bare hands (weapon `none`, no gun in hand, no real weapon in the `weapons` list), inside, no chaser, and `search` is on the menu (so the building is not done, she is not heavy and no zombie can reach her soon) | `search` |
+| `overloaded` | heavy, no chaser (and `drop` is on the menu, so no zombie can reach her soon) | `drop` |
 
 `equip` is kept off the menu for 45 seconds after it is sent. EQUIP never reports done while the weapon is still being raised, so without that the rule would send it again on every look. A `done` result lifts the block at once, and a failed `drop` or `equip` stays off longer (`not heavy` 3 minutes, `nothing to drop` and `equip: no weapon` 10).
 
