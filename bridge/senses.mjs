@@ -33,12 +33,22 @@ export function zombies(p) {
   if (Array.isArray(p.zList)) {
     return p.zList.map((z) => ({
       dx: num(z.dx), dy: num(z.dy), d: num(z.d, Math.hypot(num(z.dx), num(z.dy))),
-      chase: !!z.chase, down: !!z.down, crawl: !!z.crawl,
+      chase: !!z.chase, down: !!z.down, crawl: !!z.crawl, wall: !!z.wall, inside: !!z.inside,
     }));
   }
   const d = num(p.zDist, -1);
   if (d < 0) return [];
-  return [{ dx: num(p.zdx), dy: num(p.zdy), d, chase: num(p.zChasing) > 0, down: false, crawl: false }];
+  return [{ dx: num(p.zdx), dy: num(p.zdy), d, chase: num(p.zChasing) > 0, down: false, crawl: false, wall: false, inside: false }];
+}
+
+// A zombie that can get to her soon: it is after her, it is in her building, or it is closer than
+// r tiles with no wall or closed door between. A zombie behind a wall that has not noticed her
+// does not count, however close. An older mod sends no wall field, and then only distance counts.
+// A chaser counts only inside REACH_CHASE_R: zList runs to 25 tiles, and a chaser that far off
+// would keep her from searching for the whole of a long chase she has already broken.
+export const REACH_CHASE_R = 15;
+export function reaches(z, r) {
+  return !!z && ((z.chase && z.d <= REACH_CHASE_R) || z.inside || (z.d <= r && !z.wall));
 }
 
 // Zombies after her. The list when the mod sent one, else the game's own count.
