@@ -70,15 +70,17 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 
 | id | verb | offered when |
 |---|---|---|
-| `bandage` | BANDAGE | a wound is bleeding, deep, bitten, has glass, or is an unbandaged cut or scratch; and a bandage is carried or it bleeds (the job can rip cloth) |
+| `bandage` | BANDAGE | a wound is bleeding, deep, bitten, has glass, or is an unbandaged cut or scratch; and `inv.bandages` is above 0 or `inv.canRip` is true (the job rips cloth). A percept with no `canRip` gets the old test: she is bleeding |
 | `drink` | DRINK | thirst 0.25 or more (or the moodle); water in a bottle, or a tap in this building |
 | `eat` | EAT | hunger 0.25 or more (or the moodle); food ready, or a can and a can opener |
-| `equip` | EQUIP | nothing in hand and a melee weapon carried |
+| `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count |
+| `drop` | DROP | heavy (moodle, or weight 85% of the maximum), no chaser, no zombie within 8 |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
-| `search` | SEARCH | inside, not searched (map memory), not overloaded, no zombie within 8 |
+| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie within 8. The label counts the rooms left: "2 rooms left, partly searched" |
 | `wearbag` | WEARBAG | no bag worn and a bag in the item names |
-| `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00 |
+| `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00. With no real weapon, houses come before shops and an unsearched house says "no real weapon yet, look here" |
+| `home` | GOTO | the plan's home is a building the map knows, with a door on record, but the percept does not list it, within 120 tiles, path clear. It goes to that door, and ENTER takes over once the building is listed. It leads the menu from 17:00 or when she needs shelter, and sits low by day. At night outside it is left off when a listed house is nearer |
 | `fill` | FILL | inside, a tap here, an empty bottle carried |
 | `rest` | REST | endurance under 0.6, no chaser |
 | `away` | GOTO | an idle zombie within 12, or a chaser: 15 tiles in the clearest direction away |
@@ -90,6 +92,10 @@ While a skill or needs job runs, any new order cancels it. So the menu then has 
 
 Building labels come from map memory: `not visited`, `visited, not searched`, `partly searched`, `searched`, `safe house` or `has water`, `has a bed`, and `N zombies seen`.
 
+"No real weapon" means nothing in hand or in the bag scores 20 or more. A kitchen knife scores 9 and a hammer 19, a crowbar 30 (`docs/combat.md`). An older percept with no scores counts only empty hands and an empty bag.
+
+`res.target` says what the running job works on, so a restart of the bridge mid-job still knows. If the bridge has no record of the order, `ENTER`, `SEARCH` and `SECURE` use the building id in it as their option key, and a `GOTO` is matched by its `x,y` against this turn's walks. Otherwise the verb alone stands for the job, as before.
+
 A failed order stays off the menu for a while, so `stuck` is not resent straight away. Most fails wait 45 seconds. `stuck` 60, `unreachable` 90, `locked` 20 minutes, `too soon` 5 minutes. A search that fails `nothing left` marks the building searched for good.
 
 ## Policy
@@ -98,17 +104,22 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 
 | Rule | When | Sends |
 |---|---|---|
-| `bleeding` | `bleeding > 0` | `bandage` |
+| `bleeding` | `bleeding > 0`. Steps aside when `bandage` is not on the menu (no bandage, nothing to rip) | `bandage` |
 | `thirst` | thirst 0.6 or more, or the moodle at 2 | `drink` |
+| `hunger` | hunger 0.6 or more, or the moodle at 2, and `inv.foodReady` above 0. A can that needs opening is the model's call | `eat` |
+| `equip` | a carried weapon is clearly better than the one in hand, or the hands are empty | `equip` |
 | `night-outside` | 21:00 to 06:00 and outside | the nearest house on the menu (`ENTER`) |
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
+| `overloaded` | heavy, no chaser (and `drop` is on the menu, so no zombie within 8) | `drop` |
+
+`equip` is kept off the menu for 45 seconds after it is sent. EQUIP never reports done while the weapon is still being raised, so without that the rule would send it again on every look. A `done` result lifts the block at once, and a failed `drop` or `equip` stays off longer (`not heavy` 3 minutes, `nothing to drop` and `equip: no weapon` 10).
 
 If a voice line is waiting, the model is still called, with a menu of just the policy's option, so it can answer in its thought.
 
 ## Not asking while a job runs
 
-`res.status` is `running` for a skill or needs verb (`GOTO ENTER SEARCH LOOT DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST`). MOVE and the old one-shot verbs stay `running` forever, so they do not count. While one runs, the brain sends nothing and asks nothing unless:
+`res.status` is `running` for a skill or needs verb (`GOTO ENTER SEARCH LOOT DROP DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST`). MOVE and the old one-shot verbs stay `running` forever, so they do not count. While one runs, the brain sends nothing and asks nothing unless:
 
 - a zombie starts chasing,
 - a new need flag appears (bleeding, wounded, thirsty, hungry, tired, exhausted, winded, panicked, heavy, night outside),
@@ -117,7 +128,7 @@ If a voice line is waiting, the model is still called, with a menu of just the p
 
 After a chosen `wait` it rechecks after 8 seconds. After it writes an order, it waits until the percept's `lastSeq` reaches it (10 seconds at most). While he is asleep it sends nothing, so no MOVE or GOTO wakes him.
 
-The percept has no asleep flag yet. The bridge counts him asleep after `SLEEP` reports `asleep...`, until fatigue drops under 0.1, he moves, a new order runs, or 12 game hours pass.
+Asleep is the percept's `asleep` flag, the game's own state. It is trusted when it is a boolean. A percept without it (an older mod) gets the old guess: the bridge counts him asleep after `SLEEP` reports `asleep...`, until fatigue drops under 0.1, he moves, a new order runs, or 12 game hours pass.
 
 ## The prompt
 
@@ -156,12 +167,13 @@ At most 5 rules whose condition holds go into the user message, in this order:
 
 | id | when |
 |---|---|
-| `wounded` | an untreated wound |
+| `wounded` | an untreated wound, and a bandage carried or one she could rip |
 | `go-home` | outside and tired or panicked |
 | `night` | 21:00 to 06:00 |
 | `overloaded` | heavy moodle, or weight 85% of max |
 | `one-at-a-time` | an idle zombie within 20, or more than one in sight |
 | `no-weapon` | none in hand and none carried |
+| `weak-weapon` | a weapon in hand or bag, but nothing scores 20 or more |
 | `water` | no water carried |
 | `quiet-entry` | outside with buildings in sight |
 | `new-houses` | inside a searched building |
@@ -172,6 +184,8 @@ At most 5 rules whose condition holds go into the user message, in this order:
 `state.map` in `bridge/pz-state.json`. Delete the file for a fresh mind.
 
 Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside), `securedAt`, and a rough position.
+
+`door` is the exterior door `{x, y}` the percept listed, kept after the building drops out of the 6 nearest. It is what the `home` walk goes to. A door that is not a pair of numbers is ignored. `searched` is also set when the building the survivor stands in reports `roomsLeft` 0.
 
 Safe house score: residential +2, water +2, bed +2, searched +1, shop -1, minus one per zombie seen (up to 4). 5 or more is a safe house.
 

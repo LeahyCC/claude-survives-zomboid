@@ -5,11 +5,13 @@
 
 import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
-import { zombies, unaware, inside, heavy, untreated, isNight, running, panic01 } from './senses.mjs';
+import { zombies, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
 
 export const MAX_OPTIONS = 8;
 const MAX_BUILDINGS = 3;
+// A remembered home further off than this is not worth a walk the pathfinder may refuse.
+const MAX_HOME_WALK = 120;
 // A walk is refused if it passes this close to an idle zombie, or ends this close to one.
 const PATH_CLEAR = 5;
 const END_CLEAR = 6;
@@ -49,36 +51,67 @@ function buildingTags(b, planned) {
   return tags.join(', ');
 }
 
+const stageOf = (c) => (c.mem && c.mem.searched ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
+
 // Unsearched first, nearest first. A safe house is pulled to the front when she needs one,
-// and the planner's home building ahead of that when it is time to go home.
-function rankBuildings(cands, wantsHome, homeId) {
-  const stage = (c) => (c.mem && c.mem.searched ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
+// and the planner's home building ahead of that when it is time to go home. With no real
+// weapon, houses come before shops and other buildings: that is where a bat or a knife is.
+function rankBuildings(cands, wantsHome, homeId, poor) {
   const homeFirst = (c) => (homeId && String(c.seen.id) === homeId ? -1 : wantsHome && safehouseScore(c.mem) >= 5 ? 0 : 1);
-  return cands.sort((x, y) => homeFirst(x) - homeFirst(y) || stage(x) - stage(y) || x.d - y.d);
+  const houseFirst = (c) => (poor && kindOf(c.mem, c.seen) !== 'house' ? 1 : 0);
+  return cands.sort((x, y) => homeFirst(x) - homeFirst(y) || stageOf(x) - stageOf(y) || houseFirst(x) - houseFirst(y) || x.d - y.d);
 }
 
 // homeId is the planner's home building, or '' when it is not time to go there. plannedId
-// is the same building at any hour, only to tag it for the model.
-function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId) {
+// is the same building at any hour, only to tag it for the model. poor is true when she has
+// no real weapon.
+function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor) {
   const here = inside(p) ? String(p.inBldg.id) : null;
   const cands = [];
   for (const seen of Array.isArray(p.buildings) ? p.buildings : []) {
     if (!seen || seen.id == null || String(seen.id) === here) continue;
     const key = `ENTER:${seen.id}`;
     if (blockedWhy(mem, key, now)) continue;
-    const tx = seen.door ? num(seen.door.x) - num(p.x) : num(seen.dx);
-    const ty = seen.door ? num(seen.door.y) - num(p.y) : num(seen.dy);
+    // A door that is not a pair of numbers is no door: fall back to the offset to the wall.
+    const door = seen.door && Number.isFinite(seen.door.x) && Number.isFinite(seen.door.y) ? seen.door : null;
+    const tx = door ? door.x - num(p.x) : num(seen.dx);
+    const ty = door ? door.y - num(p.y) : num(seen.dy);
     if (!pathClear(tx, ty, avoid)) continue;
     cands.push({ seen, key, tx, ty, d: Math.max(num(seen.d), 0), mem: building(mem, seen.id) });
   }
-  return rankBuildings(cands, wantsHome, homeId).slice(0, MAX_BUILDINGS).map((c, i) => {
+  return rankBuildings(cands, wantsHome, homeId, poor).slice(0, MAX_BUILDINGS).map((c, i) => {
     const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
     const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId);
+    // Said only of a house not yet searched, the place to look. A shop or a searched house is not sold as one.
+    const hunt = poor && stageOf(c) < 2 && kindOf(c.mem, c.seen) === 'house' ? ', no real weapon yet, look here' : '';
     return {
-      id: `b${i + 1}`, verb: 'ENTER', a: 0, b: 0, target: String(c.seen.id), key: c.key,
-      label: `walk into ${kindOf(c.mem, c.seen)} ${where}, ${tags}`,
+      id: `b${i + 1}`, verb: 'ENTER', a: 0, b: 0, target: String(c.seen.id), key: c.key, d: c.d,
+      label: `walk into ${kindOf(c.mem, c.seen)} ${where}, ${tags}${hunt}`,
     };
   });
+}
+
+// The planner's home when it is a building the map knows, with a door on record, but the
+// percept no longer lists it (only the 6 nearest within 40 tiles are listed). A walk to that
+// door brings it back into the list, and ENTER takes over. shelters are the ENTER options
+// already on the menu: at night outside a closer one is the better walk.
+function homeOption(p, mem, now, avoid, plannedId, shelters) {
+  if (!plannedId) return null;
+  const key = `HOME:${plannedId}`;
+  if (blockedWhy(mem, key, now)) return null;
+  if (inside(p) && String(p.inBldg.id) === plannedId) return null;
+  if ((Array.isArray(p.buildings) ? p.buildings : []).some((s) => s && String(s.id) === plannedId)) return null;
+  const b = building(mem, plannedId);
+  if (!b || !b.door || !Number.isFinite(b.door.x) || !Number.isFinite(b.door.y)) return null;
+  const tx = b.door.x - num(p.x);
+  const ty = b.door.y - num(p.y);
+  const d = Math.hypot(tx, ty);
+  if (d > MAX_HOME_WALK || !pathClear(tx, ty, avoid)) return null;
+  if (isNight(p) && !inside(p) && shelters.some((s) => s.d < d)) return null;
+  return {
+    id: 'home', verb: 'GOTO', a: b.door.x, b: b.door.y, target: '', key,
+    label: `walk back toward ${kindOf(b, null)} ${tiles(d)} ${compass(tx, ty)}, ${buildingTags(b, true)}`,
+  };
 }
 
 // A GOTO a fixed length away in the first heading that keeps clear of idle zombies.
@@ -122,7 +155,7 @@ function needOptions(p, mem, now) {
   const add = (prio, opt) => { if (!blockedWhy(mem, opt.key, now)) out.push({ prio, a: 0, b: 0, target: '', ...opt }); };
 
   const wound = worstWound(p);
-  if (wound && (num(inv.bandages) > 0 || num(p.bleeding) > 0)) {
+  if (wound && canTreat(p)) {
     const tail = num(inv.bandages) > 0 ? '' : ' (no bandage: rip cloth)';
     add(1, { id: 'bandage', verb: 'BANDAGE', key: 'BANDAGE', label: `bandage the ${woundText(wound)}${tail}` });
   }
@@ -138,8 +171,10 @@ function needOptions(p, mem, now) {
   } else if (hungry && num(inv.cans) > 0 && inv.canOpener) {
     add(3, { id: 'eat', verb: 'EAT', key: 'EAT', label: 'open a can and eat it' });
   }
-  if (String(p.weapon || 'none') === 'none' && Array.isArray(p.weapons) && p.weapons.length) {
-    add(4, { id: 'equip', verb: 'EQUIP', key: 'EQUIP', label: `hold the ${p.weapons[0].n} you carry` });
+  const better = betterWeapon(p);
+  if (better) {
+    const label = better.swap ? `swap to the ${better.n} you carry, it is clearly better than your ${String(p.weapon)}` : `hold the ${better.n} you carry`;
+    add(4, { id: 'equip', verb: 'EQUIP', key: 'EQUIP', label });
   }
   if (here && !securedThisVisit(mem, here)) {
     add(isNight(p) ? 4 : 9, { id: 'secure', verb: 'SECURE', key: `SECURE:${here}`, label: 'close the doors, windows and curtains of this building' });
@@ -151,11 +186,20 @@ function needOptions(p, mem, now) {
     const where = p.bed ? `in the bed ${tiles(p.bed.d)} away` : 'on the floor here (no bed found)';
     add(5, { id: 'sleep', verb: 'SLEEP', key: 'SLEEP', label: `sleep ${where}` });
   }
+  // A drop takes a few passes, so not with a zombie after her or close enough to hear it.
+  if (heavy(p) && !chased && !near(SEARCH_ZOMBIE_R)) {
+    const load = num(p.maxWeight) > 0 ? ` (carrying ${num(p.weight).toFixed(1)} of ${num(p.maxWeight)})` : '';
+    add(5.5, { id: 'drop', verb: 'DROP', key: 'DROP', label: `drop the junk you carry to lighten the load${load}` });
+  }
   const bInfo = building(mem, here);
-  if (here && !(bInfo && bInfo.searched) && !heavy(p) && !near(SEARCH_ZOMBIE_R)) {
+  // roomsLeft is the body's count of rooms SEARCH has not finished. Only a real number counts:
+  // an older mod sends none, and then the map memory alone decides.
+  const left = here && typeof p.inBldg.roomsLeft === 'number' && Number.isFinite(p.inBldg.roomsLeft) ? Math.max(0, Math.floor(p.inBldg.roomsLeft)) : null;
+  if (here && left !== 0 && !(bInfo && bInfo.searched) && !heavy(p) && !near(SEARCH_ZOMBIE_R)) {
     const rooms = num(p.inBldg.rooms);
-    const state = bInfo && bInfo.partly ? 'partly searched' : 'not searched yet';
-    const roomText = rooms > 0 ? `${count(rooms, 'room')}, ` : '';
+    const started = (bInfo && bInfo.partly) || (left !== null && rooms > left);
+    const state = started ? 'partly searched' : 'not searched yet';
+    const roomText = left !== null ? `${count(left, 'room')} left, ` : rooms > 0 ? `${count(rooms, 'room')}, ` : '';
     add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})` });
   }
   const bag = carriedBag(p);
@@ -185,7 +229,10 @@ export function buildOptions(p, mem, ctx = {}) {
   const plannedId = ctx.plan && ctx.plan.home ? String(ctx.plan.home) : '';
   const dusk = num(p.hour, 12) >= 17 && num(p.hour, 12) < 21;
   const homeId = wantsHome || dusk ? plannedId : '';
-  for (const o of buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId)) out.push({ prio: outdoors ? 2.5 : 8, ...o });
+  const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(p));
+  for (const o of shelters) out.push({ prio: outdoors ? 2.5 : 8, ...o });
+  const home = homeOption(p, mem, now, avoid, plannedId, shelters);
+  if (home) out.push({ prio: homeId ? (outdoors ? 2.4 : 8.5) : 9.5, a: 0, b: 0, target: '', ...home });
 
   const close = [...unaware(p).filter((z) => z.d <= AWAY_R), ...chasers];
   if (close.length && !blockedWhy(mem, 'AWAY', now)) {
@@ -209,7 +256,7 @@ export function buildOptions(p, mem, ctx = {}) {
   }
 
   const busy = running(p);
-  const job = busy ? runningKey(p, mem) : null;
+  const job = busy ? runningKey(p, mem, out) : null;
   // Any new order cancels the running job. Mid-search or mid-drink only an urgent need or a
   // way around a zombie is worth that. A walk can still change its mind about where to go.
   const walking = busy && (busy.verb === 'GOTO' || busy.verb === 'ENTER');
@@ -219,15 +266,26 @@ export function buildOptions(p, mem, ctx = {}) {
   const last = busy
     ? { id: 'keep', verb: null, a: 0, b: 0, target: '', key: 'KEEP', label: `keep going with ${busy.verb} (still running)` }
     : { id: 'wait', verb: 'WAIT', a: 0, b: 0, target: '', key: 'WAIT', label: 'wait here and watch' };
-  return [...fresh.slice(0, MAX_OPTIONS - 1), last].map(({ prio, ...o }) => o);
+  return [...fresh.slice(0, MAX_OPTIONS - 1), last].map(({ prio, d, ...o }) => o);
 }
 
-// The option key of the job now running, if this bridge sent it. "keep" stands for it.
-export function runningKey(p, mem) {
+// The option key of the job now running. "keep" stands for it. The bridge's own record of the
+// order answers first. After a restart that record may be gone, and res.target says what the
+// body is working on: a building id for ENTER, SEARCH and SECURE, "x,y" for GOTO, which
+// has to match the end of one of this turn's walks. Otherwise null, and the verb alone is used.
+export function runningKey(p, mem, options = []) {
   const busy = running(p);
   if (!busy) return null;
   const order = (mem.orders || []).find((o) => o.seq === busy.seq);
-  return order ? order.key : null;
+  if (order) return order.key;
+  const target = typeof p.res.target === 'string' ? p.res.target.trim() : '';
+  if (!target) return null;
+  if (busy.verb === 'ENTER' || busy.verb === 'SEARCH' || busy.verb === 'SECURE') return `${busy.verb}:${target}`;
+  if (busy.verb === 'GOTO') {
+    const walk = options.find((o) => o.verb === 'GOTO' && `${o.a},${o.b}` === target);
+    return walk ? walk.key : null;
+  }
+  return null;
 }
 
 export function optionLines(options) {

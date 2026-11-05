@@ -37,3 +37,5 @@ Four runs of about six minutes each with the menu brain on gemma4:12b. Same PC, 
 | 4 | planner and eval merged | 16 | Plans came back with sensible goals. Searched two houses and secured one at dusk. Two plans came back empty (fixed after the run). |
 
 Still wrong in run 4: her weapon was a pen, BANDAGE was offered with no bandage and failed `no bandage`, and SECURE once walked outside. No locked door with a matching key came up, so ENTER's key use is still untested live.
+
+Since run 4 the bridge reads the newer percept fields (`docs/brain.md`): BANDAGE is offered only with a bandage or `inv.canRip`, a pen reads as no weapon so houses come first, a better weapon in the bag is equipped by the policy, and `asleep`, `res.target` and `roomsLeft` replace guesses. None of that has been run live yet.

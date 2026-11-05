@@ -1,0 +1,46 @@
+{
+ "name": "unarmed-house-over-shop",
+ "note": "Nothing to fight with. An unvisited shop is nearer, an unvisited house is a bit further. A house is where a knife or a bat is.",
+ "patch": {
+  "weapon": "none",
+  "weaponScore": 0,
+  "weapons": [],
+  "items": "Wallet, Key Ring, Tshirt, Jeans, Socks, Shoes",
+  "bag": "none",
+  "buildings": [
+   {
+    "d": 7,
+    "door": {
+     "x": 10657,
+     "y": 9830
+    },
+    "dx": 7,
+    "dy": 0,
+    "id": "4062",
+    "res": false,
+    "shop": true,
+    "visited": false
+   },
+   {
+    "d": 15,
+    "door": {
+     "x": 10650,
+     "y": 9815
+    },
+    "dx": 0,
+    "dy": -15,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

@@ -1,7 +1,9 @@
 // Scenario files for the eval (docs/eval.md). Each is a patch over base.json, so a file only
 // says what is different about that moment.
 //
-//   { name, note, patch, memory: { current, buildings }, accept: [ids], wrong: [ids] }
+//   { name, note, patch, memory: { current, buildings }, plan: { goal, steps, home }, accept: [ids], wrong: [ids] }
+//
+// plan is the planner's day plan, only for a moment that depends on it (the walk home).
 //
 // accept: option ids a good player would take. wrong: ids that are clearly bad. Any other
 // id counts as "other". An id that is not on the menu this turn is simply never picked.
@@ -43,5 +45,5 @@ export function buildScenario(s, now = 1_000_000) {
       took: [], water: false, bed: false, res: false, shop: false, zombies: 0, securedAt: null, enteredAt: null, ...b };
   }
   updateMemory(memory, percept, now);
-  return { percept, memory };
+  return { percept, memory, plan: s.plan || null };
 }

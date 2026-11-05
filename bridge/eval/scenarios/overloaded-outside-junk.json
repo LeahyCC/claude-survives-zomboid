@@ -1,0 +1,18 @@
+{
+ "name": "overloaded-outside-junk",
+ "note": "Heavy load outdoors, no zombie near. Drop the junk before walking on.",
+ "patch": {
+  "weight": 7.5,
+  "moodle": {
+   "heavy": 2
+  }
+ },
+ "accept": [
+  "drop"
+ ],
+ "wrong": [
+  "b1",
+  "explore",
+  "wait"
+ ]
+}

@@ -1,0 +1,32 @@
+{
+ "name": "better-weapon-in-bag",
+ "note": "A kitchen knife in hand and an axe in the bag. The axe scores five times higher. Swap.",
+ "patch": {
+  "weapon": "Kitchen Knife",
+  "weaponScore": 9,
+  "weapons": [
+   {
+    "cond": 0.9,
+    "dmg": 2.2,
+    "n": "Axe",
+    "reach": 1.2,
+    "score": 51
+   },
+   {
+    "cond": 1,
+    "dmg": 0.6,
+    "n": "Kitchen Knife",
+    "reach": 0.9,
+    "score": 9
+   }
+  ]
+ },
+ "accept": [
+  "equip"
+ ],
+ "wrong": [
+  "wait",
+  "explore",
+  "b1"
+ ]
+}
