@@ -1,0 +1,20 @@
+{
+ "name": "bitten-no-bleed",
+ "note": "A bite that is not bleeding. A pro treats it before the next door.",
+ "patch": {
+  "hp": 80,
+  "wounds": [
+   {
+    "part": "Hand_L",
+    "bite": true
+   }
+  ]
+ },
+ "accept": [
+  "bandage"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

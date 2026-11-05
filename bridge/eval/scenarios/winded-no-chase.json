@@ -1,0 +1,17 @@
+{
+ "name": "winded-no-chase",
+ "note": "Endurance at 0.3 with nothing near. Catch your breath.",
+ "patch": {
+  "endurance": 0.3,
+  "moodle": {
+   "endurance": 2
+  }
+ },
+ "accept": [
+  "rest"
+ ],
+ "wrong": [
+  "explore",
+  "wait"
+ ]
+}

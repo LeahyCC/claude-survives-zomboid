@@ -1,0 +1,55 @@
+{
+ "name": "thirsty-sink-here",
+ "note": "Thirsty, empty bottle, a working sink three tiles away. Drink.",
+ "patch": {
+  "thirst": 0.62,
+  "moodle": {
+   "thirsty": 2
+  },
+  "inv": {
+   "waterL": 0
+  },
+  "outside": false,
+  "room": "kitchen",
+  "bldgDir": "HERE",
+  "bldgDist": 0,
+  "inBldg": {
+   "explored": false,
+   "id": "4021",
+   "room": "kitchen",
+   "rooms": 6,
+   "water": true
+  },
+  "water": {
+   "d": 3,
+   "x": 10653,
+   "y": 9830,
+   "z": 0
+  },
+  "buildings": [
+   {
+    "d": 0,
+    "door": {
+     "x": 10650,
+     "y": 9826
+    },
+    "dx": 0,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "current": "4021"
+ },
+ "accept": [
+  "drink"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

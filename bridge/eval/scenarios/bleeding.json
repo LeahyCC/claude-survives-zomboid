@@ -1,0 +1,26 @@
+{
+ "name": "bleeding",
+ "note": "A bleeding forearm and bandages in the bag. Bandage before anything else.",
+ "patch": {
+  "bleeding": 1,
+  "hp": 70,
+  "wounds": [
+   {
+    "part": "ForeArm_L",
+    "bleed": true,
+    "lac": true
+   }
+  ],
+  "moodle": {
+   "pain": 1
+  }
+ },
+ "accept": [
+  "bandage"
+ ],
+ "wrong": [
+  "wait",
+  "explore",
+  "b1"
+ ]
+}

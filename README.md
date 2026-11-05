@@ -49,6 +49,8 @@ A slower planner writes a short day plan and a death review writes lessons (`doc
 
 `node bridge/tools/try-brain.mjs` runs the test percepts through the real model and prints each choice and its time.
 
+`node bridge/eval/run.mjs --model gemma4:12b --n 3` scores the brain on 26 scenarios against Ollama and prints a table. See `docs/eval.md`.
+
 ## Check
 
 ```

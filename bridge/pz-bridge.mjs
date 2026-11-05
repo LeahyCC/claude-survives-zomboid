@@ -21,6 +21,7 @@ import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
 import { createPlanner } from './planner.mjs';
 import { loadLessons, addLessons, recordRun, deleteLesson, lessonStats, reviewDeath } from './lessons.mjs';
 import { digest } from './digest.mjs';
+import { loadStats, observe as observeStats, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8799);
@@ -60,10 +61,11 @@ try {
 const map = loadMemory(state.map);
 state.map = map;
 if (!Array.isArray(state.recent)) state.recent = [];
+const stats = loadStats(state.stats);
 
 const saveState = () => {
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ ...state, log: state.log.slice(-200) }));
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ ...state, stats: saveableStats(stats), log: state.log.slice(-200) }));
   } catch { /* disk */ }
 };
 
@@ -116,6 +118,7 @@ function readPercept() {
     percept = JSON.parse(fs.readFileSync(PERCEPT_FILE, 'utf8'));
     perceptMtime = mt;
     perceptAt = Date.now();
+    if (observeStats(stats, percept, perceptAt)) saveState();
   } catch { /* partial write, or the game is not up */ }
 }
 setInterval(readPercept, 1000);
@@ -447,6 +450,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 #lessons li.flag{border-left:3px solid #e0a458}#lessons code{color:#ffd479;margin-right:8px}
 .warn{color:#e0a458;font-size:12px}
 .del{padding:2px 10px;margin-left:10px;background:#3a2326;color:#f3b4b4;font-weight:400}
+#runs{border-collapse:collapse;width:100%}#runs th,#runs td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
+#runs th{font-size:11px;color:#8899aa;text-transform:uppercase}#runs tr.live td{color:#7fd1b9}
 </style>
 <h1>Local survivor</h1>
 <div class="note" id="note"></div>
@@ -470,6 +475,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <h2>Lessons</h2>
 <div class="note" id="lessons-note"></div>
 <ul id="lessons"></ul>
+<h2>Runs</h2>
+<table id="runs"><thead><tr><th>started</th><th>hours</th><th>kills</th><th>day</th><th>damage</th><th>searched</th><th>ended by</th></tr></thead><tbody></tbody></table>
 <h2>Voice</h2>
 <div id="chat"></div>
 <p style="display:flex;gap:8px"><input id="god" placeholder="say something" onkeydown="if(event.key==='Enter')sendGod()"><button onclick="sendGod()">send</button></p>
@@ -537,6 +544,17 @@ async function tick(){
     }
     return li;
   });
+  const st = await (await fetch('/api/stats')).json();
+  const body = document.querySelector('#runs tbody');
+  body.replaceChildren(...[st.current, ...st.runs].filter(Boolean).map((r) => {
+    const tr = document.createElement('tr');
+    if (r.live) tr.className = 'live';
+    const when = r.start ? r.start.slice(5, 16).replace('T', ' ') : '-';
+    for (const v of [when, r.hoursSurvived, r.kills, r.day, r.damage, r.searched, r.live ? 'alive' : r.cause]) {
+      const td = document.createElement('td'); td.textContent = v; tr.append(td);
+    }
+    return tr;
+  }));
   document.getElementById('chat').textContent = (s.chat || []).map(m => m.t + ' ' + m.from + ': ' + m.text).join('\\n');
   document.getElementById('log').textContent = (s.log || []).slice().reverse().map(l => '[' + l.t + '] ' + l.kind + ': ' + l.text).join('\\n');
 }
@@ -585,6 +603,10 @@ http.createServer((req, res) => {
       runsRecorded: store.runs.length,
       review: reviewNote,
     }));
+  }
+  if (url.pathname === '/api/stats') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(statsSummary(stats)));
   }
   if (url.pathname === '/api/lessons/delete' && req.method === 'POST') {
     // A page on another site can send a bare POST to localhost. A custom header forces a

@@ -1,0 +1,17 @@
+{
+ "name": "hungry-ready-food",
+ "note": "Hungry with ready food in the bag. Eat.",
+ "patch": {
+  "hunger": 0.65,
+  "moodle": {
+   "hungry": 2
+  }
+ },
+ "accept": [
+  "eat"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

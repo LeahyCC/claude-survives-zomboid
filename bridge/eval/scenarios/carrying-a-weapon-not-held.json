@@ -1,0 +1,14 @@
+{
+ "name": "carrying-a-weapon-not-held",
+ "note": "A kitchen knife in the bag and nothing in hand. Hold it.",
+ "patch": {
+  "weapon": "none"
+ },
+ "accept": [
+  "equip"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

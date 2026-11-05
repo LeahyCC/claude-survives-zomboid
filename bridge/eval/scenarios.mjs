@@ -1,0 +1,47 @@
+// Scenario files for the eval (docs/eval.md). Each is a patch over base.json, so a file only
+// says what is different about that moment.
+//
+//   { name, note, patch, memory: { current, buildings }, accept: [ids], wrong: [ids] }
+//
+// accept: option ids a good player would take. wrong: ids that are clearly bad. Any other
+// id counts as "other". An id that is not on the menu this turn is simply never picked.
+
+import fs from 'node:fs';
+import { emptyMemory, updateMemory } from '../memory.mjs';
+
+const DIR = new URL('./', import.meta.url);
+
+const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+// Objects merge key by key. Arrays and null replace, so a patch can empty a list.
+export function merge(base, patch) {
+  if (!isPlain(base) || !isPlain(patch)) return patch;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(patch)) out[k] = k in base ? merge(base[k], v) : v;
+  return out;
+}
+
+export function readBase() {
+  return JSON.parse(fs.readFileSync(new URL('base.json', DIR), 'utf8'));
+}
+
+export function loadScenarios() {
+  const dir = new URL('scenarios/', DIR);
+  return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort().map((f) => {
+    const s = JSON.parse(fs.readFileSync(new URL(f, dir), 'utf8'));
+    return { file: f, ...s };
+  });
+}
+
+export function buildScenario(s, now = 1_000_000) {
+  const percept = merge(readBase(), s.patch || {});
+  const memory = emptyMemory();
+  const seed = s.memory || {};
+  if (seed.current) memory.current = String(seed.current);
+  for (const [id, b] of Object.entries(seed.buildings || {})) {
+    memory.buildings[id] = { id, firstSeen: 0, lastSeen: 0, lastVisit: 0, visited: false, searched: false, partly: false,
+      took: [], water: false, bed: false, res: false, shop: false, zombies: 0, securedAt: null, enteredAt: null, ...b };
+  }
+  updateMemory(memory, percept, now);
+  return { percept, memory };
+}

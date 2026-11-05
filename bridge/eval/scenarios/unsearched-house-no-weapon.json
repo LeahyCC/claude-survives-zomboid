@@ -1,0 +1,32 @@
+{
+ "name": "unsearched-house-no-weapon",
+ "note": "No weapon at all and a house ten tiles away. Find one there.",
+ "patch": {
+  "weapon": "none",
+  "weapons": [],
+  "items": "Wallet, Key Ring, Tshirt, Jeans, Socks, Shoes",
+  "bag": "none",
+  "buildings": [
+   {
+    "d": 10,
+    "door": {
+     "x": 10660,
+     "y": 9830
+    },
+    "dx": 10,
+    "dy": 0,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}
