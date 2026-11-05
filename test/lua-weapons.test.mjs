@@ -150,7 +150,7 @@ test('a SEARCH that took a better weapon wields it before it reports', () => {
   assert.ok(lua.get('LocalSurvivor.lastLootTick') > 0, 'a MOVE ordered now waits for it');
   lua.run('P.primary = CROWBAR; ISTimedActionQueue.clear(P)');
   tick(lua, 2);
-  assert.deepEqual(result(lua), { seq: 1, verb: 'SEARCH', status: 'done', why: 'took 1: Crowbar' });
+  assert.deepEqual(result(lua), { seq: 1, verb: 'SEARCH', status: 'done', why: 'took 1: Crowbar', target: 'B1' });
 });
 
 test('a SEARCH retries an equip the reflex cut off, once', () => {
@@ -359,4 +359,13 @@ test('DROP waits while the drops run', () => {
   tick(lua, 30);
   assert.equal(result(lua).status, 'running');
   assert.deepEqual(queue(lua), ['Menu:dropItem']);
+});
+
+test('the reflex counts a pen in hand as bare hands, and a crowbar as armed', () => {
+  const lua = world('P.__items.items = { PEN, CROWBAR }; P.primary = PEN');
+  assert.equal(lua.run('return LocalSurvivor.Core.holdingMelee(P)'), false);
+  lua.run('P.primary = CROWBAR');
+  assert.equal(lua.run('return LocalSurvivor.Core.holdingMelee(P)'), true);
+  lua.run('P.primary = nil');
+  assert.equal(lua.run('return LocalSurvivor.Core.holdingMelee(P)'), false);
 });

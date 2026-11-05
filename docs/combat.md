@@ -21,7 +21,7 @@ Reflex.perform(...)  carries the action out and sets the HUD text
 | field | what it is |
 | --- | --- |
 | `zombies` | living zombies within 22 tiles on his floor: `{ d, dx, dy, down, crawl, chase, outside }` |
-| `armed` | holding a melee weapon |
+| `armed` | holding a real melee weapon (a pen, fork or anything else under the weapon score floor counts as bare hands) |
 | `reach` | weapon range, the same sum the game uses (`getMaxRange * getRangeMod`) |
 | `shortBlade` | reach under 1 tile |
 | `hp` | overall body health, 0 to 100 |

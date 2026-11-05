@@ -415,9 +415,24 @@ function Act.startSkill(p, verb, args, def)
   LS.skill = s
   LS.travel.active = false
   LS.hudData.action = verb
+  LS.aim(s.seq, Act.skillTarget(s))
   local ok, err = pcall(def.start, p, s)
   if not ok then Act.finish(s, "failed", "error " .. tostring(err)) end
+  -- SEARCH and LOOT only know their building once start has run.
+  if not s.over then LS.aim(s.seq, Act.skillTarget(s)) end
   return s
+end
+
+-- What the skill works on, for res.target: the building id for ENTER, SEARCH and LOOT, and
+-- x,y for GOTO.
+function Act.skillTarget(s)
+  if s.verb == "ENTER" then return s.args.target end
+  if s.verb == "GOTO" then
+    local x, y = tonumber(s.args.a), tonumber(s.args.b)
+    if x and y then return math.floor(x) .. "," .. math.floor(y) end
+    return nil
+  end
+  return s.bid
 end
 
 -- Report and drop the skill. A failure also sets lastError ("enter: locked") so the v1 bridge,
@@ -620,6 +635,23 @@ function Act.buildingRooms(m)
     end
   end)
   return rows
+end
+
+-- How many rooms of the building SEARCH has not finished. The room keys of a building do not
+-- change, so they are read once and kept in its memo.
+function Act.roomsLeft(m)
+  if not m.roomKeys then
+    local keys = {}
+    for _, row in ipairs(Act.buildingRooms(m)) do table.insert(keys, row.key) end
+    if #keys == 0 then return 0 end
+    m.roomKeys = keys
+  end
+  local done = LS.searched[m.id] or {}
+  local left = 0
+  for _, key in ipairs(m.roomKeys) do
+    if not done[key] then left = left + 1 end
+  end
+  return left
 end
 
 -- Containers in a room as { c, sq }. IsoRoom:getContainer() is the room's own list. When it is
