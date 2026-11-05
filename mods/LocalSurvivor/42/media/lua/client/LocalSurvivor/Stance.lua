@@ -27,6 +27,10 @@ Stance.N = {
   STEP_R = 4,          -- unfit to fight: step back from a chaser this close instead of running
   FIGHT_MAX = 1,       -- standing chasers within SWARM_R she takes on with a weak weapon
   STRONG = 30,         -- weapon score that takes on two (a crowbar is 30, a bat 34)
+  REACH_R = 2.5,       -- standing zombies this close count toward the crowd test, before any swing
+  CROWD_WEAK = 1,      -- standing zombies within REACH_R a weapon under STRONG takes on
+  CROWD_STRONG = 2,    -- and a STRONG one (3 is always too many)
+  SHOVE_R = 1.5,       -- a shove only connects this close; farther, a crowd is left, not shoved
   BARRIER_R = 6,       -- a fence or window this close between her and a zombie can be held
   HOLD_N = 2,          -- hold a fence or window against this many at most
   CLIMB_R = 4,         -- climb a fence or window this close to slow the ones behind her
@@ -156,7 +160,7 @@ function Stance.assess(snap, N)
   local flags = snap.flags or LS.combat or {}
   local function on(key) return flags[key] ~= false end
   local A = { zs = {}, nearD = 9999, standD = 9999, downD = 9999, chaseD = 9999, unawareD = 9999,
-    pack = 0, close2 = 0, chasers = 0, seers = 0, unaware = 0, across = 0, nearSide = 0, threat = 0 }
+    pack = 0, close2 = 0, reachN = 0, reachD = 9999, chasers = 0, seers = 0, unaware = 0, across = 0, nearSide = 0, threat = 0 }
   for _, z in ipairs(snap.zombies or {}) do
     local e = { d = num(z.d, 9999), dx = num(z.dx, 0), dy = num(z.dy, 0), chase = z.chase, outside = z.outside,
       across = z.across and true or false, crawl = z.crawl and true or false }
@@ -176,6 +180,12 @@ function Stance.assess(snap, N)
     else
       if z.d < A.standD then A.stand, A.standD = i, z.d end
       if z.d <= N.SPACING_R then A.close2 = A.close2 + 1 end
+      -- The crowd test counts the ones that can get at her now: awake to her or right on her.
+      -- One behind a fence or window comes over alone and falls, so it is the fence rule's.
+      if z.d <= N.REACH_R and not z.across and (z.chase ~= false or z.d <= N.UNAWARE_R) then
+        A.reachN = A.reachN + 1
+        if z.d < A.reachD then A.reach, A.reachD = i, z.d end
+      end
       -- Any chaser in the list, near or not, rules out crouching: sneaking is slow.
       if z.chase ~= false then A.chasingAny = true end
       if z.chase ~= false and z.d <= N.RANGE then
@@ -215,6 +225,7 @@ function Stance.assess(snap, N)
   elseif A.ratio < 2 then A.level = 2
   elseif A.ratio < 4 then A.level = 3
   else A.level = 4 end
+  A.strong = A.armed and A.score >= N.STRONG
   A.fightMax = A.score >= N.STRONG and math.max(2, N.FIGHT_MAX) or N.FIGHT_MAX
   A.canFight = A.armed and not A.gate
   return A
@@ -341,6 +352,23 @@ function Stance.choose(snap)
     a.why = tag
     a.handoff = true
     return mark(a)
+  end
+
+  -- The crowd test comes before any swing. Two of the soak's five real deaths swung with 2 or
+  -- more standing on her: 95 hp for 3 kills, against 35 hp for 15 with one (docs/pro-rules.md).
+  -- A weapon under STRONG takes on one within reach, a strong one two, nobody three. Posture
+  -- does not widen this: clear's two-chaser limit is the fight that cost the hp.
+  -- A shove knocks one down for no hp, so with the breath for it she shoves the nearest, and
+  -- the next look finds a smaller crowd and a gap to leave by. With no breath, or none in shove
+  -- reach, she leaves at once. After a crowd shove, another still standing near and not on her
+  -- is a leave too, so one shove never turns into a stand and trade blows.
+  local crowded = A.reachN > (A.strong and N.CROWD_STRONG or N.CROWD_WEAK)
+  local shoved = snap.crowdShoved and A.reachN >= 1 and not (A.stand and A.standD <= N.ON_HIM)
+  if crowded or shoved then
+    if crowded and num(snap.endurance, 1) >= N.END_SHOVE and A.reachD <= N.SHOVE_R then
+      return act("shove", A.reach, "crowd")
+    end
+    return escape("crowd")
   end
 
   -- One on her. Turning to walk away now gets her bitten, so it is a swing or a shove.
