@@ -12,6 +12,8 @@
 -- Reflex   : a live zombie inside 11 tiles is fought or fled on the game clock.
 -- HUD      : on-screen overlay (toggle with H) showing action, live thought, vitals, inventory
 --            and zombie awareness.
+-- Voice    : the inner voice from local_voice.txt, as a bubble over her head and an "Inner voice"
+--            panel (toggle with ;). See Voice.lua.
 -- All game calls are pcall-guarded; a bridge failure must never take the game down.
 
 require "LocalSurvivor/Core"
@@ -23,6 +25,7 @@ require "LocalSurvivor/ReflexLog"
 require "LocalSurvivor/Reflex"
 require "LocalSurvivor/Needs"
 require "LocalSurvivor/HUD"
+require "LocalSurvivor/Voice"
 require "LocalSurvivor/Death"
 
 local LS = LocalSurvivor
@@ -46,6 +49,8 @@ function LS.onTick()
   local tick = LS.tick
   local p = getSpecificPlayer(0)
   if not p then return end
+  -- The inner voice is read before the death and manual returns below, so her last line shows.
+  if tick % LS.Voice.POLL_EVERY == 0 then pcall(function() LS.Voice.poll(p, tick) end) end
   if not LS.announced then LS.announced = true; pcall(function() p:Say("Local model online. Let's survive this.") end) end
   if p:isDead() then
     hud.action = "DEAD"
@@ -145,8 +150,8 @@ end
 if not LS.eventsRegistered then
   LS.eventsRegistered = true
   Events.OnTick.Add(function() LS.onTick() end)
-  Events.OnGameStart.Add(function() LS.HUD.start() end)
-  Events.OnCreatePlayer.Add(function() LS.HUD.start() end)
+  Events.OnGameStart.Add(function() LS.HUD.start(); LS.Voice.start() end)
+  Events.OnCreatePlayer.Add(function() LS.HUD.start(); LS.Voice.start() end)
   Events.OnKeyPressed.Add(function(key) LS.HUD.onKeyPressed(key) end)
   Events.OnPlayerDeath.Add(function(player) LS.Death.onEvent(player) end)
 end

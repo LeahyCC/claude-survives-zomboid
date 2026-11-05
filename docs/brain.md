@@ -322,7 +322,7 @@ Where the lines go:
 
 - `bridge/pepe.log`: one JSON line each, with `action`, `thought` and `line`.
 - The Inner voice panel on /mind: the last 10, newest first, with the brain's half above the voice's half. It is filled from the log when the bridge starts, so it survives a refresh and a restart.
-- `Zomboid/Lua/local_voice.txt`: the latest line only, one line, overwritten, in the same folder as `local_intent.txt`. The format is `ACTION "thought" | the voice's line`, or just the line for an idle thought. **The HUD side is not built yet.** Nothing in the Lua mod reads this file. A later change can show it on screen.
+- `Zomboid/Lua/local_voice.txt`: the latest line only, one line, overwritten, in the same folder as `local_intent.txt`. The format is `ACTION "thought" | the voice's line`, or just the line for an idle thought. The mod reads it (see "Inner voice on screen" below).
 
 What triggers a line:
 
@@ -360,6 +360,23 @@ Measured on this PC on 2026-11-04 (`node bridge/tools/try-pepe.mjs`, `gemma4:12b
 | menu turn fired 0.7 s into a thought | 526 to 613 ms, median 577 ms, the thought cut every time |
 
 The longer prompt makes a line slower than before the summary (1.8 to 4.0 s). That is fine for commentary that speaks at most every 30 s. A menu turn that lands in the middle of a thought costs about 160 ms more than one on a quiet model, because the CPU is still winding down. It stayed under 650 ms in all five runs.
+
+## Inner voice on screen
+
+```
+bridge --> Lua/local_voice.txt --> Voice.lua (twice a second, only when the text changed)
+                                     |-- bubble over her head, about 7 s
+                                     `-- "Inner voice" panel, top right, last 3 lines, newest on top
+```
+
+The mod shows the voice's half of the line (after the bar). The brain's half stays on /mind and in the HUD.
+
+- **Bubble.** `addLineChatElement` on the player, in teal. It is overhead text only: no chat window entry and no world sound. Shout and Callout are never used, those draw zombies. If the game fades the bubble before 7 seconds, it is said again until the hold is over. Lines over 140 characters are cut for the bubble. No bubble once she is dead.
+- **Panel.** Titled "Inner voice", top right, medium font, a dark half clear background, word wrapped, the newest line white and the older two dimmer. It draws nothing until the first line arrives. The HUD is bottom left, so they do not overlap.
+- **First read.** The first read only learns what the file already held, so a line left from the last run is not shown.
+- **Off.** `;` toggles both. A file named `Zomboid/Lua/ls_voice_off.txt` (any content) turns both off and wins over the key. Default on. The HUD key line shows the state.
+- **Stream filter.** Off by default. A file named `Zomboid/Lua/ls_voice_clean.txt` turns it on. Then a short list of slurs and the words that get Twitch channels banned (`ENCODED` in `Voice.lua`, ROT13 so the source holds none in the clear) is starred out, whole words only, same length. It changes the game display only. `/mind`, `pepe.log` and the history in the mod stay unfiltered. It does not catch leetspeak, so keep an eye on chat anyway. To add a word, ROT13 it and add it to the list.
+- The flag files are looked for at every read, so you can switch them on or off while the game runs.
 
 ## Critic
 

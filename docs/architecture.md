@@ -35,10 +35,11 @@ LocalSurvivor/
                                     of each stance (attack closeIn backOff holdAt runAlong climb)
   Needs.lua     LocalSurvivor.Needs start update, the needs verbs and their jobs (docs/needs.md)
   HUD.lua       LocalSurvivor.HUD   start, onKeyPressed (and the LocalHUD panel class)
+  Voice.lua     LocalSurvivor.Voice start poll toggle cleanse, the inner voice bubble and panel (docs/brain.md)
   Death.lua     LocalSurvivor.Death sample onDeath onEvent reset, the 10 second ring and the death record (docs/percept.md)
 ```
 
-Require order is `Core`, then `Sense`, then `Move`, then `Act` and `Reflex`. `Stance` and `ReflexLog` need only `Core`; `Reflex` and `Act` require `Stance`, and `Reflex` requires `ReflexLog`. `Needs` needs `Core` and `Sense`. `HUD` needs only `Core`. `Death` needs `Core` and `Sense`. `Sense.writePercept` calls its `sample`, and the entry file registers its `OnPlayerDeath` handler. Calls between modules go through the table at run time (`LocalSurvivor.Sense.zombieScan(...)`), so no module holds a stale copy of another's function.
+Require order is `Core`, then `Sense`, then `Move`, then `Act` and `Reflex`. `Stance` and `ReflexLog` need only `Core`; `Reflex` and `Act` require `Stance`, and `Reflex` requires `ReflexLog`. `Needs` needs `Core` and `Sense`. `HUD` and `Voice` need only `Core`. `Death` needs `Core` and `Sense`. `Sense.writePercept` calls its `sample`, and the entry file registers its `OnPlayerDeath` handler. Calls between modules go through the table at run time (`LocalSurvivor.Sense.zombieScan(...)`), so no module holds a stale copy of another's function.
 
 Rules:
 
