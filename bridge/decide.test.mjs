@@ -17,7 +17,10 @@ assert.equal(junk.dy, -40);
 assert.equal(junk.say, 'a b');
 
 const line = intentLine(3, normalize({ action: { type: 'WAIT' }, thought: 'holding', subtask: 'hide' }));
-assert.equal(line, '3|WAIT|0|0||holding|hide');
+assert.equal(line, '3|WAIT|0|0||holding|hide|');
+
+const aimed = intentLine(4, { ...normalize({ action: { type: 'LOOT' }, thought: 'grab' }), target: ' door|7\nnorth ' });
+assert.equal(aimed, '4|LOOT|0|0||grab||door 7 north');
 
 const inch = normalize({ action: { type: 'MOVE', dx: -1, dy: 0 } });
 assert.equal(inch.type, 'MOVE');

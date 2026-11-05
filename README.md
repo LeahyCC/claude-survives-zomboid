@@ -46,5 +46,8 @@ node pz-bridge.mjs
 ## Check
 
 ```
-node bridge/decide.test.mjs
+npm install
+npm test
 ```
+
+It checks the Lua syntax (5.1), loads the whole mod in a Lua VM with the game stubbed, and runs the bridge tests. The layout of the mod is in `docs/architecture.md`.
