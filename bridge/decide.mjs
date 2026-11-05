@@ -1,10 +1,10 @@
-// Turn a model reply into one intent line the mod can run.
+// The v1 brain, kept for a mod that writes a percept with no `v` field. The v2 brain is
+// brain.mjs (docs/brain.md). intentLine and extractJSON are shared by both.
 // The mod owns the verbs. A bad type becomes WAIT, it never becomes a new verb.
 
 export const ACTIONS = ['MOVE', 'LOOT', 'EAT', 'DRINK', 'EQUIP', 'CLOSEDOOR', 'CONCEAL', 'BREAKIN', 'STOP', 'WAIT'];
-// The body also runs GOTO, ENTER and SEARCH (docs/skills.md). They stay out of ACTIONS until a
-// prompt offers them: this prompt explains dx,dy as a step, so a stray GOTO 16,0 would walk to
-// tile (16, 0), and SEARCH is a word a model reaches for unasked.
+// GOTO, ENTER, SEARCH and the needs verbs stay out of this list: this prompt explains dx,dy as
+// a step, so a stray GOTO 16,0 would walk to tile (16, 0). The v2 menu offers them instead.
 
 const PERSONA = `You play one survivor in Project Zomboid. Reply with ONE JSON object and nothing else.
 A fast reflex already fights or flees any zombie inside 10 tiles. You are only asked when none is that close. Pick the next step, not each swing.
@@ -80,8 +80,8 @@ const BUILDING_STEP = {
   NE: [16, -16], NW: [-16, -16], SE: [16, 16], SW: [-16, 16],
 };
 
-// zClose is the mod's count of living zombies at 10 tiles or nearer.
-// An order after a slow thought replaces the flee and walks her back in.
+// zClose is the mod's count of living zombies at 10 tiles or nearer. A v1 percept has no chase
+// flag, so any of them holds the order. senses.holdReason is the v2 rule.
 export function zombieInside(percept) {
   if (!percept || percept.dead) return false;
   return (Number(percept.zClose) || 0) > 0;
@@ -91,27 +91,13 @@ export function zombieInside(percept) {
 let failedEquipItems = '';
 // One search per spot. If the bag did not change, the room has nothing new.
 let lootedBag = null;
-let lootedSpot = '';
+let lootedSpot = null;
 
 function spotOf(percept) {
   const x = Number(percept.x);
   const y = Number(percept.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return '';
   return `${Math.round(x / 8)},${Math.round(y / 8)}`;
-}
-
-function leaveHere(next, percept) {
-  const away = {
-    N: [0, 16], S: [0, -16], E: [-16, 0], W: [16, 0],
-    NE: [-16, 16], NW: [16, 16], SE: [-16, -16], SW: [16, -16],
-  };
-  const step = away[String(percept.zDir || '')] || [0, -16];
-  return {
-    ...next, type: 'MOVE', dx: step[0], dy: step[1],
-    goal: 'Find food in the next building.',
-    subtask: 'Leave this building.',
-    thought: 'Nothing new here. Moving on.',
-  };
 }
 
 // The model will say "get to safety" and walk forever. A job with a finish replaces that
@@ -147,14 +133,12 @@ export function steerJob(decision, percept) {
   if (waters > 0 && thirst > 0.55) {
     return { ...next, type: 'DRINK', dx: 0, dy: 0, goal: 'Drink, then keep looting.', subtask: 'Drink.' };
   }
-  const spot = spotOf(percept);
-  if (atBuilding && weapon === 'none' && lootedBag !== null && lootedSpot === spot && items === lootedBag) {
-    return leaveHere(next, percept);
-  }
   if (weapon === 'none' && bldg !== 'none' && !err.startsWith('loot')) {
-    if (atBuilding) {
-      lootedBag = items;
+    // One LOOT per spot until the bag changes. The walk-away that used to follow looped into walls.
+    const spot = spotOf(percept);
+    if (atBuilding && !(lootedSpot === spot && lootedBag === items)) {
       lootedSpot = spot;
+      lootedBag = items;
       return {
         ...next, type: 'LOOT', dx: 0, dy: 0,
         goal: 'Get a weapon and food from this building.',
@@ -172,26 +156,10 @@ export function steerJob(decision, percept) {
       };
     }
   }
-  // Standing still in a cleared room never becomes the next building. Step away from the zombies.
-  const idle = decision.type === 'STOP' || decision.type === 'WAIT' || decision.type === 'CONCEAL';
-  if (idle && weapon !== 'none') {
-    const away = {
-      N: [0, 16], S: [0, -16], E: [-16, 0], W: [16, 0],
-      NE: [-16, 16], NW: [16, 16], SE: [-16, -16], SW: [16, -16],
-    };
-    const step = away[String(percept.zDir || '')] || [0, -16];
-    return {
-      ...next, type: 'MOVE', dx: step[0], dy: step[1],
-      goal: 'Find food in the next building.',
-      subtask: 'Leave this building.',
-      thought: 'Nothing left here. Moving on.',
-    };
-  }
   return decision;
 }
 
-// The fields this prompt was written for. Percept v2 adds more (docs/percept.md), and they stay
-// out of this prompt so it does not grow. The brain that uses them is a separate piece of work.
+// The fields this prompt was written for. A v2 percept goes to brain.mjs instead.
 export const V1_FIELDS = [
   'dead', 'x', 'y', 'z', 'hour', 'day', 'outside', 'room', 'hp', 'hunger', 'thirst', 'fatigue',
   'endurance', 'panic', 'zTotal', 'zNear', 'zClose', 'zDist', 'zDir', 'zdx', 'zdy', 'foods',

@@ -10,7 +10,7 @@ status       running -> done | failed
 
 Every order sets `running` when it starts. The verbs below then set `done` or `failed` with a short `why`. The older one-shot verbs (`EAT DRINK EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`) stay `running`, or `failed` with the old message like `eat: no food`.
 
-A failure also sets `err` in the percept to `verb: why`, for example `enter: locked`. The current bridge only reads `err`.
+A failure also sets `err` in the percept to `verb: why`, for example `enter: locked`. The v1 brain only reads `err`. The v2 brain reads `res` and keeps a failed order off its menu for a while (`docs/brain.md`).
 
 ## How a skill runs
 
@@ -23,7 +23,7 @@ zombie within 4 of target   on resume: failed "zombie"
 paused over 1800 ticks      failed "zombie"
 ```
 
-- A new order replaces the running skill and clears the queue. `WAIT` does not: the current bridge sends `WAIT` while the body is busy.
+- A new order replaces the running skill and clears the queue. `WAIT` does not. The v2 brain sends nothing at all while a skill runs (`docs/brain.md`).
 - A `MOVE` that arrives while `SEARCH` or `LOOT` still has item transfers queued waits for them, as `LOOT` always did.
 - Each step reads the world again, so a resume just runs the step again.
 
@@ -89,7 +89,7 @@ A container the body cannot reach is skipped, not a failure. A room that is not 
 
 ## LOOT
 
-No arguments. Kept for the current bridge.
+No arguments. Kept for the v1 brain.
 
 - Searches the room the survivor is in, with the same table. No junk pass.
 - Outside, or in a room with no containers: the nearest container within 10 tiles, and the room it is in.
