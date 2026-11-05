@@ -15,7 +15,7 @@ fast   chooser         every few seconds, one menu id
 body   Lua skills and the reflex
 ```
 
-The slow layer never blocks the fast one. It runs in the background of the bridge. It only starts when no menu turn is waiting on Ollama and no fight is on. If the planner is busy when the fast model needs Ollama, the menu turn queues behind it for the rest of that call. The planner has its own timeout, so the wait is bounded (default 2 minutes, usually far less).
+The slow layer never blocks the fast one. It runs in the background of the bridge. It only starts when no menu turn is waiting on Ollama and no fight is on. If a menu turn needs Ollama while a plan is being written, the plan is cancelled so the turn never waits behind it. That does not count as a planner failure: the events stay pending and the plan is asked again after the usual 30 second gap.
 
 ## The plan
 
@@ -122,4 +122,6 @@ Deleting `pz-state.json` does not touch lessons. That is on purpose.
 
 ## Check it
 
-`npm test` covers the events, plan parsing, lesson parsing, dedupe, the cap, trigger matching, the run flag, and the planner's wait for a free model. The model is mocked. Nothing tests a real model's plans or lessons yet. Read the first few from a live run before trusting them.
+`npm test` covers the events, plan parsing, lesson parsing, dedupe, the cap, trigger matching, the run flag, the planner's wait for a free model, and a menu turn cutting a plan short. The model is mocked. Nothing tests a real model's plans or lessons yet. Read the first few from a live run before trusting them.
+
+Every call to Ollama, menu turns and the planner alike, uses one context size, `PZ_NUM_CTX` (default 8192). Ollama reloads the model whenever `num_ctx` changes between requests, so two sizes would cost a reload at each switch.

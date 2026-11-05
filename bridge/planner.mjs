@@ -197,6 +197,8 @@ export function createPlanner(deps) {
         log('plan', `${reasons.join(', ')}: ${next.goal}${next.home ? ` (home ${next.home})` : ''}`);
         onChange();
       } catch (err) {
+        // A menu turn needed the model. Not a failure: the events stay pending for the next try.
+        if (err && err.preempted) { log('plan', 'cut short by a menu turn, will ask again'); return; }
         self.lastError = String(err && err.message || err).slice(0, 200);
         log('error', `planner: ${self.lastError}`);
         self.failures += 1;

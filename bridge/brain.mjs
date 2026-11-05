@@ -1,7 +1,7 @@
 // One turn of the v2 brain, without any I/O. pz-bridge.mjs reads the files and calls Ollama,
 // this decides who gets the turn and what the order line says.
 //
-//   hold     a chaser inside 10 or anything inside 3: the reflex owns it, no order
+//   hold     a chaser inside 10 or a seen zombie inside 3: the reflex owns it, no order
 //   asleep   no order, a MOVE or GOTO would wake him into the dark
 //   pending  the last order is not picked up yet
 //   skill    a long job is running and nothing that matters changed

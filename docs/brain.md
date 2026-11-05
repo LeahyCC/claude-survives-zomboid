@@ -14,7 +14,7 @@ update map memory ---------------------------------- memory.mjs
    |
    v
 dead? ........................... no order
-chaser inside 10, or any zombie inside 3 ... hold, the reflex owns it
+chaser inside 10, or a zombie she can see inside 3 ... hold, the reflex owns it
 asleep? ......................... no order
 last order not picked up yet? ... wait for the body
    |

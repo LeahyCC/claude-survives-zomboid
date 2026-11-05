@@ -26,6 +26,10 @@ const FORMAT = {
 export const BACKEND = (env.PZ_BACKEND || 'ollama').toLowerCase();
 export const MODEL = env.PZ_MODEL || env.OLLAMA_MODEL || 'gemma4:12b';
 const TIMEOUT = Number(env.PZ_TIMEOUT || 60000);
+// One context size for every call. Ollama reloads the model when num_ctx changes between
+// requests, so the planner and the menu turns using different sizes cost a reload each switch.
+// 8192 fits the planner's prompt plus its thinking.
+const NUM_CTX = Number(env.PZ_NUM_CTX || 8192);
 const BASE = () => env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // Unloading and reloading a 12B model costs seconds the game does not wait for.
 export const KEEP_ALIVE = env.PZ_KEEP_ALIVE || '30m';
@@ -68,9 +72,10 @@ export function parseChoice(raw, ids) {
   return { choice, thought };
 }
 
-async function postJSON(url, body, label, timeout = TIMEOUT) {
+async function postJSON(url, body, label, timeout = TIMEOUT, cancel = null) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeout);
+  if (cancel) cancel.addEventListener('abort', () => ctl.abort(), { once: true });
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -92,7 +97,7 @@ async function callOllama(prompt, model) {
     think: false,
     format: FORMAT,
     keep_alive: KEEP_ALIVE,
-    options: { temperature: 0.2, num_predict: 280, num_ctx: 4096 },
+    options: { temperature: 0.2, num_predict: 280, num_ctx: NUM_CTX },
     messages: [{ role: 'user', content: prompt }],
   }, 'ollama');
   const msg = data.message || {};
@@ -104,11 +109,19 @@ async function callOllama(prompt, model) {
 let tacticalCalls = 0;
 export const tacticalBusy = () => tacticalCalls > 0;
 
+// The plan in progress, if any. A menu turn cancels it rather than queue behind it on the
+// model: a plan can take a minute or more, and the plan is asked again after the usual gap.
+let planCancel = null;
+function startTactical() {
+  tacticalCalls += 1;
+  if (planCancel) planCancel.abort();
+}
+
 export async function callLLM(prompt, model = MODEL) {
   if (BACKEND !== 'ollama') {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
-  tacticalCalls += 1;
+  startTactical();
   try {
     return await callOllama(prompt, model);
   } finally {
@@ -122,7 +135,7 @@ export async function callChoice(user, ids, model = MODEL) {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
   const started = Date.now();
-  tacticalCalls += 1;
+  startTactical();
   let data;
   try {
     data = await postJSON(BASE() + '/api/chat', {
@@ -131,7 +144,7 @@ export async function callChoice(user, ids, model = MODEL) {
       think: false,
       format: choiceSchema(ids),
       keep_alive: KEEP_ALIVE,
-      options: { temperature: 0.2, num_predict: 96, num_ctx: 4096 },
+      options: { temperature: 0.2, num_predict: 96, num_ctx: NUM_CTX },
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
     }, 'ollama');
   } finally {
@@ -164,24 +177,34 @@ export async function callPlanner({ system, user, schema, model = PLANNER_MODEL,
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
   const started = Date.now();
+  const cancel = new AbortController();
+  planCancel = cancel;
   const send = (think) => postJSON(BASE() + '/api/chat', {
     model,
     stream: false,
     think,
     format: schema,
     keep_alive: KEEP_ALIVE,
-    options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: 8192 },
+    options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: NUM_CTX },
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-  }, 'ollama', timeout);
+  }, 'ollama', timeout, cancel.signal);
   let think = PLANNER_THINK !== 'off' && !cannotThink.has(model);
   let data;
   try {
     data = await send(think);
   } catch (err) {
+    if (cancel.signal.aborted) throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true });
     if (!think || !thinkRefused(err && err.message)) throw err;
     cannotThink.add(model);
     think = false;
-    data = await send(false);
+    try {
+      data = await send(false);
+    } catch (err2) {
+      if (cancel.signal.aborted) throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true });
+      throw err2;
+    }
+  } finally {
+    if (planCancel === cancel) planCancel = null;
   }
   const msg = data.message || {};
   // Never fall back to msg.thinking: that is reasoning text, not the JSON the schema asked for.

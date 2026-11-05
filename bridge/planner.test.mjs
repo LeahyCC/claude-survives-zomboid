@@ -419,3 +419,40 @@ test('tacticalBusy is true while a menu turn is on the model, and clears after',
   }
   assert.equal(tacticalBusy(), false, 'a failed call also clears it');
 });
+
+test('a menu turn cuts a plan short instead of waiting behind it', async () => {
+  const real = globalThis.fetch;
+  // The plan never answers on its own; only an abort ends it. The menu turn answers at once.
+  globalThis.fetch = (url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.format && body.format.properties && body.format.properties.choice) {
+      return Promise.resolve(okReply(JSON.stringify({ thought: 'go', choice: 'wait' })));
+    }
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    });
+  };
+  try {
+    const plan = callPlanner({ system: 's', user: 'u', schema: planSchema(), model: 'slow-plan' });
+    const turn = await callChoice('pick', ['wait']);
+    assert.match(turn.raw, /wait/);
+    await assert.rejects(plan, (err) => err.preempted === true);
+    assert.equal(tacticalBusy(), false);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test('a cut-short plan is not counted as a failure and keeps its events', async () => {
+  const logs = [];
+  const planner = createPlanner({
+    ask: async () => { throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true }); },
+    log: (kind, msg) => logs.push(`${kind}: ${msg}`),
+  });
+  planner.pending.add('dawn');
+  await planner.run({}, emptyMemory(), ['dawn']);
+  assert.equal(planner.failures, 0);
+  assert.equal(planner.lastError, '');
+  assert.ok(planner.pending.has('dawn'));
+  assert.ok(logs.some((l) => /cut short/.test(l)));
+});
