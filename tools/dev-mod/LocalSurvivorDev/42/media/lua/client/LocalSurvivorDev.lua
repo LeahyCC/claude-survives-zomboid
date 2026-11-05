@@ -36,6 +36,22 @@ local function visible(panel)
 end
 
 local NEXT = { internal = "NEXT" }
+
+-- Spawn in a random region, not always the first. On the first one every life started in the
+-- same town, picked clean by the lives before and full of the zombies they drew (soak
+-- 2026-11-05: day 14, 54 around, nothing left to loot near the spawn). The list ends with the
+-- game's own "Random" entry, and clickNext rolls a real region for it (MapSpawnSelect.lua).
+local function pickRegion(lb)
+  if not (lb and lb.items and #lb.items > 0) then return end
+  local randomName = nil
+  pcall(function() randomName = getText("UI_mapspawn_random") end)
+  for i, it in ipairs(lb.items) do
+    if randomName and it.item and it.item.name == randomName then lb.selected = i; return end
+  end
+  lb.selected = ZombRand(#lb.items) + 1
+end
+-- For the tests.
+LocalSurvivorDevSpawn = { pickRegion = pickRegion }
 local RANDOM = { internal = "RANDOM" }
 
 local function menuStep()
@@ -61,7 +77,7 @@ local function menuStep()
   if MapSpawnSelect and MapSpawnSelect.instance and visible(MapSpawnSelect.instance) then
     local ok, err = pcall(function()
       local lb = MapSpawnSelect.instance.listbox
-      if lb and lb.items and #lb.items > 0 and (lb.selected or 0) < 1 then lb.selected = 1 end
+      pickRegion(lb)
       MapSpawnSelect.instance:clickNext()
     end)
     say("menu spawn region: " .. tostring(ok) .. " " .. tostring(err or ""))
@@ -112,7 +128,7 @@ local function respawnStep()
   if visible(w.mapSpawnSelect) then
     local ok, err = pcall(function()
       local lb = w.mapSpawnSelect.listbox
-      if lb and lb.items and #lb.items > 0 and (lb.selected or 0) < 1 then lb.selected = 1 end
+      pickRegion(lb)
       w.mapSpawnSelect:clickNext()
     end)
     say("spawn region: " .. tostring(ok) .. " " .. tostring(err or ""))
