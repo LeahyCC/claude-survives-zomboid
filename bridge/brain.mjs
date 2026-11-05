@@ -17,6 +17,7 @@ import { activeLessons } from './lessons.mjs';
 import { planLines } from './planner.mjs';
 import { digest } from './digest.mjs';
 import { intentLine } from './decide.mjs';
+import { pickExamples, exampleLines } from './nudges.mjs';
 
 export const RECHECK_MS = 20_000;
 export const PENDING_MS = 10_000;
@@ -43,7 +44,8 @@ function changedSince(p, last, now, voice, recheck = RECHECK_MS) {
   return fresh ? `new need: ${fresh}` : '';
 }
 
-// extra: { plan (the planner's), lessons (the ones whose trigger holds now) }
+// extra: { plan (the planner's), lessons (the ones whose trigger holds now), examples (lines from
+// past nudges, already worded) }
 export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   const parts = [`SITUATION:\n${digest(p, memoryStats(mem))}`];
   const plan = planLines(extra.plan);
@@ -53,6 +55,8 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
     const lines = [...rules.map((r) => r.text), ...lessons.map((l) => `Lesson from a past run: ${l.text}`)];
     parts.push(`RULES FOR NOW:\n${lines.map((t) => `- ${t}`).join('\n')}`);
   }
+  const examples = extra.examples || [];
+  if (examples.length) parts.push(`EXAMPLES:\n${examples.map((t) => `- ${t}`).join('\n')}`);
   if (recent && recent.length) parts.push(`RECENT CHOICES:\n${recent.map((r) => `- ${r}`).join('\n')}`);
   if (voice && voice.length) {
     parts.push(`A voice only you can hear says: ${voice.map((v) => `"${String(v).slice(0, 200)}"`).join(' ')} Answer it in the thought, one short sentence.`);
@@ -63,7 +67,8 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
 }
 
 // ctx: { now, last (a snapshot), pending ({ seq, at }), voice (lines), recent (short strings),
-//        plan (the planner's), lessons (every stored lesson) }
+//        plan (the planner's), lessons (every stored lesson), nudges (indexed past nudges, or
+//        nothing to leave the examples out) }
 export function planTurn(p, mem, ctx = {}) {
   const now = ctx.now ?? Date.now();
   if (!p) return { kind: 'none', why: 'no senses' };
@@ -90,6 +95,8 @@ export function planTurn(p, mem, ctx = {}) {
   const rules = selectRules(p, mem);
   const lessons = activeLessons(ctx.lessons, p, mem);
   const extra = { plan: ctx.plan, lessons };
+  // Only a pick on the menu the model will see can be quoted.
+  const withExamples = (menu) => ({ ...extra, examples: exampleLines(pickExamples(ctx.nudges, p, menu)) });
   const policy = decidePolicy(p, mem, options);
   if (policy) {
     if (busy && policy.option.verb === busy.verb) {
@@ -99,7 +106,7 @@ export function planTurn(p, mem, ctx = {}) {
       // The policy still decides; the model only gets a one-item menu so it can answer.
       const only = [policy.option];
       return { kind: 'ask', why: 'policy, voice answered by the model', options: only, offered: options, rules, policy, lessons,
-        user: userMessage(p, mem, only, rules, voice, ctx.recent, extra) };
+        user: userMessage(p, mem, only, rules, voice, ctx.recent, withExamples(only)) };
     }
     return { kind: 'policy', why: policy.rule, options, rules, policy };
   }
@@ -107,7 +114,7 @@ export function planTurn(p, mem, ctx = {}) {
     return { kind: 'skill', why: `${busy.verb} running, nothing worth stopping it for`, options, touch: true };
   }
   return { kind: 'ask', why: reason || 'free choice', options, rules, lessons,
-    user: userMessage(p, mem, options, rules, voice, ctx.recent, extra) };
+    user: userMessage(p, mem, options, rules, voice, ctx.recent, withExamples(options)) };
 }
 
 // The option a decided turn sends, or null when the running job should go on. Sending the

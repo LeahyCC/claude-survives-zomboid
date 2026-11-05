@@ -253,3 +253,67 @@ unknown     none of the above, or the bridge was not watching
 ```
 
 A run also ends when `hoursAlive` goes backwards by more than half an hour, which means a new character started while the bridge was not looking. Its cause is `unknown`.
+
+## Decision log
+
+`bridge/decisions.jsonl` gets one line for every turn the policy or the model decided. Turns that wait (the reflex, sleep, a running job) write nothing. The file is only ever appended to, and it is ignored by git. Past about 20 MB it moves to `decisions.jsonl.1` (the old `.1` is dropped) and a new file starts. `PZ_DECISIONS_FILE` and `PZ_LOG_MAX_BYTES` change the path and the cap.
+
+Every line has `t` and `id`. The three kinds of line for one decision share the `id`.
+
+| `t` | Written | Fields |
+|---|---|---|
+| `decision` | when the turn is decided | `at`, `run` (the stats run's start time), `day`, `hour`, `percept` (a small copy), `menu` (id, verb, key, label), `by` (`policy`, `model` or `nudge`), `rule` (the policy rule), `choice`, `verb`, `key`, `thought`, `sent`, `seq`, `rules` (playbook rule ids and `lesson:` ids), `ms` (model time) |
+| `outcome` | when the order reports | `result` (`done` or `failed`), `why`, `verb`, `ms` (how long it ran), `hpDuring` (hp at the end minus hp at the start), `lostDuring` (hp lost along the way) |
+| `after` | when the follow-up closes | `hpAfter` and `lostAfter` (the 60 seconds after the order finished), `chased` (a zombie started chasing since the order was sent), `died` (she died within 5 minutes of the choice) |
+
+Notes:
+
+- `sent` is false when the model chose `keep`. That line has no outcome.
+- An order that a newer order cancelled gets `result: replaced`. One with no result after 5 minutes gets `unfinished`. Death closes every open order as `unfinished` with `why: died`.
+- The windows use the wall clock, so fast-forward makes them longer in game time.
+- Orders still open when the bridge stops have a decision line and no outcome.
+- A new character that the bridge never saw die closes the open orders with `died: false`.
+
+## Nudges
+
+On `/mind`, the Nudge panel shows the current menu as buttons, with the brain's pick marked. Pick the option you would have chosen, add a short reason, or write what option is missing, then press one of two buttons:
+
+- **Do it now** sends that option as the next order, through the same call a policy order uses. It is refused, with a message and nothing sent, while the reflex owns the moment, while she is asleep, with no live senses, when the menu changed since you looked, and for `keep` or the job already running.
+- **Just log it** changes nothing in the game. It works on the last menu even while the reflex holds.
+
+The page refreshes every two seconds. The buttons are rebuilt only when the menu changes, and the text boxes are never touched. The pick is kept across a new menu when the same job is still on it. A nudge that goes through clears the form, and a refused one keeps it.
+
+Each nudge that goes through writes a line to `bridge/nudges.jsonl` (ignored by git, `PZ_NUDGES_FILE` moves it). The POST is `/api/nudge` with the `x-mind: 1` header, like the lesson delete, so another site cannot send it.
+
+| Field | Meaning |
+|---|---|
+| `at`, `run`, `mode` | when, which run, `now` or `log` |
+| `applied` | true when the order was sent |
+| `pick`, `pickKey`, `pickVerb`, `pickLabel` | the option he picked. Null when he only noted a missing one |
+| `missing`, `why` | his words |
+| `brain` | the brain's pick when the menu was shown: `id`, `key`, `verb`, `by`, `rule`, `thought` |
+| `situation` | place, time, chase and main need in words. The review groups on it |
+| `menu` | the full menu he was looking at (with `a`, `b`, `target`, `key`) |
+| `percept`, `memory`, `plan` | the whole percept, the map memory the menu read, the day plan |
+
+The record is frozen from the menu he was looking at, not from whatever is on when the request arrives. The pick is matched by its `key`, because ids such as `b1` point at a different house each turn.
+
+## Review report
+
+```
+node bridge/tools/review.mjs                      both logs, all of it
+node bridge/tools/review.mjs --since 2026-11-04   from that date on
+```
+
+It prints, in a few lines each: how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
+
+## Nudges as scenarios
+
+```
+node bridge/tools/nudges-to-eval.mjs          writes bridge/eval/scenarios/nudge-<date>-<n>.json
+node bridge/tools/nudges-to-eval.mjs --dry    says what it would write
+```
+
+Each nudge with a pick becomes a scenario whose `accept` is his pick, so `node bridge/eval/run.mjs` shows how often the brain now agrees with him. The scenario's `patch` is the frozen percept (only the keys that differ from `base.json`), with the memory and plan saved in the nudge. The pick is found again on the rebuilt menu by its key. `<n>` counts the day's nudges in file order, so a name does not move.
+
+A nudge is skipped, with the reason printed, when it has no pick, was exported before (the scenario's `from` is the nudge time), matches a scenario already there, cannot be rebuilt with his pick on the menu, or the moment was not a choice (the reflex or a running job owned it). Generated scenarios are not committed. `bridge/fixtures/nudges-example.jsonl` is the one example the tests use.

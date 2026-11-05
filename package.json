@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "lint:lua": "node tools/lua-check.mjs",
-    "test": "node tools/lua-check.mjs && node --test \"bridge/*.test.mjs\" \"bridge/eval/*.test.mjs\" \"test/*.test.mjs\""
+    "test": "node tools/lua-check.mjs && node --test \"bridge/*.test.mjs\" \"bridge/eval/*.test.mjs\" \"bridge/tools/*.test.mjs\" \"test/*.test.mjs\""
   },
   "devDependencies": {
     "fengari": "^0.1.5",

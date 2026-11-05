@@ -185,6 +185,26 @@ export function safehouseScore(b) {
   return s;
 }
 
+// The map memory the menu builder read for this percept: the building she is in and the ones the
+// percept lists. A nudge keeps it so the eval can rebuild the same menu later.
+export function memorySlice(mem, p) {
+  const ids = new Set();
+  if (mem.current) ids.add(String(mem.current));
+  for (const seen of Array.isArray(p && p.buildings) ? p.buildings : []) if (seen && seen.id != null) ids.add(String(seen.id));
+  const buildings = {};
+  for (const id of ids) {
+    const b = mem.buildings[id];
+    if (!b) continue;
+    buildings[id] = {
+      visited: !!b.visited, searched: !!b.searched, partly: !!b.partly, took: (b.took || []).slice(-12),
+      water: !!b.water, bed: !!b.bed, res: !!b.res, shop: !!b.shop, zombies: num(b.zombies),
+      securedAt: b.securedAt ?? null, enteredAt: b.enteredAt ?? null,
+      ...(b.door ? { door: b.door } : {}),
+    };
+  }
+  return { current: mem.current || null, buildings };
+}
+
 export function memoryStats(mem) {
   const all = Object.values(mem.buildings);
   return {
