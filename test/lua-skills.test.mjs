@@ -32,7 +32,12 @@ function world(setup = '', x = 10.5, y = 10.5) {
 const order = (lua, line) => lua.run(`LocalSurvivor.Act.execIntent(P, "${line}")`);
 const tick = (lua, n = 1, acted = false) =>
   lua.run(`for i = 1, ${n} do LocalSurvivor.tick = LocalSurvivor.tick + 1; LocalSurvivor.Act.update(P, ${acted}) end`);
-const result = (lua) => lua.get('LocalSurvivor.result');
+// The record without res.target. Targets have their own tests.
+const result = (lua) => {
+  const { target, ...rest } = lua.get('LocalSurvivor.result');
+  return rest;
+};
+const targetOf = (lua) => lua.get('LocalSurvivor.result.target');
 const queue = (lua) => lua.run('return __queueTypes(P)');
 const moveTo = (lua, x, y) => lua.run(`P.x, P.y = ${x}, ${y}`);
 const walkTarget = (lua) => lua.run(`
@@ -276,6 +281,49 @@ test('SEARCH stops when the bag is full and the next one picks up the rooms left
   order(lua, '2|SEARCH|0|0|||');
   tick(lua, 3);
   assert.equal(walkTarget(lua), '21,10');
+});
+
+test('skills name their target in res: x,y for GOTO, the building for ENTER and SEARCH', () => {
+  const go = world('__floor(8, 8, 22, 12)');
+  order(go, '1|GOTO|20.7|10|||');
+  assert.equal(targetOf(go), '20,10');
+  moveTo(go, 19.4, 10.5);
+  tick(go);
+  assert.equal(result(go).status, 'done');
+  assert.equal(targetOf(go), '20,10', 'done keeps the target');
+  order(go, '2|GOTO|x|y|||');
+  assert.equal(targetOf(go), undefined, 'no target, no field');
+
+  const enter = enterWorld();
+  order(enter, '1|ENTER|0|0||||B2');
+  assert.equal(targetOf(enter), 'B2');
+
+  const search = world(HOUSE);
+  order(search, '1|SEARCH|0|0|||');
+  assert.equal(targetOf(search), 'B1');
+  search.run('LocalSurvivor.Act.finish(LocalSurvivor.skill, "done", "took nothing")');
+  assert.equal(targetOf(search), 'B1');
+  order(search, '2|WAIT|0|0|||');
+  assert.equal(targetOf(search), undefined, 'a new order clears it');
+});
+
+test('a WAIT while a skill runs leaves the skill target in res', () => {
+  const lua = world(HOUSE);
+  order(lua, '1|SEARCH|0|0|||');
+  order(lua, '2|WAIT|0|0|||');
+  assert.equal(result(lua).seq, 1);
+  assert.equal(targetOf(lua), 'B1');
+});
+
+test('roomsLeft counts the rooms SEARCH has not finished', () => {
+  const lua = world(HOUSE);
+  const left = () => lua.run('local _, m = LocalSurvivor.Sense.currentBuilding(P); return LocalSurvivor.Act.roomsLeft(m)');
+  lua.run('P.getSquare = function() return __squares["11,11,0"] end');
+  assert.equal(left(), 2);
+  lua.run('LocalSurvivor.searched.B1 = { ["kitchen@10,10,0"] = true }');
+  assert.equal(left(), 1);
+  lua.run('LocalSurvivor.searched.B1["bedroom@20,10,0"] = true');
+  assert.equal(left(), 0);
 });
 
 test('SEARCH outside a building fails at once', () => {

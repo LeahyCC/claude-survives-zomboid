@@ -17,9 +17,15 @@ const step = (lua, acted = false) =>
   lua.run('LocalSurvivor.tick = LocalSurvivor.tick + 5; LocalSurvivor.Needs.update(__players[0], ...)', acted);
 const queue = (lua) =>
   lua.run('local out = {} for i, a in ipairs(ISTimedActionQueue.getTimedActionQueue(__players[0]).queue) do out[i] = a.Type end return out');
-const finish = (lua) => lua.run('ISTimedActionQueue.clear(__players[0])');
+// Whatever was queued ends: walks put the player on their square, then the queue empties.
+const finish = (lua) => lua.run('__arrive(__players[0])');
 const calls = (lua) => lua.run('local out = {} for i, c in ipairs(__menuCalls) do out[i] = c.name end return out');
-const result = (lua) => lua.get('LocalSurvivor.result');
+// The record without res.target. Targets have their own tests.
+const result = (lua) => {
+  const { target, ...rest } = lua.get('LocalSurvivor.result');
+  return rest;
+};
+const targetOf = (lua) => lua.get('LocalSurvivor.result.target');
 const pure = (fn, ...args) => {
   const lua = createHarness();
   lua.requireModule('LocalSurvivor/Needs');
@@ -376,9 +382,11 @@ function openHouse(lua) {
     function __door:getModData() return {} end
     function __door:checkKeyId() return 1 end
     function __door:getSquare() return self.square end
+    function __door:getNorth() return true end
     __curtain = { __class = "IsoCurtain", open = true }
     function __curtain:IsOpen() return self.open end
     function __curtain:getSquare() return self.square end
+    function __curtain:getNorth() return true end
     __lamp = { __class = "IsoLightSwitch", on = true }
     function __lamp:isActivated() return self.on end
     function __lamp:canSwitchLight() return true end
@@ -389,7 +397,6 @@ function openHouse(lua) {
     local room = __makeRoom({ name = "bedroom", squares = { a, b } })
     local house = __makeBuilding({ id = "h1", x = 10, y = 10, x2 = 11, y2 = 10, rooms = { room } })
     for _, sq in ipairs({ a, b, c }) do sq.opts.room = room; sq.opts.building = house end
-    function a:has() return false end
     __players[0] = __makePlayer({ x = 10, y = 10, square = a, stats = { FATIGUE = 0.9 } })
   `);
 }
@@ -421,6 +428,173 @@ test('SECURE closes, locks and switches off when locking is on', () => {
   assert.deepEqual(result(lua), {
     seq: 1, verb: 'SECURE', status: 'done', why: 'closed 1 door, 1 curtain; locked 1 door; 1 light off',
   });
+});
+
+// A kitchen and a hall in one house. The player stands in the hall. The kitchen has one open
+// object on its outer wall. On a south or east wall it sits on an outside square, as the game
+// stores it. kind: door | window | lamp. wall: south, east, or north (on the inside square).
+function wallHouse(lua, { kind = 'door', wall = 'south' } = {}) {
+  lua.run(`
+    local kind, wall = "${kind}", "${wall}"
+    local obj
+    if kind == "door" then
+      obj = { __class = "IsoDoor", open = true }
+      function obj:IsOpen() return self.open end
+      function obj:HasCurtains() return nil end
+      function obj:isExterior() return true end
+      function obj:isLocked() return false end
+      function obj:isLockedByKey() return false end
+      function obj:getModData() return {} end
+      function obj:checkKeyId() return 1 end
+    elseif kind == "window" then
+      obj = { __class = "IsoWindow", open = true }
+      function obj:IsOpen() return self.open end
+      function obj:HasCurtains() return nil end
+      function obj:isSmashed() return false end
+      function obj:isDestroyed() return false end
+      function obj:isBarricaded() return false end
+    else
+      obj = { __class = "IsoLightSwitch", on = true }
+      function obj:isActivated() return self.on end
+      function obj:canSwitchLight() return true end
+    end
+    function obj:getSquare() return self.square end
+    function obj:getNorth() return wall ~= "east" end
+
+    -- The inside square is (10,10). Its south and east neighbours are outside.
+    local inside = __makeSquare({ x = 10, y = 10 })
+    local hallSq = __makeSquare({ x = 8, y = 10 })
+    local objSq
+    if wall == "south" then
+      objSq = __makeSquare({ x = 10, y = 11, objects = { obj }, around = { N = inside } })
+    elseif wall == "east" then
+      objSq = __makeSquare({ x = 11, y = 10, objects = { obj }, around = { W = inside } })
+    else
+      objSq = inside
+      inside.objects = { obj }
+      obj.square = inside
+    end
+    local kitchen = __makeRoom({ name = "kitchen", squares = { inside } })
+    local hall = __makeRoom({ name = "hall", squares = { hallSq } })
+    local house = __makeBuilding({ id = "h2", x = 8, y = 10, x2 = 10, y2 = 10, rooms = { kitchen, hall } })
+    inside.opts.room, inside.opts.building = kitchen, house
+    hallSq.opts.room, hallSq.opts.building = hall, house
+    __players[0] = __makePlayer({ x = 8.5, y = 10.5, square = hallSq, stats = { FATIGUE = 0.9 } })
+    __outside, __inside, __hall, __obj = objSq, inside, hallSq, obj
+  `);
+}
+const onOutside = (lua) => lua.run('return __players[0].sq == __outside and __outside ~= __inside');
+// Runs SECURE to the end and says whether he ever stood on the outside square.
+function sweep(lua) {
+  order(lua, '1|SECURE|0|0|||');
+  let outside = false;
+  for (let i = 0; i < 20 && result(lua).status === 'running'; i++) {
+    finish(lua);
+    outside = outside || onOutside(lua);
+    step(lua);
+  }
+  return outside;
+}
+
+for (const wall of ['south', 'east']) {
+  test(`SECURE works a ${wall}-wall door from the inside square, never from outside`, () => {
+    const lua = createHarness();
+    lua.autoload();
+    wallHouse(lua, { kind: 'door', wall });
+    assert.equal(sweep(lua), false, 'stepped outside');
+    assert.deepEqual(calls(lua), ['onOpenCloseDoor']);
+    assert.equal(lua.run('return __menuCalls[1].args[1] == __obj'), true);
+    assert.deepEqual(result(lua), { seq: 1, verb: 'SECURE', status: 'done', why: 'closed 1 door' });
+    assert.equal(lua.run('return __players[0].sq == __inside'), true, 'worked it from the inside square');
+  });
+}
+
+test('SECURE does not walk for a door on the square he already stands on', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'door', wall: 'north' });
+  lua.run('__players[0].sq = __inside; __players[0].x = 10.5; __players[0].y = 10.5');
+  order(lua, '1|SECURE|0|0|||');
+  for (let i = 0; i < 6 && result(lua).status === 'running'; i++) {
+    assert.equal(queue(lua).includes('ISWalkToTimedAction'), false);
+    finish(lua);
+    step(lua);
+  }
+  assert.equal(result(lua).why, 'closed 1 door');
+});
+
+test('SECURE counts a window only reachable from outside as out of reach, and does not walk', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'window', wall: 'south' });
+  // The inside square is blocked (a counter, say), so only the outside is left.
+  lua.run('__inside.opts.blocked = true');
+  assert.equal(sweep(lua), false);
+  assert.deepEqual(calls(lua), []);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'SECURE', status: 'done', why: 'nothing open; 1 out of reach' });
+});
+
+test('SECURE leaves a porch light on an outside square alone', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'lamp', wall: 'south' });
+  assert.equal(sweep(lua), false);
+  assert.deepEqual(calls(lua), []);
+  assert.equal(result(lua).why, 'nothing open; 1 out of reach');
+});
+
+test('SECURE fails "not inside" when he ends up outside the building', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'door', wall: 'south' });
+  order(lua, '1|SECURE|0|0|||');
+  lua.run('__players[0].sq = __outside');
+  finish(lua);
+  step(lua);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'SECURE', status: 'failed', why: 'not inside' });
+});
+
+test('SECURE names the building as its target, and done keeps it', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'door', wall: 'north' });
+  order(lua, '1|SECURE|0|0|||');
+  assert.equal(targetOf(lua), 'h2');
+  for (let i = 0; i < 8 && result(lua).status === 'running'; i++) {
+    finish(lua);
+    step(lua);
+  }
+  assert.equal(result(lua).status, 'done');
+  assert.equal(targetOf(lua), 'h2');
+  order(lua, '2|REST|0|0|||');
+  assert.equal(targetOf(lua), undefined, 'a new order clears it');
+});
+
+test('needs jobs name the item or fixture they work on', () => {
+  const bottle = body('items = { __makeItem({ name = "Water Bottle", fluid = { water = 1 } }) }');
+  order(bottle, '1|DRINK|0|0|||');
+  assert.equal(targetOf(bottle), 'Water Bottle');
+
+  const apple = body('items = { __makeItem({ name = "Apple", food = true, hung = -0.1 }) }');
+  order(apple, '1|EAT|0|0|||');
+  assert.equal(targetOf(apple), 'Apple');
+
+  const wound = body(`parts = { __makeBodyPart({ type = "Hand_L", bleeding = true }) },
+    items = { __makeItem({ name = "Bandage", bandage = true, power = 5 }) }`);
+  order(wound, '1|BANDAGE|0|0|||');
+  assert.equal(targetOf(wound), 'Hand_L');
+
+  const bag = body('items = { __makeItem({ type = "Base.Bag_Schoolbag", name = "School Bag", id = 1, back = true, cap = 10, items = {} }) }');
+  order(bag, '1|WEARBAG|0|0|||');
+  assert.equal(targetOf(bag), 'School Bag');
+});
+
+test('the same verb again puts the job target back under the new seq', () => {
+  const lua = body('items = { __makeItem({ name = "Apple", food = true, hung = -0.1 }) }');
+  order(lua, '1|EAT|0|0|||');
+  order(lua, '2|EAT|0|0|||');
+  assert.equal(result(lua).seq, 2);
+  assert.equal(targetOf(lua), 'Apple');
 });
 
 test('SECURE outside fails', () => {

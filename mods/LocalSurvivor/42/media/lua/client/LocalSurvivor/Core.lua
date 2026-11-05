@@ -50,11 +50,23 @@ default("hudData", {
 -- Act.lua never changes.
 default("verbs", {})
 
--- What the last order did. The next card puts it in the percept.
+-- What the last order did, as the percept carries it in res. target is what the job works on
+-- (a building id, "x,y", an item name) and is left out when there is none. A new order clears
+-- it, and done or failed on the same order keeps it, so the bridge can still read it after a
+-- restart in the middle of a job.
 default("result", { seq = 0, verb = "", status = "idle", why = "" })
-function LS.setResult(seq, verb, status, why)
+function LS.setResult(seq, verb, status, why, target)
   local r = LS.result
+  local same = (seq or 0) == r.seq and (verb or "") == r.verb
   r.seq, r.verb, r.status, r.why = seq or 0, verb or "", status or "idle", why or ""
+  if target ~= nil then r.target = (target ~= "") and tostring(target) or nil
+  elseif not same then r.target = nil end
+end
+
+-- Name the running order's target. Ignored when the record already belongs to a newer order.
+function LS.aim(seq, target)
+  local r = LS.result
+  if r.seq == seq then r.target = (target ~= nil and target ~= "") and tostring(target) or nil end
 end
 
 -- ---------- string helpers ----------

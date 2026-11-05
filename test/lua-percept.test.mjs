@@ -121,7 +121,9 @@ test('a bare player still gives a percept that parses, with v2 defaults', () => 
   assert.equal(p.water, null);
   assert.equal(p.bed, null);
   assert.deepEqual(p.buildings, []);
-  assert.deepEqual(p.res, { seq: 0, verb: '', status: 'idle', why: '' });
+  assert.deepEqual(p.res, { seq: 0, verb: '', status: 'idle', why: '', target: '' });
+  assert.equal(p.asleep, false);
+  assert.equal(p.inv.canRip, false);
   assert.equal(p.bag, 'none');
   assert.equal(p.dark, false);
 });
@@ -165,8 +167,8 @@ test('a rich player fills every v2 field from the game calls', () => {
   assert.equal(p.maxWeight, 8);
   assert.equal(p.bag, 'School Bag');
   assert.deepEqual(p.inv, {
-    foodReady: 1, cans: 1, canOpener: true, waterL: 0.8, emptyBottles: 1, bandages: 2, disinfectant: 2,
-    painkillers: 1, hammer: true, saw: false, screwdriver: false, lighter: false,
+    foodReady: 1, cans: 1, canOpener: true, canRip: false, waterL: 0.8, emptyBottles: 1, bandages: 2,
+    disinfectant: 2, painkillers: 1, hammer: true, saw: false, screwdriver: false, lighter: false,
   });
   assert.equal(p.foods, 1, 'the old field no longer counts the can');
   assert.deepEqual(p.weapons, [
@@ -235,13 +237,24 @@ test('the place scan finds buildings, doors, water and a bed over a few ticks', 
   scan(lua);
   assert.equal(lua.get('LocalSurvivor.senseScan.phase'), 'idle');
   const p = percept(lua);
-  assert.deepEqual(p.inBldg, { id: 'H1', rooms: 2, explored: false, water: true, room: 'kitchen' });
+  assert.deepEqual(p.inBldg, { id: 'H1', rooms: 2, roomsLeft: 2, explored: false, water: true, room: 'kitchen' });
   assert.deepEqual(p.water, { x: 2, y: 2, z: 0, d: 1.4 });
   assert.deepEqual(p.bed, { x: 7, y: 6, z: 0, d: 5 });
   assert.deepEqual(p.buildings, [
     { id: 'H1', dx: 0, dy: 0, d: 0, res: true, shop: false, door: { x: 0, y: 4 }, visited: true },
     { id: 'S1', dx: 27, dy: 0, d: 27, res: false, shop: true, door: { x: 30, y: 6 }, visited: false },
   ]);
+});
+
+test('roomsLeft drops as SEARCH finishes rooms', () => {
+  const lua = body();
+  town(lua);
+  scan(lua);
+  lua.run('LocalSurvivor.searched.H1 = { ["kitchen@0,0,0"] = true }');
+  assert.equal(percept(lua).inBldg.roomsLeft, 1);
+  lua.run('LocalSurvivor.searched.H1["bedroom@0,0,0"] = true');
+  assert.equal(percept(lua).inBldg.roomsLeft, 0);
+  assert.equal(percept(lua).inBldg.rooms, 2);
 });
 
 test('a sink with no water left is not offered', () => {
@@ -267,13 +280,78 @@ test('walking out of the building drops water and bed and asks for a new scan', 
   assert.equal(after.find((b) => b.id === 'S1').visited, false);
 });
 
+test('asleep comes from the game', () => {
+  const lua = body();
+  lua.run('__players[0] = __makePlayer({}); __players[0].asleep = true');
+  assert.equal(percept(lua).asleep, true);
+  lua.run('__players[0].asleep = false');
+  assert.equal(percept(lua).asleep, false);
+});
+
+test('res carries the target of the running job', () => {
+  const lua = body();
+  lua.run('__players[0] = __makePlayer({})');
+  lua.call('LocalSurvivor.setResult', 5, 'ENTER', 'running', '', 'H1');
+  assert.deepEqual(percept(lua).res, { seq: 5, verb: 'ENTER', status: 'running', why: '', target: 'H1' });
+  // Done on the same order keeps the target. A new order clears it.
+  lua.call('LocalSurvivor.setResult', 5, 'ENTER', 'done', 'in by a door');
+  assert.equal(percept(lua).res.target, 'H1');
+  lua.call('LocalSurvivor.setResult', 6, 'WAIT', 'running', '');
+  assert.equal(percept(lua).res.target, '');
+});
+
+function ripKit(lua, { bandage = false, recipe = true } = {}) {
+  lua.run(`
+    __recipes.RipSheets = { name = "RipSheets" }
+    __canCraft.RipSheets = ${recipe}
+    local items = { __makeItem({ name = "Sheet", tags = { SHEET = true } }) }
+    if ${bandage} then table.insert(items, __makeItem({ name = "Bandage", bandage = true })) end
+    __players[0] = __makePlayer({ x = 10, y = 10, items = items })
+  `);
+}
+
+test('inv.canRip is true when a sheet could be ripped and no bandage is carried', () => {
+  const lua = body();
+  ripKit(lua);
+  const inv = percept(lua).inv;
+  assert.equal(inv.canRip, true);
+  assert.equal(inv.bandages, 0);
+});
+
+test('inv.canRip is false when the game would not let him rip it, or a bandage is carried', () => {
+  const noRecipe = body();
+  ripKit(noRecipe, { recipe: false });
+  assert.equal(percept(noRecipe).inv.canRip, false);
+  const hasBandage = body();
+  ripKit(hasBandage, { bandage: true });
+  const inv = percept(hasBandage).inv;
+  assert.equal(inv.canRip, false);
+  assert.equal(inv.bandages, 1);
+});
+
+test('inv.canRip matches what BANDAGE would rip', () => {
+  const lua = body();
+  ripKit(lua);
+  assert.equal(percept(lua).inv.canRip, lua.run('return LocalSurvivor.Needs.medKit(__players[0]).rip ~= nil'));
+});
+
+test('inv.canRip is kept for a few seconds', () => {
+  const lua = body();
+  ripKit(lua);
+  assert.equal(percept(lua).inv.canRip, true);
+  lua.run('__canCraft.RipSheets = false');
+  assert.equal(percept(lua).inv.canRip, true);
+  lua.run('LocalSurvivor.tick = LocalSurvivor.tick + 301');
+  assert.equal(percept(lua).inv.canRip, false);
+});
+
 test('night makes it dark', () => {
   const lua = body();
   lua.run('__players[0] = __makePlayer({}); __time.night = true');
   assert.equal(percept(lua).dark, true);
 });
 
-test('a busy worst case stays under about 3 KB', () => {
+test('a busy worst case stays under about 3.3 KB', () => {
   const lua = body();
   lua.run(`
     local items, parts = {}, {}
@@ -299,5 +377,5 @@ test('a busy worst case stays under about 3 KB', () => {
   assert.equal(p.wounds.length, 8);
   assert.equal(p.buildings.length, 6);
   assert.equal(p.weapons.length, 4);
-  assert.ok(line.length < 3100, `percept is ${line.length} bytes`);
+  assert.ok(line.length < 3300, `percept is ${line.length} bytes`);
 });
