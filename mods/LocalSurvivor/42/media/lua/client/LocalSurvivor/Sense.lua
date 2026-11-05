@@ -734,6 +734,8 @@ function Sense.perceptV2(p, px, py, room, weaponScore)
   end
 
   add("asleep", try(function() return p:isAsleep() == true end, false))
+  -- The game speed button: 0 paused, 1 normal, 2 to 4 fast forward. The soak test reads it.
+  add("speed", try(function() return getGameSpeed() end, 1))
   add("kills", try(function() return p:getZombieKills() end, 0))
   add("hoursAlive", try(function() return math.floor(p:getHoursSurvived() * 100 + 0.5) / 100 end, 0))
   add("moodle", Sense.moodles(p))

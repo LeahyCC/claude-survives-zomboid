@@ -86,6 +86,9 @@ function LS.onTick()
     end
   end
 
+  -- A hit while the clock is fast cannot wait for the 5 tick checks.
+  pcall(function() LS.Reflex.watchHealth(p) end)
+
   -- SURVIVAL first, every ~5 ticks (fight/flee locally, the brain is too slow for this).
   -- NOTE: no auto game-pause. PZ halts OnTick at speed 0 so the mod could never un-pause itself
   -- (it froze the game). The flee reflex handles dire moments instead; pause manually if you want.
@@ -105,7 +108,8 @@ function LS.onTick()
     pcall(function() p:setSneaking(sneak) end)
   end
 
-  if tick % 15 == 0 then pcall(function() LS.Reflex.manageSpeed(p) end) end
+  if tick % 15 == 0 then pcall(function() LS.Reflex.manageSpeed(p) end)
+  elseif tick % 5 == 0 then pcall(function() LS.Reflex.guardSpeed(p) end) end
   if tick % 90 == 0 then pcall(function() LS.Act.manageLight(p) end) end
   if tick % 120 == 0 then pcall(function() LS.Sense.scanBuildings(math.floor(px), math.floor(py), math.floor(p:getZ())) end) end
   -- keep the body moving between decisions so he's never frozen without a reason

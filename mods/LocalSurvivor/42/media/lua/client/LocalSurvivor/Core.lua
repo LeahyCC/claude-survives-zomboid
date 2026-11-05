@@ -52,6 +52,8 @@ default("lastPY", nil)
 default("observing", false)   -- true while the AI is deliberately holding to look around
 default("autoSpeed", true)
 -- Game speed 0 stops OnTick, so the mod must never pause itself. It could not unpause.
+default("nightFast", true)    -- fast forward the night while she waits safely indoors (K toggles)
+default("fastCoolUntil", 0)   -- tick before which night fast forward stays off after a snap back
 
 -- Shared with the HUD panel
 default("hudData", {
@@ -137,6 +139,37 @@ function Core.split(s, sep)
     table.insert(out, string.sub(s, i, j - 1)); i = j + 1
   end
   return out
+end
+
+-- ---------- game speed ----------
+-- The game multiplier behind each speed button, as the vanilla speed keys set it.
+Core.SPEED_MULT = { [1] = 1, [2] = 5, [3] = 20, [4] = 40 }
+-- Ticks night fast forward stays off after it was cut short, so a zombie pacing the edge of the
+-- range cannot flip the clock back and forth.
+Core.FAST_COOL = 600
+
+function Core.gameSpeed()
+  local ok, cur = pcall(function() return getGameSpeed() end)
+  if ok and type(cur) == "number" then return cur end
+  return nil
+end
+
+-- Set the speed the way the vanilla keys do: the speed and its clock multiplier together.
+function Core.setSpeed(n)
+  pcall(function() setGameSpeed(n) end)
+  pcall(function() getGameTime():setMultiplier(Core.SPEED_MULT[n] or 1) end)
+end
+
+-- ISWalkToTimedAction:isValid is false above speed 2, so a walk queued at 3 or 4 is silently
+-- dropped. Anything about to queue one calls this first. Returns true if it slowed the game.
+-- A pause (0) and a player who switched auto speed off are left alone.
+function Core.snapSpeed()
+  if not LS.autoSpeed then return false end
+  local cur = Core.gameSpeed()
+  if not cur or cur <= 2 then return false end
+  Core.setSpeed(1)
+  LS.fastCoolUntil = (LS.tick or 0) + Core.FAST_COOL
+  return true
 end
 
 -- Number of queued timed actions for this player.
