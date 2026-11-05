@@ -93,8 +93,9 @@ test('the night hours match the bridge: 21:00 up to 06:00', () => {
 const BROKEN = {
   outside: ['function P:isOutside() return true end', 2],
   'no building under her': ['__squares["10,10,0"].opts.building = nil', 2],
-  'a zombie 15 tiles away': [zombieAt(25, 10), 1],
-  'a zombie 10 tiles away': [zombieAt(20, 10), 1],
+  'a zombie 6 tiles away': [zombieAt(16, 10), 1],
+  'a zombie 8 tiles away': [zombieAt(18, 10), 1],
+  'a zombie in sight': ['P.getStats = function() return { get = function() return 0 end, getNumChasingZombies = function() return 0 end, getNumVisibleZombies = function() return 1 end } end', 2],
   'a chaser far away': ['P.getStats = function() return { get = function() return 0 end, getNumChasingZombies = function() return 1 end } end', 2],
   bleeding: ['P.bleeding = 1', 2],
   'last order was MOVE': ['LocalSurvivor.setResult(2, "MOVE", "running", "")', 2],
@@ -115,11 +116,11 @@ for (const [name, [setup, expected]] of Object.entries(BROKEN)) {
   });
 }
 
-test('the guard snaps back to 1 when a zombie comes within 20 tiles', () => {
+test('the guard snaps back to 1 when a zombie comes within 8 tiles', () => {
   const lua = house();
   manage(lua);
   assert.equal(speed(lua), 3);
-  lua.run(zombieAt(25, 10));
+  lua.run(zombieAt(16, 10));
   lua.run('LocalSurvivor.Reflex.guardSpeed(P)');
   assert.equal(speed(lua), 1);
 });
@@ -146,7 +147,7 @@ test('opening a wound snaps the clock back', () => {
 });
 
 test('the fast forward waits out a cool down after a snap back', () => {
-  const lua = house(zombieAt(25, 10));
+  const lua = house(zombieAt(16, 10));
   lua.run('__speed = 3');
   lua.run('LocalSurvivor.Reflex.guardSpeed(P)');
   assert.equal(speed(lua), 1);
@@ -296,8 +297,9 @@ test('the percept reports the speed', () => {
 test('pickSpeed is pure: the same facts give the same answer', () => {
   const facts = { nightFast: true, night: true, inside: true, calm: true, nd: 9999 };
   assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', facts), 3);
-  assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', { ...facts, nd: 20 }), 1);
-  assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', { ...facts, nd: 21 }), 3);
+  assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', { ...facts, nd: 8 }), 1);
+  assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', { ...facts, nd: 9 }), 3);
+  assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', { ...facts, seen: true }), 2);
   assert.equal(lua().call('LocalSurvivor.Reflex.pickSpeed', { ...facts, manual: true }), 1);
 });
 
@@ -306,3 +308,9 @@ function lua() {
   l.autoload();
   return l;
 }
+
+test('a zombie 15 tiles off outside the house no longer stops the night fast forward', () => {
+  const lua = house(zombieAt(25, 10));
+  manage(lua);
+  assert.equal(speed(lua), 3);
+});
