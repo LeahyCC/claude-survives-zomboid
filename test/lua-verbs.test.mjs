@@ -34,8 +34,8 @@ test('a verb that sets lastError is reported as failed', () => {
   const lua = freshBody();
   lua.run('LocalSurvivor.Act.execIntent(__players[0], "1|EAT|0|0||hungry|find food")');
   assert.equal(lua.get('LocalSurvivor.lastSeq'), 1);
-  assert.equal(lua.get('LocalSurvivor.lastError'), 'eat: no food');
-  assert.deepEqual(lua.get('LocalSurvivor.result'), { seq: 1, verb: 'EAT', status: 'failed', why: 'eat: no food' });
+  assert.equal(lua.get('LocalSurvivor.lastError'), 'no food');
+  assert.deepEqual(lua.get('LocalSurvivor.result'), { seq: 1, verb: 'EAT', status: 'failed', why: 'no food' });
   assert.equal(lua.get('LocalSurvivor.hudData.thought'), 'hungry');
   assert.equal(lua.get('LocalSurvivor.hudData.goal'), 'find food');
 });

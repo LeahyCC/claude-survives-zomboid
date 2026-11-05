@@ -62,7 +62,7 @@ The current brain sends only the v1 fields to the model (`V1_FIELDS` in `bridge/
 | `bed` | object or null | Nearest bed in this building: `{x, y, z, d}`. | see below |
 | `buildings` | list | Up to 6 nearest buildings within 40 tiles. | see below |
 | `dark` | bool | Night, or the square is darker than 0.43 (vanilla's too-dark-to-read line). | `getGameTime():isNight()` `square:getLightLevel(p:getPlayerNum())` |
-| `res` | object | What the last order did: `{seq, verb, status, why}`. `status` is `idle`, `running`, `done` or `failed`. Each verb's reasons are in `docs/skills.md`. | `LocalSurvivor.result` |
+| `res` | object | What the last order did: `{seq, verb, status, why}`. `status` is `idle`, `running`, `done` or `failed`. Each verb's reasons are in `docs/skills.md` and `docs/needs.md`. | `LocalSurvivor.result` |
 
 Distances `d` are straight-line tiles. `dx` and `dy` are offsets, +x east and +y south. Object keys print in sorted order.
 

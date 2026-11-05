@@ -36,6 +36,14 @@ export function createHarness(options = {}) {
   const vanilla = new Set(options.vanilla ?? DEFAULT_VANILLA);
   const L = lauxlib.luaL_newstate();
   lualib.luaL_openlibs(L);
+  // The game's Kahlua has no global next (a live run died on it, 2026-11-04), and none of the
+  // 5.3 libraries. Remove them so a call fails the tests instead of the game. table.unpack and
+  // math.type stay: pz-stubs.lua uses them to make fengari print and unpack like 5.1.
+  lauxlib.luaL_dostring(
+    L,
+    ls('next = nil; table.pack = nil; table.move = nil; utf8 = nil; math.tointeger = nil; ' +
+      'string.pack = nil; string.unpack = nil; string.packsize = nil'),
+  );
 
   const loaded = new Map(); // module name -> returned value is on the Lua side, here just a marker
   const loading = new Set();

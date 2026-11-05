@@ -28,6 +28,8 @@ Calls:
 - `autoload()` runs every file under the client folder. `requireModule(name)` runs one, with its requires.
 - A fake player is `__makePlayer({ x, y, items })`. Put it in `__players[0]` and the tick loop uses it. With `live = true` its square follows `x` and `y` through `__squares`. `__zombies`, `__squares` and `__files` are the fake world.
 - Skills: `__makeContainer({ items, square })` is a container. `__take(p, c)` finishes the queued transfers out of it. `__queueTypes(p)` lists the queued action types. `__adjacent(sq, p)`, when set, is what `AdjacentFreeTileFinder` returns. A square takes `blocked`, `walls` (a set of `"x,y"` neighbours behind a wall), `door` and `window`. A walk never runs: a test moves the player and empties the queue. See `lua-skills.test.mjs`.
+- The vanilla menu handlers (`ISWorldObjectContextMenu.onDrink`, `ISInventoryPaneContextMenu.eatItem`, ...) record each call in `__menuCalls` and queue a stand-in action. `__recipes[name]` and `__canCraft[name]` stand in for craft recipes and the game's "can do it now" check. `__sleepAllowed = true` lets `onSleepWalkToComplete` put the player to sleep.
+- `instanceof(o, "IsoDoor")` is true for a stub table with `__class = "IsoDoor"`.
 
 ```js
 lua.run('__players[0] = __makePlayer({ x = 10, y = 10 })');
