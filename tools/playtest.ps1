@@ -33,6 +33,23 @@ if (Test-Path $defaults) {
   }
 }
 
+# Continuing a save reloads Lua with the save's own mod list, so the helper must be in it too,
+# or it disappears before it can click through character creation.
+$latest = Join-Path $zomboid 'latestSave.ini'
+if (Test-Path $latest) {
+  $lines = Get-Content $latest
+  if ($lines.Count -ge 2) {
+    $saveMods = Join-Path $zomboid (Join-Path 'Saves' (Join-Path $lines[1] (Join-Path $lines[0] 'mods.txt')))
+    if (Test-Path $saveMods) {
+      $text = Get-Content $saveMods -Raw
+      if ($text -notmatch 'mod = LocalSurvivorDev,') {
+        $text = $text -replace "mods\s*\{", "mods`n{`n    mod = LocalSurvivorDev,"
+        Set-Content -Path $saveMods -Value $text -NoNewline
+      }
+    }
+  }
+}
+
 New-Item -ItemType Directory -Force $luaDir | Out-Null
 Set-Content -Path $flag -Value '1'
 
