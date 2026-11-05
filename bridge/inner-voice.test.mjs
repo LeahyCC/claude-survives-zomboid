@@ -38,9 +38,11 @@ function rig(opts = {}) {
 test('the voice speaks as her: first person, in his style, and never gives orders', () => {
   assert.match(SYSTEM, /first person/);
   assert.match(SYSTEM, /"I", "me", "my"/);
-  assert.match(SYSTEM, /inner monologue/);
-  assert.match(SYSTEM, /I'm feeling/);
-  assert.match(SYSTEM, /never give her orders/);
+  assert.match(SYSTEM, /voice inside the head/);
+  // His style, with examples, and no fixed opening: a template made every line read like a diary.
+  assert.match(SYSTEM, /shitposting/);
+  assert.match(SYSTEM, /Do not start every line the same way/);
+  assert.match(SYSTEM, /never give orders/);
   assert.ok(!SYSTEM.includes(String.fromCharCode(0x2014)) && !SYSTEM.includes(String.fromCharCode(0x2013)));
   const msg = userMessage({ kind: 'order', action: 'ENTER house W', thought: 'I need to hide out before dark', text: 'x' }, [], look(), { summary: ['Alive 1 game hours.'], inner: [] });
   assert.match(msg, /SHE JUST CHOSE: ENTER house W\. Her own reasoning: "I need to hide out before dark"/);
