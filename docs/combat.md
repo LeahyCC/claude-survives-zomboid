@@ -203,7 +203,7 @@ Every stance and what came of it, so a soak test shows which escapes work. `Refl
 Reflex.survive -> ReflexLog.note     a new stance: a call line; 300 ticks later: its out line
                   ReflexLog.flush    about once a second, appended to Zomboid/Lua/local_reflex.txt
 bridge/reflexlog.mjs                 follows the file, appends each line to bridge/decisions.jsonl as t: reflex
-node bridge/tools/review.mjs         "Reflex by stance": calls, escapes, hits, hp lost, kills
+node bridge/tools/review.mjs         "Reflex by stance": calls with a chaser (climb waits left out), escapes at 5 s and 30 s, hits, hp lost, kills
 ```
 
 A call is written when the stance changes, or when the same stance comes back after 120 quiet ticks. A flee that goes on for minutes is one call, not one per decision, which is why the soak's loop shows as a call about a minute apart. The first decision after an escape loop hit its limit is always a call. The file starts again on the first write of a game session and past 256 KB. The bridge reads it from the end when it starts, and from 0 when the file gets shorter.

@@ -34,6 +34,8 @@ Evidence:
 
 Do not judge HIDE or BREAK until the review also checks at 30 seconds.
 
+Fixed in `review.mjs`: it now counts only calls with a chaser, leaves out climb waits and shows both counts, checks escaped at 5 s and 30 s, and prints a session end apart from deaths. The table above is the old script's.
+
 **2. "Infection" is not the top killer.** The review shows 3 infection deaths, and one of those is real. `guessDeath` in `bridge/death.mjs` tests the infected flag before bleeding, so a fresh bite that bleeds out reads as infection. The "unknown" death is not a death: hp was 100 at 12:44, then the log stops for 9 hours.
 
 | life began (UTC) | game hours | review says | what the log shows |
