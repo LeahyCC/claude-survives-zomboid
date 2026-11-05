@@ -12,6 +12,8 @@ logs        bridge/soak.log (runner), bridge/soak-bridge.log (bridge), bridge/de
 feature     frozen until the soak report is read
 ```
 
+Two fixes went in during the first hour of the soak, with the game and bridge relaunched by the runner: any safe wait runs at speed 3 (not only at night), and DROP and the brain's heavy test now use the same weight line as SEARCH (she had been stuck waiting in a kitchen, too full to search and not heavy enough to drop). Deaths and decisions before 10:32 UTC ran the older build.
+
 The character playing at the start of the soak kept gear from a rich-loot run, so her stats are flattered. Every character after her is a fair test. The best run so far reached day 6.
 
 ## First thing next session
