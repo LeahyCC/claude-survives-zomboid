@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { extractJSON, normalize, steerJob, intentLine, zombieInside, buildPrompt } from './decide.mjs';
+import fs from 'node:fs';
+import { extractJSON, normalize, steerJob, intentLine, zombieInside, buildPrompt, V1_FIELDS } from './decide.mjs';
 
 const plain = extractJSON('{"action":{"type":"LOOT"},"thought":"Grab it."}');
 assert.equal(normalize(plain).type, 'LOOT');
@@ -86,5 +87,22 @@ const clothes = { zClose: 0, weapon: 'none', foods: 0, bldgDir: 'HERE', bldgDist
 assert.equal(steerJob({ type: 'LOOT' }, { ...clothes, err: '' }).type, 'EQUIP');
 assert.equal(steerJob({ type: 'LOOT' }, { ...clothes, err: 'equip: no weapon' }).type, 'LOOT');
 assert.notEqual(steerJob({ type: 'STOP' }, { ...clothes, err: '' }).type, 'EQUIP');
+
+// A v2 percept must give the same prompt as the same senses without the v2 fields.
+const fixtureDir = new URL('./fixtures/', import.meta.url);
+const fixtures = fs.readdirSync(fixtureDir).filter((f) => f.startsWith('v2-') && f.endsWith('.json'));
+assert.equal(fixtures.length, 3);
+for (const name of fixtures) {
+  const v2 = JSON.parse(fs.readFileSync(new URL(name, fixtureDir), 'utf8'));
+  assert.equal(v2.v, 2, name);
+  for (const key of V1_FIELDS) assert.ok(key in v2, `${name} lacks ${key}`);
+  const v1 = Object.fromEntries(V1_FIELDS.map((key) => [key, v2[key]]));
+  const state = { goal: 'Drink.', subtask: 'Find water.', log: [] };
+  assert.equal(buildPrompt(state, v2, []), buildPrompt(state, v1, []), name);
+  const senses = buildPrompt(state, v2, []).split('SENSES: ')[1];
+  for (const key of ['"v"', '"inv"', '"buildings"', '"zList"', '"moodle"', '"panic01"', '"res"']) {
+    assert.equal(senses.includes(`${key}:`), false, `${name} leaks ${key}`);
+  }
+}
 
 console.log('decide.test.mjs ok');

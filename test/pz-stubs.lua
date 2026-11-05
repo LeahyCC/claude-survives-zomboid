@@ -68,6 +68,10 @@ end
 UIFont = nameTable()
 CharacterStat = nameTable()
 Fluid = nameTable()
+IsoFlagType = nameTable()
+MoodleType = nameTable()
+ItemTag = nameTable()
+BodyPartType = { ToString = function(t) return tostring(t) end }
 
 -- ---------- UI classes ----------
 ISUIElement = {}
@@ -131,6 +135,7 @@ function instanceof() return false end
 -- ---------- world ----------
 __zombies = {}
 __squares = {}
+__buildings = {}
 __players = {}
 __files = {}
 __speed = 1
@@ -140,11 +145,16 @@ function getCell()
   return {
     getZombieList = function() return __javaList(__zombies) end,
     getGridSquare = function(self, x, y, z) return __squares[x .. "," .. y .. "," .. z] end,
+    getBuildingList = function() return __javaList(__buildings) end,
   }
 end
 function getSpecificPlayer(i) return __players[i] end
 function getGameTime()
-  return { getHour = function() return __time.hour end, getNightsSurvived = function() return __time.nights end }
+  return {
+    getHour = function() return __time.hour end,
+    getNightsSurvived = function() return __time.nights end,
+    isNight = function() return __time.night or false end,
+  }
 end
 function getGameSpeed() return __speed end
 function setGameSpeed(v) __speed = v end
@@ -165,7 +175,8 @@ function getFileReader(name)
   return r
 end
 
--- A bare player. opts: x, y, z, dead, items (list of item stubs).
+-- A bare player. opts: x, y, z, dead, items (list of item stubs), stats, hp, square, parts (body
+-- part stubs), moodles (MoodleType name -> level), visible, kills, hours, weight, maxWeight, back.
 function __makePlayer(opts)
   opts = opts or {}
   local p = { x = opts.x or 0, y = opts.y or 0, z = opts.z or 0, said = {}, dead = opts.dead or false }
@@ -178,13 +189,184 @@ function __makePlayer(opts)
   function p:getInventory() return { getItems = function() return self.__items end } end
   function p:setSneaking(v) self.sneaking = v end
   function p:isOutside() return true end
-  function p:getSquare() return nil end
-  function p:getStats() return { get = function(_, stat) return (opts.stats or {})[stat] or 0 end } end
-  function p:getBodyDamage() return { getOverallBodyHealth = function() return opts.hp or 100 end } end
+  function p:getSquare() return opts.square end
+  function p:getStats()
+    return {
+      get = function(_, stat) return (opts.stats or {})[stat] or 0 end,
+      getNumVisibleZombies = function() return opts.visible or 0 end,
+    }
+  end
+  function p:getBodyDamage()
+    return {
+      getOverallBodyHealth = function() return opts.hp or 100 end,
+      getBodyParts = function() return __javaList(opts.parts or {}) end,
+    }
+  end
+  function p:getMoodles()
+    return { getMoodleLevel = function(_, t) return (opts.moodles or {})[t] or 0 end }
+  end
+  function p:getZombieKills() return opts.kills or 0 end
+  function p:getHoursSurvived() return opts.hours or 0 end
+  function p:getInventoryWeight() return opts.weight or 0 end
+  function p:getMaxWeight() return opts.maxWeight or 8 end
+  function p:getClothingItem_Back() return opts.back end
+  function p:getPlayerNum() return 0 end
+  function p:isKnownPoison() return false end
   function p:getPrimaryHandItem() return nil end
   function p:getUseHandWeapon() return nil end
   function p:isMeleeWeaponEquipped() return false end
   function p:faceLocation() end
   function p:faceThisObject() end
   return p
+end
+
+-- An item. opts: type (full type), name, food, hung, cantEat, opening, rotten, burnt, poison,
+-- melee, dmg, range, cond, condMax, tags (ItemTag name -> true), bandage, drainable, alcoholPower,
+-- fluid = { water, tainted, alcohol, locked }, items (contents when it is a bag).
+function __makeItem(opts)
+  opts = opts or {}
+  local it = { opts = opts }
+  function it:getFullType() return opts.type or ("Base." .. (opts.name or "Thing")) end
+  function it:getDisplayName() return opts.name or "Thing" end
+  function it:IsFood() return opts.food or false end
+  function it:getCategory() return opts.food and "Food" or "Item" end
+  function it:getHungChange() return opts.hung or 0 end
+  function it:getScriptItem() return { isCantEat = function() return opts.cantEat or false end } end
+  function it:getOpeningRecipe() return opts.opening end
+  function it:isRotten() return opts.rotten or false end
+  function it:isBurnt() return opts.burnt or false end
+  function it:isbDangerousUncooked() return false end
+  function it:isCooked() return false end
+  function it:getPoisonPower() return opts.poison or 0 end
+  function it:IsWeapon() return opts.melee or false end
+  function it:isBareHands() return false end
+  function it:isRanged() return false end
+  function it:isAimedFirearm() return false end
+  function it:getMaxDamage() return opts.dmg or 0 end
+  function it:getMaxRange() return opts.range or 0 end
+  function it:getCondition() return opts.cond or 10 end
+  function it:getConditionMax() return opts.condMax or 10 end
+  function it:hasTag(tag) return (opts.tags or {})[tag] == true end
+  function it:isCanBandage() return opts.bandage or false end
+  function it:IsDrainable() return opts.drainable or false end
+  function it:getAlcoholPower() return opts.alcoholPower or 0 end
+  function it:IsInventoryContainer() return opts.items ~= nil end
+  function it:getInventory() return { getItems = function() return __javaList(opts.items or {}) end } end
+  function it:getFluidContainer()
+    local f = opts.fluid
+    if not f then return nil end
+    local amount = (f.water or 0) + (f.alcohol or 0)
+    return {
+      isEmpty = function() return amount <= 0 end,
+      isInputLocked = function() return f.locked or false end,
+      contains = function(_, fluid)
+        if fluid == "Water" then return (f.water or 0) > 0 and not f.tainted end
+        if fluid == "TaintedWater" then return f.tainted or false end
+        return false
+      end,
+      isPoisonous = function() return false end,
+      getSpecificFluidAmount = function(_, fluid) return fluid == "Water" and (f.water or 0) or 0 end,
+      getAmount = function() return amount end,
+      getProperties = function() return { getAlcohol = function() return f.alcohol or 0 end } end,
+    }
+  end
+  return it
+end
+
+-- A zombie. opts: x, y, dead, target (what getTarget returns), floor, knocked, crawling.
+function __makeZombie(opts)
+  opts = opts or {}
+  local z = {}
+  function z:getX() return opts.x or 0 end
+  function z:getY() return opts.y or 0 end
+  function z:isDead() return opts.dead or false end
+  function z:getTarget() return opts.target end
+  function z:isOnFloor() return opts.floor or false end
+  function z:isKnockedDown() return opts.knocked or false end
+  function z:isCrawling() return opts.crawling or false end
+  return z
+end
+
+-- A body part. opts: type, and any of bleeding scratched cut bitten deep glass bandaged dirty.
+function __makeBodyPart(opts)
+  opts = opts or {}
+  local b = {}
+  function b:getType() return opts.type or "Hand_L" end
+  function b:bleeding() return opts.bleeding or false end
+  function b:scratched() return opts.scratched or false end
+  function b:isCut() return opts.cut or false end
+  function b:bitten() return opts.bitten or false end
+  function b:deepWounded() return opts.deep or false end
+  function b:haveGlass() return opts.glass or false end
+  function b:bandaged() return opts.bandaged or false end
+  function b:isBandageDirty() return opts.dirty or false end
+  return b
+end
+
+-- A world object on a square. opts: bed, water (fluid amount), tainted.
+function __makeObject(opts)
+  opts = opts or {}
+  local o = {}
+  function o:getProperties() return { has = function(_, flag) return flag == "bed" and opts.bed or false end } end
+  function o:hasWater() return (opts.water or 0) > 0 end
+  function o:getFluidAmount() return opts.water or 0 end
+  function o:isTaintedWater() return opts.tainted or false end
+  function o:getSquare() return o.square end
+  return o
+end
+
+-- A square, registered in __squares. opts: x, y, z, building, room, door ("exterior" or
+-- "interior"), objects, light.
+function __makeSquare(opts)
+  local sq = { opts = opts, objects = opts.objects or {} }
+  for _, o in ipairs(sq.objects) do o.square = sq end
+  function sq:getX() return opts.x end
+  function sq:getY() return opts.y end
+  function sq:getZ() return opts.z or 0 end
+  function sq:getBuilding() return opts.building end
+  function sq:getRoom() return opts.room end
+  function sq:getObjects() return __javaList(self.objects) end
+  function sq:getLightLevel() return opts.light or 1 end
+  function sq:getIsoDoor()
+    if not opts.door then return nil end
+    return { isExterior = function() return opts.door == "exterior" end }
+  end
+  __squares[opts.x .. "," .. opts.y .. "," .. (opts.z or 0)] = sq
+  return sq
+end
+
+-- A building with its BuildingDef, added to __buildings. opts: id, x, y, x2, y2, res, shop,
+-- rooms (room stubs from __makeRoom), water, explored.
+function __makeBuilding(opts)
+  local def = {}
+  function def:getIDString() return opts.id end
+  function def:getX() return opts.x end
+  function def:getY() return opts.y end
+  function def:getX2() return opts.x2 end
+  function def:getY2() return opts.y2 end
+  function def:isResidential() return opts.res or false end
+  function def:isShop() return opts.shop or false end
+  function def:getRoomsNumber() return #(opts.rooms or {}) end
+  function def:isAllExplored() return opts.explored or false end
+  function def:getRooms()
+    local defs = {}
+    for _, r in ipairs(opts.rooms or {}) do
+      table.insert(defs, { getIsoRoom = function() return r end })
+    end
+    return __javaList(defs)
+  end
+  local b = { def = def }
+  function b:getDef() return def end
+  function b:hasWater() return opts.water or false end
+  table.insert(__buildings, b)
+  return b
+end
+
+-- A room. opts: name, squares (square stubs), waters (water objects getWaterSources returns).
+function __makeRoom(opts)
+  local r = {}
+  function r:getName() return opts.name or "room" end
+  function r:getSquares() return __javaList(opts.squares or {}) end
+  function r:getWaterSources() return __javaList(opts.waters or {}) end
+  return r
 end

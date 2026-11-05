@@ -15,7 +15,7 @@ function Act.doEat(p)
   local items = p:getInventory():getItems()
   for i = 0, items:size() - 1 do
     local it = items:get(i)
-    if Core.isEdible(it) then ISTimedActionQueue.add(ISEatFoodAction:new(p, it, 1)); return end
+    if Core.isEdible(it, p) then ISTimedActionQueue.add(ISEatFoodAction:new(p, it, 1)); return end
   end
   LS.lastError = "eat: no food"
 end
@@ -51,7 +51,7 @@ function Act.containerValue(c)
     n = items:size()
     for i = 0, n - 1 do
       local it = items:get(i)
-      if Core.isEdible(it) or Core.isWaterItem(it) then food = food + 1 end
+      if Core.isFoodSupply(it) or Core.isWaterItem(it) then food = food + 1 end
       if Core.isMeleeWeapon(it) then weapon = weapon + 1 end
     end
   end)
@@ -93,7 +93,7 @@ function Act.doLoot(p)
     for i = 0, citems:size() - 1 do
       if taken >= 6 then break end
       local it = citems:get(i)
-      local want = (pass == 1) and (Core.isEdible(it) or Core.isWaterItem(it) or Core.isMeleeWeapon(it)) or (pass == 2 and taken < 3)
+      local want = (pass == 1) and (Core.isFoodSupply(it) or Core.isWaterItem(it) or Core.isMeleeWeapon(it)) or (pass == 2 and taken < 3)
       if want then
         ISTimedActionQueue.add(ISInventoryTransferAction:new(p, it, best, p:getInventory(), 10))
         taken = taken + 1

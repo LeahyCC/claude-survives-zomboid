@@ -186,6 +186,21 @@ export function steerJob(decision, percept) {
   return decision;
 }
 
+// The fields this prompt was written for. Percept v2 adds more (docs/percept.md), and they stay
+// out of this prompt so it does not grow. The brain that uses them is a separate piece of work.
+export const V1_FIELDS = [
+  'dead', 'x', 'y', 'z', 'hour', 'day', 'outside', 'room', 'hp', 'hunger', 'thirst', 'fatigue',
+  'endurance', 'panic', 'zTotal', 'zNear', 'zClose', 'zDist', 'zDir', 'zdx', 'zdy', 'foods',
+  'waters', 'bldgDir', 'bldgDist', 'weapon', 'items', 'qlen', 'reflexed', 'lastSeq', 'err',
+];
+
+export function v1Senses(percept) {
+  const out = {};
+  if (!percept || typeof percept !== 'object') return out;
+  for (const key of V1_FIELDS) if (key in percept) out[key] = percept[key];
+  return out;
+}
+
 export function buildPrompt(state, percept, godLines) {
   const recent = (state.log || [])
     .filter((line) => line.kind === 'decide' || line.kind === 'god' || line.kind === 'death')
@@ -201,5 +216,5 @@ GOAL: ${state.goal || '(none)'}
 SUBTASK: ${state.subtask || '(none)'}
 RECENT:
 ${recent}${voice}
-SENSES: ${JSON.stringify(percept)}`;
+SENSES: ${JSON.stringify(v1Senses(percept))}`;
 }

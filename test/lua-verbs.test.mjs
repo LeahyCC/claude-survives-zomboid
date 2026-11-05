@@ -121,11 +121,14 @@ test('the tick loop writes the percept and polls the order file on its cadence',
   assert.equal(lua.run('return __files["local_percept.txt"]'), undefined);
   lua.fireEvent('OnTick'); // tick 60
   const percept = JSON.parse(lua.run('return __files["local_percept.txt"]'));
-  assert.deepEqual(Object.keys(percept), [
+  // The v1 fields the current bridge reads must all stay, in their old order. v2 adds more.
+  const v1 = [
     'dead', 'x', 'y', 'z', 'hour', 'day', 'outside', 'room', 'hp', 'hunger', 'thirst', 'fatigue',
     'endurance', 'panic', 'zTotal', 'zNear', 'zClose', 'zDist', 'zDir', 'zdx', 'zdy', 'foods',
     'waters', 'bldgDir', 'bldgDist', 'weapon', 'items', 'qlen', 'reflexed', 'lastSeq', 'err',
-  ]);
+  ];
+  assert.deepEqual(Object.keys(percept).filter((k) => v1.includes(k)), v1);
+  assert.equal(percept.v, 2);
   assert.equal(percept.lastSeq, 1);
   assert.equal(percept.bldgDir, 'none');
 });

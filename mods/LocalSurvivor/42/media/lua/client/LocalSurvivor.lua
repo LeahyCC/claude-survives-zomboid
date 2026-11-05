@@ -42,6 +42,9 @@ function LS.onTick()
   if LS.lastPX and (math.abs(px - LS.lastPX) + math.abs(py - LS.lastPY) > 0.3) then LS.lastMoveTick = tick end
   LS.lastPX, LS.lastPY = px, py
 
+  -- A slice of the place scan every tick, in manual mode too, so the percept stays current.
+  pcall(function() LS.Sense.step(p) end)
+
   if not LS.manualMode then LS.Reflex.releaseDoor(p) end
 
   if LS.manualMode then
