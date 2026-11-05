@@ -42,8 +42,11 @@ What it sets, all to 4 (the option's own maximum in Build 42.21; the sandbox scr
 | `SurvivalGearsLootNew` | camping gear |
 | `ContainerLootNew` | bags |
 | `ToolLootNew` | tools |
+| `KeyLootNew` | house keys, which ENTER can use |
+| `LiteratureLootNew`, `CookwareLootNew`, `ClothingLootNew`, `MaterialLootNew`, `FarmingLootNew`, `GeneratorLootNew` | everything else |
+| `RollsMultiplier` | how many times each container is rolled. Its tooltip warns a high value can cost performance, which is fine for a test run |
 
-`RollsMultiplier` is left alone. Its tooltip warns that a high value can hurt performance.
+Also set to 0: `MaximumLooted` and `MaximumDiminishedLoot`. Build 42 empties a share of buildings that grows with the world's age, so an older save looked picked over even with every loot option at 4.
 
 How it reaches loot generation:
 

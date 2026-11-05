@@ -15,9 +15,15 @@ const DEV_FILE = path.join(DEV_CLIENT, 'LocalSurvivorDev.lua');
 
 const RAISED = [
   'WeaponLootNew', 'RangedWeaponLootNew', 'AmmoLootNew', 'FoodLootNew', 'CannedFoodLootNew',
-  'MedicalLootNew', 'SurvivalGearsLootNew', 'ContainerLootNew', 'ToolLootNew',
+  'MedicalLootNew', 'SurvivalGearsLootNew', 'ContainerLootNew', 'ToolLootNew', 'KeyLootNew',
+  'LiteratureLootNew', 'CookwareLootNew', 'ClothingLootNew', 'MaterialLootNew', 'FarmingLootNew',
+  'GeneratorLootNew', 'RollsMultiplier',
 ];
-const UNTOUCHED = ['LiteratureLootNew', 'ClothingLootNew', 'KeyLootNew', 'RollsMultiplier'];
+// Pre-looted and diminished buildings, switched off for a test run.
+const ZEROED = ['MaximumLooted', 'MaximumDiminishedLoot'];
+const UNTOUCHED = ['HoursForLootRespawn'];
+// What each option starts at in the fake game.
+const start = (name) => (name === 'RollsMultiplier' ? 1 : 0.6);
 
 // Every option starts at 0.6 (the game's default) except RollsMultiplier, which starts at 1.
 function world({ flag = true, max = 4, without = [], picker = true } = {}) {
@@ -52,7 +58,7 @@ function world({ flag = true, max = 4, without = [], picker = true } = {}) {
     end
     __files["ls_loot.txt"] = flag and "1" or nil
     `,
-    [...RAISED, ...UNTOUCHED],
+    [...RAISED, ...ZEROED, ...UNTOUCHED],
     flag,
     max,
     without,
@@ -71,12 +77,12 @@ test('no flag file: the options are left alone and nothing is printed', () => {
   lua.fireEvent('OnInitWorld');
   lua.fireEvent('OnLoadedMapZones');
   lua.fireEvent('OnGameStart');
-  for (const name of RAISED) assert.equal(value(lua, name), 0.6, name);
+  for (const name of RAISED) assert.equal(value(lua, name), start(name), name);
   assert.equal(calls(lua), 0);
   assert.equal(lootLines(lua).length, 0);
 });
 
-test('flag file: the nine loot options go to 4, the others stay', () => {
+test('flag file: every loot option goes to 4, pre-looting goes to 0, the others stay', () => {
   const lua = world();
   lua.fireEvent('OnInitWorld');
   lua.fireEvent('OnLoadedMapZones');
@@ -84,9 +90,8 @@ test('flag file: the nine loot options go to 4, the others stay', () => {
     assert.equal(value(lua, name), 4, name);
     assert.equal(sandboxVar(lua, name), 4, `SandboxVars.${name}`);
   }
-  for (const name of UNTOUCHED) {
-    assert.equal(value(lua, name), name === 'RollsMultiplier' ? 1 : 0.6, name);
-  }
+  for (const name of ZEROED) assert.equal(value(lua, name), 0, name);
+  for (const name of UNTOUCHED) assert.equal(value(lua, name), 0.6, name);
 });
 
 test('the refresh runs once, after the options changed', () => {
@@ -102,9 +107,10 @@ test('one console line lists the old and new values', () => {
   const lines = lootLines(lua);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^LocalSurvivorDev loot /);
-  for (const name of RAISED) assert.ok(lines[0].includes(`${name} 0.6 to 4`), name);
+  for (const name of RAISED) assert.ok(lines[0].includes(`${name} ${name === 'RollsMultiplier' ? 1 : 0.6} to 4`), name);
+  for (const name of ZEROED) assert.ok(lines[0].includes(`${name} 0.6 to 0`), name);
   assert.ok(lines[0].includes('refreshed=true'));
-  assert.ok(!lines[0].includes('RollsMultiplier'));
+  assert.ok(!lines[0].includes('HoursForLootRespawn'));
 });
 
 test('OnGameStart after OnLoadedMapZones does not apply a second time', () => {
@@ -134,8 +140,8 @@ test('saving puts the old values back, and the post-save step raises them again'
   lua.fireEvent('OnLoadedMapZones');
   lua.fireEvent('OnSave');
   for (const name of RAISED) {
-    assert.equal(value(lua, name), 0.6, name);
-    assert.equal(sandboxVar(lua, name), 0.6, `SandboxVars.${name}`);
+    assert.equal(value(lua, name), start(name), name);
+    assert.equal(sandboxVar(lua, name), start(name), `SandboxVars.${name}`);
   }
   lua.fireEvent('OnPostSave');
   for (const name of RAISED) assert.equal(value(lua, name), 4, name);
@@ -147,7 +153,7 @@ test('saving without the flag changes nothing', () => {
   lua.fireEvent('OnLoadedMapZones');
   lua.fireEvent('OnSave');
   lua.fireEvent('OnPostSave');
-  for (const name of RAISED) assert.equal(value(lua, name), 0.6, name);
+  for (const name of RAISED) assert.equal(value(lua, name), start(name), name);
 });
 
 test('a second world in the same session is judged by the flag again', () => {
