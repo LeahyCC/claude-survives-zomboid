@@ -94,7 +94,7 @@ A handed-back turn skips the policy, the usual menu and the "keep" rule, and the
 | `fight` | WAIT | a weapon, hp 50+, endurance 0.3+, not heavy, not panicking, not bleeding, one or two chasing | `clear` |
 | `wait` | WAIT | only when nothing else is offered | |
 
-A pick that is the job already running is sent again (`resolveChoice(..., force)`), because that job is what the flee keeps cancelling. The order line carries the posture as its ninth field, which sets `LocalSurvivor.posture` for the reflex. On the mod side a new GOTO, ENTER, SECURE or MOVE order with a chaser in range makes the reflex stand aside for 20 seconds (`Reflex.HANDBACK_TICKS`), or the flee would cancel the walk at once.
+A pick that is the job already running is sent again (`resolveChoice(..., force)`), because that job is what the flee keeps cancelling. The order line carries the posture as its ninth field, which sets `LocalSurvivor.posture` for the reflex. On the mod side a new GOTO, ENTER, SECURE or MOVE order with a chaser in range makes the reflex stand aside for 20 seconds (`Reflex.HANDBACK_TICKS`), or the flee would cancel the walk at once. It never starts for a pack or a hit, and ends if one comes (`docs/combat.md`).
 
 The decision line gets `handback: { why, ms }`, so `node bridge/tools/review.mjs` prints "Stuck in a chase": loop limits by what she did next, and the turns handed back with how those orders went. The bridge also prints `Reflex hands the turn back: ...`.
 

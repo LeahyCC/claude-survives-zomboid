@@ -23,6 +23,10 @@ const FALL_HP = 10;
 // Hp lost in the last END seconds that, with a chaser about, means a zombie got to her even if no
 // sample caught it within reach.
 const HIT_HP = 10;
+// Hp lost across the whole ring that, with a chaser inside 10 tiles, is damage a chase did. A bite
+// wound that bleeds drains hp for minutes after the zombie is 8 tiles behind (the 2026-11-05 death:
+// 6 hp over the ring, nearest chaser 7 tiles, four chasing).
+const HURT_HP = 5;
 
 export const CAUSES = [
   'bitten in a fight', 'overrun while fleeing', 'overrun while entering a building', 'bitten while busy',
@@ -122,8 +126,13 @@ export function guessDeath(samples) {
   const fled = reflexes.filter((r) => r === 'flee').length;
   const fought = reflexes.filter((r) => r === 'fight').length;
   const entering = any(end, (s) => s.job === 'ENTER' || (s.order === 'ENTER' && s.status === 'running'));
-  // A zombie was on her: one within reach in the last seconds, or hp falling fast with a chaser about.
-  const hit = adj > 0 || (chasing > 0 && lostEnd >= HIT_HP);
+  // Chasers close: at least one coming for her, and one inside 10 tiles.
+  const pressed = chasing > 0 && peak(end, 'zClose') > 0;
+  // A zombie was on her: one within reach in the last seconds, or hp falling fast with a chaser
+  // about, or hurt at all with chasers close (the hp was the chase's even if the last bite was
+  // earlier than the ring).
+  const hit = adj > 0 || (chasing > 0 && lostEnd >= HIT_HP) || (pressed && lost >= HURT_HP);
+  const bleedingEnd = any(end, (s) => num(s.bleeding) > 0);
 
   const facts = {
     job, order, status,
@@ -147,10 +156,14 @@ export function guessDeath(samples) {
     else if (fought > 0) cause = 'bitten in a fight';
     else if (job && BUSY.has(job)) cause = 'bitten while busy';
     else cause = 'bitten';
-  } else if (final.infected) cause = 'infection';
-  else if (num(final.thirst) >= CRITICAL) cause = 'thirst';
+  } else if (final.infected && !bleedingEnd) {
+    // The infected flag is set by the first bite and stays set for the rest of her life, so it
+    // says nothing about what killed her: the infection takes days, and a bleeding wound or a
+    // chase takes minutes. It only counts when nothing else was draining her.
+    cause = 'infection';
+  } else if (num(final.thirst) >= CRITICAL) cause = 'thirst';
   else if (num(final.hunger) >= CRITICAL) cause = 'starved';
-  else if (any(end, (s) => num(s.bleeding) > 0)) cause = 'bled out';
+  else if (bleedingEnd) cause = 'bled out';
   return { cause, facts };
 }
 

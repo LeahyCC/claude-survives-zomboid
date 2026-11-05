@@ -93,6 +93,40 @@ test('an infected character killed by a zombie is bitten, not infection', () => 
   assert.equal(g.cause, 'bitten in a fight');
 });
 
+// The 2026-11-05 death, from local_death.txt: bitten earlier (infected stays set for life), hp
+// draining 0.6 a second from bleeding, ENTER running, four chasing, the nearest 7 to 8 tiles off.
+test('chasers close and hp lost reads as overrun, not infection, even with the infected flag set', () => {
+  const drip = (hp, zChasing = 2) => ({
+    hp, infected: true, bite: true, scratch: true, bleeding: 2, wounds: 3, zClose: 2, zAdj: 0, zChasing, nearest: 7.4,
+    job: 'ENTER', order: 'ENTER', status: 'running', reflex: 'none',
+  });
+  const hps = [6.3, 5.6, 4.9, 4.3, 3.6, 2.9, 2.3, 1.6, 0.9, 0.3];
+  const g = guessDeath([...hps.map((hp) => drip(hp)), drip(0, 4)]);
+  assert.equal(g.cause, 'overrun while entering a building');
+  assert.equal(g.facts.zChasing, 4);
+  assert.equal(g.facts.infected, true);
+  // Not entering: the reflex mode picks the word.
+  const fled = [...hps.map((hp) => ({ ...drip(hp), job: undefined, order: undefined, reflex: 'flee' })), { ...drip(0, 4), job: undefined, order: undefined, reflex: 'flee' }];
+  assert.equal(guessDeath(fled).cause, 'overrun while fleeing');
+});
+
+test('chasers close but barely hurt is not overrun, and hurt with no chaser close is not either', () => {
+  const calmBleed = (o) => calm({ infected: true, bite: true, bleeding: 0, ...o });
+  // Hp fell 3 over the ring with a chaser close: below the line, so the infection reading stands.
+  const barely = guessDeath(Array.from({ length: 10 }, (_, i) => calmBleed({ hp: Math.max(0, 3 - i * 0.3), zClose: 1, zChasing: 1 })));
+  assert.equal(barely.cause, 'infection');
+  // Hurt, chasers far (nothing inside 10): no one was close.
+  const far = guessDeath(Array.from({ length: 10 }, (_, i) => calmBleed({ hp: 40 - i * 2, zChasing: 2 })));
+  assert.equal(far.cause, 'infection');
+  assert.notEqual(far.cause, 'overrun while entering a building');
+  assert.notEqual(far.cause, 'overrun while fleeing');
+});
+
+test('an infected flag with bleeding and no chaser is a bleed, not infection', () => {
+  const g = guessDeath(ten([{ hp: 20, infected: true, bite: true, bleeding: 2 }, { hp: 0, infected: true, bite: true, bleeding: 2 }]));
+  assert.equal(g.cause, 'bled out');
+});
+
 test('bled out: bleeding at the end, no zombie near', () => {
   const g = guessDeath(ten([{ hp: 50, bleeding: 2, wounds: 2 }, { hp: 20, bleeding: 2, wounds: 2 }, { hp: 0, bleeding: 2, wounds: 2 }]));
   assert.equal(g.cause, 'bled out');
