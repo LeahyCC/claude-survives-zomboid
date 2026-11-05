@@ -1,0 +1,3 @@
+name=Local Survivor
+id=LocalSurvivor
+description=Hands your survivor to a local model through Ollama. Senses go to Zomboid/Lua/local_percept.txt. Orders come back in local_intent.txt.
