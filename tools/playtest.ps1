@@ -86,6 +86,8 @@ function Click-Center($h) {
 }
 
 function Test-InGame {
+  # A game killed a few seconds ago leaves a fresh percept file behind, so the process must be up too.
+  if (-not (Get-Process ProjectZomboid64 -ErrorAction SilentlyContinue)) { return $false }
   if (-not (Test-Path $percept)) { return $false }
   return ((Get-Date) - (Get-Item $percept).LastWriteTime).TotalSeconds -lt 6
 }
