@@ -24,7 +24,7 @@ This loop comes first. Features we guess at come after it.
 
 Feature freeze for the first soak test (`node tools/soak.mjs`, 3 hours, normal loot). Any safe wait now runs at speed 3, not only at night. Picking up in a new session: `docs/handoff.md`. Built since the plan above: decision log and nudge panel, night fast forward, rich loot for test runs, a death recorder with causes, reactions (the brain sees how its last choices went), a reflex rebuilt around stances with its own log, loot order and guns as gear, a bigger planner on the CPU, pepe as her inner voice, and the Jev critic. Most of the newest pieces have passed their tests but have not yet seen a real fight or death. Known gap: the reflex probably cannot make her sprint (the game resets it from the keyboard).
 
-Next: read the soak report, fix the top 2 killers, run again.
+Next: read the soak report, fix the top 2 killers, run again. `docs/pro-rules.md` holds what the soak shows, what to borrow from the Bandits mod and the guides, and the next five cards in order.
 
 ## Order of work
 
