@@ -23,6 +23,7 @@ import { loadLessons, addLessons, recordRun, deleteLesson, lessonStats, reviewDe
 import { digest } from './digest.mjs';
 import { loadStats, observe as observeStats, observeDeath, takeEnded, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
 import { createTracker } from './decisions.mjs';
+import { reactionRows } from './reactions.mjs';
 import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
 import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
 
@@ -62,14 +63,14 @@ let state = {
   goal: '',
   subtask: '',
   chat: [],
-  recent: [],
 };
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch { /* first run */ }
 const map = loadMemory(state.map);
 state.map = map;
-if (!Array.isArray(state.recent)) state.recent = [];
+// The last orders now come from the tracker, with how each went. An old state file still has this list.
+delete state.recent;
 const stats = loadStats(state.stats);
 const runId = () => (stats.run ? stats.run.start : null);
 const tracker = createTracker({ write: createAppender(DECISIONS_FILE, { maxBytes: LOG_MAX_BYTES }) });
@@ -308,7 +309,6 @@ function send(option, thought, say, decidedBy) {
   lastAction = `${option.verb}${where}`;
   state.goal = option.label;
   state.subtask = `${option.id}: ${option.label}`;
-  state.recent = [...state.recent, `${option.verb}: ${option.label}`.slice(0, 100)].slice(-3);
   brainNote = `${decidedBy}: ${lastAction}`;
   log('decide', `${decidedBy} ${option.id} ${lastAction}${say ? ` "${say}"` : ''} ${lastThought}`);
 }
@@ -368,7 +368,7 @@ async function decideV2() {
   const seen = percept;
   updateMemory(map, percept, now);
   const plan = planTurn(percept, map, {
-    now, last: lastLook, pending, voice: godQueue, recent: state.recent, plan: planner.plan, lessons: store.lessons,
+    now, last: lastLook, pending, voice: godQueue, history: tracker.history(), run: runId(), plan: planner.plan, lessons: store.lessons,
     nudges: nudgeIndex,
   });
   if (plan.kind !== 'pending') pending = null;
@@ -630,6 +630,9 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 .del{padding:2px 10px;margin-left:10px;background:#3a2326;color:#f3b4b4;font-weight:400}
 #runs{border-collapse:collapse;width:100%}#runs th,#runs td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
 #runs th{font-size:11px;color:#8899aa;text-transform:uppercase}#runs tr.live td{color:#7fd1b9}
+#reacts{border-collapse:collapse;width:100%}#reacts th,#reacts td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
+#reacts th{font-size:11px;color:#8899aa;text-transform:uppercase}#reacts tr.failed td:nth-child(3){color:#f3b4b4}#reacts tr.running td{color:#7fd1b9}
+#reacts tr.replaced td,#reacts tr.unfinished td{color:#8899aa}#reacts td.hp{text-align:right;white-space:nowrap}
 #nudge-buttons{display:flex;flex-direction:column;gap:4px;margin:6px 0}
 #nudge-buttons button{text-align:left;font-weight:400;background:#151b22;color:#dde3ea;border:1px solid #26303a}
 #nudge-buttons button.brain::after{content:"  \\2190  brain's pick";color:#7fd1b9;font-size:12px}
@@ -655,6 +658,9 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 </div>
 <h2>Options offered</h2>
 <ul id="options"></ul>
+<h2>Reactions</h2>
+<div class="note">The last 8 orders: how each went, and what she chose next.</div>
+<table id="reacts"><thead><tr><th>time</th><th>choice</th><th>result</th><th>HP</th><th>next choice</th></tr></thead><tbody></tbody></table>
 <h2>Nudge</h2>
 <div class="bubble" id="nudge">
 <div class="note" id="nudge-note">No menu yet.</div>
@@ -707,6 +713,7 @@ async function tick(){
   });
   fill('rules', t.rules || [], (r) => { const li = document.createElement('li'); li.textContent = r; return li; });
   renderNudge(s);
+  renderReactions(s.reactions || []);
   const plan = s.plan;
   const pl = s.planner || {};
   document.getElementById('plan-goal').textContent = plan ? plan.goal : (pl.running ? 'thinking about a plan...' : '(no plan yet)');
@@ -754,6 +761,30 @@ async function tick(){
   }));
   document.getElementById('chat').textContent = (s.chat || []).map(m => m.t + ' ' + m.from + ': ' + m.text).join('\\n');
   document.getElementById('log').textContent = (s.log || []).slice().reverse().map(l => '[' + l.t + '] ' + l.kind + ': ' + l.text).join('\\n');
+}
+// The strip is rebuilt only when a row changed, so a text selection or a hover on it survives the two second refresh.
+let reactSig = '';
+function renderReactions(rows){
+  const sig = JSON.stringify(rows);
+  if (sig === reactSig) return;
+  reactSig = sig;
+  const body = document.querySelector('#reacts tbody');
+  if (!rows.length) {
+    const tr = document.createElement('tr'); const td = document.createElement('td');
+    td.colSpan = 5; td.textContent = 'No orders yet.'; tr.append(td); body.replaceChildren(tr); return;
+  }
+  body.replaceChildren(...rows.map((r) => {
+    const tr = document.createElement('tr');
+    tr.className = r.status;
+    const hp = r.hp == null ? '-' : (r.hp > 0 ? '+' : '') + Math.round(r.hp);
+    const cells = [new Date(r.at).toLocaleTimeString([], { hour12: false }), r.choice, r.result, hp, r.next || '-'];
+    cells.forEach((v, i) => {
+      const td = document.createElement('td'); td.textContent = v;
+      if (i === 3) { td.className = 'hp'; if (r.lost >= 1) td.title = 'lost ' + Math.round(r.lost) + ' HP along the way'; }
+      tr.append(td);
+    });
+    return tr;
+  }));
 }
 // The nudge panel is built once. A refresh only rebuilds the buttons when the menu itself changed,
 // and never touches the text boxes, so what is being typed or picked survives it.
@@ -862,6 +893,7 @@ http.createServer((req, res) => {
         lastError: planner.lastError,
       },
       nudge: nudgeView(),
+      reactions: reactionRows(tracker.history(), percept),
       nudges: nudgeCount,
       examples: EXAMPLES_ON,
       lessons: lessonView(),

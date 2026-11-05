@@ -85,7 +85,9 @@ function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor)
     // Said only of a house not yet searched, the place to look. A shop or a searched house is not sold as one.
     const hunt = poor && stageOf(c) < 2 && kindOf(c.mem, c.seen) === 'house' ? ', no real weapon yet, look here' : '';
     return {
+      // name is how the order is called in the recent-choices lines (reactions.mjs), since b1 means another house next turn.
       id: `b${i + 1}`, verb: 'ENTER', a: 0, b: 0, target: String(c.seen.id), key: c.key, d: c.d,
+      name: `${kindOf(c.mem, c.seen)} ${c.d < 1 ? 'here' : compass(c.tx, c.ty)}`,
       label: `walk into ${kindOf(c.mem, c.seen)} ${where}, ${tags}${hunt}`,
     };
   });
