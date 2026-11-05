@@ -33,8 +33,9 @@ function kindOf(b, seen) {
   return 'building';
 }
 
-function buildingTags(b) {
+function buildingTags(b, planned) {
   const tags = [];
+  if (planned) tags.push('your planned home');
   if (!b || !b.visited) tags.push('not visited');
   else if (b.searched) tags.push('searched');
   else if (b.partly) tags.push('partly searched');
@@ -48,14 +49,17 @@ function buildingTags(b) {
   return tags.join(', ');
 }
 
-// Unsearched first, nearest first. A safe house is pulled to the front when she needs one.
-function rankBuildings(cands, wantsHome) {
+// Unsearched first, nearest first. A safe house is pulled to the front when she needs one,
+// and the planner's home building ahead of that when it is time to go home.
+function rankBuildings(cands, wantsHome, homeId) {
   const stage = (c) => (c.mem && c.mem.searched ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
-  const homeFirst = (c) => (wantsHome && safehouseScore(c.mem) >= 5 ? 0 : 1);
+  const homeFirst = (c) => (homeId && String(c.seen.id) === homeId ? -1 : wantsHome && safehouseScore(c.mem) >= 5 ? 0 : 1);
   return cands.sort((x, y) => homeFirst(x) - homeFirst(y) || stage(x) - stage(y) || x.d - y.d);
 }
 
-function buildingOptions(p, mem, now, avoid, wantsHome) {
+// homeId is the planner's home building, or '' when it is not time to go there. plannedId
+// is the same building at any hour, only to tag it for the model.
+function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId) {
   const here = inside(p) ? String(p.inBldg.id) : null;
   const cands = [];
   for (const seen of Array.isArray(p.buildings) ? p.buildings : []) {
@@ -67,9 +71,9 @@ function buildingOptions(p, mem, now, avoid, wantsHome) {
     if (!pathClear(tx, ty, avoid)) continue;
     cands.push({ seen, key, tx, ty, d: Math.max(num(seen.d), 0), mem: building(mem, seen.id) });
   }
-  return rankBuildings(cands, wantsHome).slice(0, MAX_BUILDINGS).map((c, i) => {
+  return rankBuildings(cands, wantsHome, homeId).slice(0, MAX_BUILDINGS).map((c, i) => {
     const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
-    const tags = buildingTags(c.mem || { visited: !!c.seen.visited });
+    const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId);
     return {
       id: `b${i + 1}`, verb: 'ENTER', a: 0, b: 0, target: String(c.seen.id), key: c.key,
       label: `walk into ${kindOf(c.mem, c.seen)} ${where}, ${tags}`,
@@ -177,7 +181,11 @@ export function buildOptions(p, mem, ctx = {}) {
   const out = needOptions(p, mem, now);
   const wantsHome = isNight(p) || num(p.fatigue) >= 0.6 || panic01(p) >= 0.3;
   const outdoors = !inside(p);
-  for (const o of buildingOptions(p, mem, now, avoid, wantsHome)) out.push({ prio: outdoors ? 2.5 : 8, ...o });
+  // The plan's home building leads the list from dusk (17:00) or whenever she needs shelter.
+  const plannedId = ctx.plan && ctx.plan.home ? String(ctx.plan.home) : '';
+  const dusk = num(p.hour, 12) >= 17 && num(p.hour, 12) < 21;
+  const homeId = wantsHome || dusk ? plannedId : '';
+  for (const o of buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId)) out.push({ prio: outdoors ? 2.5 : 8, ...o });
 
   const close = [...unaware(p).filter((z) => z.d <= AWAY_R), ...chasers];
   if (close.length && !blockedWhy(mem, 'AWAY', now)) {

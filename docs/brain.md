@@ -26,7 +26,7 @@ policy rule fires? .............. send its option, no model call --- policy.mjs
    |
 ask the model ---------------------------------------- llm.mjs
    system:  fixed instructions (cached by Ollama)
-   user:    digest + playbook rules + recent + voice + options
+   user:    digest + plan + playbook rules and lessons + recent + voice + options
    reply:   {"thought": "...", "choice": "<one of this turn's ids>"}
    |
 re-read the percept: a chaser walked in? drop the order
@@ -49,7 +49,9 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `memory.mjs` | Map memory by building id, saved as `map` in `pz-state.json`. | service |
 | `digest.mjs` | The situation in plain lines. | formatter |
 | `words.mjs` `geom.mjs` | Words for numbers, compass, distances. | pure helpers |
-| `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema. | I/O |
+| `planner.mjs` | The slow day plan: events, parsing, the background runner. See `docs/planner.md`. | service |
+| `lessons.mjs` | Lessons from past deaths and their triggers. See `docs/planner.md`. | service |
+| `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
 | `pz-bridge.mjs` | Reads the percept, runs the loop, writes the order, serves `/mind`. | I/O |
 | `decide.mjs` | The v1 brain for old mods, and `intentLine`. | v1 |
 
@@ -76,7 +78,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
 | `search` | SEARCH | inside, not searched (map memory), not overloaded, no zombie within 8 |
 | `wearbag` | WEARBAG | no bag worn and a bag in the item names |
-| `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked |
+| `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00 |
 | `fill` | FILL | inside, a tap here, an empty bottle carried |
 | `rest` | REST | endurance under 0.6, no chaser |
 | `away` | GOTO | an idle zombie within 12, or a chaser: 15 tiles in the clearest direction away |

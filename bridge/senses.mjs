@@ -37,6 +37,11 @@ export function zombies(p) {
   return [{ dx: num(p.zdx), dy: num(p.zdy), d, chase: num(p.zChasing) > 0, down: false, crawl: false }];
 }
 
+// Zombies after her. The list when the mod sent one, else the game's own count.
+export function chasing(p) {
+  return zombies(p).filter((z) => z.chase).length || num(p && p.zChasing);
+}
+
 // The reflex owns a chaser inside 10 tiles and anything inside 3 (docs/combat.md). An order
 // then would pull her out of the fight or the flee. An idle zombie further off is the brain's.
 export function holdReason(p) {

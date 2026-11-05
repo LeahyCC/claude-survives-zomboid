@@ -68,9 +68,9 @@ export function parseChoice(raw, ids) {
   return { choice, thought };
 }
 
-async function postJSON(url, body, label) {
+async function postJSON(url, body, label, timeout = TIMEOUT) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), TIMEOUT);
+  const timer = setTimeout(() => ctl.abort(), timeout);
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -99,11 +99,21 @@ async function callOllama(prompt, model) {
   return msg.content || msg.thinking || '';
 }
 
+// How many in-game choices are waiting on Ollama right now. The planner and the death review
+// look at this before they start, so a slow thought never queues in front of a tactical turn.
+let tacticalCalls = 0;
+export const tacticalBusy = () => tacticalCalls > 0;
+
 export async function callLLM(prompt, model = MODEL) {
   if (BACKEND !== 'ollama') {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
-  return callOllama(prompt, model);
+  tacticalCalls += 1;
+  try {
+    return await callOllama(prompt, model);
+  } finally {
+    tacticalCalls -= 1;
+  }
 }
 
 // One menu turn. Returns the raw reply and Ollama's own timings for the /mind page.
@@ -112,15 +122,21 @@ export async function callChoice(user, ids, model = MODEL) {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
   const started = Date.now();
-  const data = await postJSON(BASE() + '/api/chat', {
-    model,
-    stream: false,
-    think: false,
-    format: choiceSchema(ids),
-    keep_alive: KEEP_ALIVE,
-    options: { temperature: 0.2, num_predict: 96, num_ctx: 4096 },
-    messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
-  }, 'ollama');
+  tacticalCalls += 1;
+  let data;
+  try {
+    data = await postJSON(BASE() + '/api/chat', {
+      model,
+      stream: false,
+      think: false,
+      format: choiceSchema(ids),
+      keep_alive: KEEP_ALIVE,
+      options: { temperature: 0.2, num_predict: 96, num_ctx: 4096 },
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
+    }, 'ollama');
+  } finally {
+    tacticalCalls -= 1;
+  }
   const msg = data.message || {};
   return {
     raw: msg.content || msg.thinking || '',
@@ -128,4 +144,48 @@ export async function callChoice(user, ids, model = MODEL) {
     promptTokens: Number(data.prompt_eval_count) || 0,
     outTokens: Number(data.eval_count) || 0,
   };
+}
+
+// The slow layer: the day plan and the death review. Its own model, token budget and timeout,
+// because a thought here may run for tens of seconds and the in-game choice must never wait
+// for it to be short.
+export const PLANNER_MODEL = env.PZ_PLANNER_MODEL || MODEL;
+const PLANNER_TIMEOUT = Number(env.PZ_PLANNER_TIMEOUT || 120000);
+const PLANNER_PREDICT = Number(env.PZ_PLANNER_PREDICT || 1500);
+// auto: ask for thinking and fall back for a model that refuses. off: never think.
+const PLANNER_THINK = (env.PZ_PLANNER_THINK || 'auto').toLowerCase();
+// Models Ollama said cannot think. Asked once, remembered, so the next plan does not fail twice.
+const cannotThink = new Set();
+
+export const thinkRefused = (msg) => /think/i.test(String(msg)) && /not support|unsupported|does not/i.test(String(msg));
+
+export async function callPlanner({ system, user, schema, model = PLANNER_MODEL, timeout = PLANNER_TIMEOUT }) {
+  if (BACKEND !== 'ollama') {
+    throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
+  }
+  const started = Date.now();
+  const send = (think) => postJSON(BASE() + '/api/chat', {
+    model,
+    stream: false,
+    think,
+    format: schema,
+    keep_alive: KEEP_ALIVE,
+    options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: 8192 },
+    messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+  }, 'ollama', timeout);
+  let think = PLANNER_THINK !== 'off' && !cannotThink.has(model);
+  let data;
+  try {
+    data = await send(think);
+  } catch (err) {
+    if (!think || !thinkRefused(err && err.message)) throw err;
+    cannotThink.add(model);
+    think = false;
+    data = await send(false);
+  }
+  const msg = data.message || {};
+  // Never fall back to msg.thinking: that is reasoning text, not the JSON the schema asked for.
+  const raw = msg.content || '';
+  if (!raw) throw new Error(think ? 'empty reply (the thinking may have used up num_predict)' : 'empty reply');
+  return { raw, ms: Date.now() - started, thought: !!msg.thinking, think };
 }

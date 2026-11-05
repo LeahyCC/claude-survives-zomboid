@@ -3,3 +3,5 @@ bridge/pz-state.json
 .env
 *.log
 .claude/
+bridge/lessons.json
+bridge/lessons.json.tmp
