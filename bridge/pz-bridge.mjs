@@ -21,7 +21,7 @@ import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
 import { createPlanner } from './planner.mjs';
 import { loadLessons, addLessons, recordRun, deleteLesson, lessonStats, reviewDeath } from './lessons.mjs';
 import { digest } from './digest.mjs';
-import { loadStats, observe as observeStats, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
+import { loadStats, observe as observeStats, observeDeath, takeEnded, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
 import { createTracker } from './decisions.mjs';
 import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
 import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
@@ -32,6 +32,8 @@ const PORT = Number(process.env.PORT || 8799);
 const LUA_DIR = process.env.PZ_LUA_DIR || path.join(os.homedir(), 'Zomboid', 'Lua');
 const PERCEPT_FILE = path.join(LUA_DIR, 'local_percept.txt');
 const INTENT_FILE = path.join(LUA_DIR, 'local_intent.txt');
+// The mod writes this when she dies, and it stays until the next death (mods/.../Death.lua).
+const DEATH_FILE = path.join(LUA_DIR, 'local_death.txt');
 const STATE_FILE = process.env.PZ_STATE_FILE || path.join(DIR, 'pz-state.json');
 const LESSONS_FILE = process.env.PZ_LESSONS_FILE || path.join(DIR, 'lessons.json');
 // Append-only logs of what she chose and what Colin would have chosen (docs/eval.md).
@@ -142,9 +144,39 @@ function readPercept() {
     perceptAt = Date.now();
     if (observeStats(stats, percept, perceptAt)) saveState();
     tracker.observe(percept, perceptAt);
+    logEnded();
   } catch { /* partial write, or the game is not up */ }
 }
 setInterval(readPercept, 1000);
+
+// A run that just ended gets its death line in the decision log. The log must never stop her.
+function logEnded() {
+  const r = takeEnded(stats);
+  if (!r) return;
+  try {
+    tracker.death(r, Date.now());
+    log('death', `cause: ${r.cause}${r.death && r.death.job ? `, doing ${r.death.job}` : ''}`);
+  } catch { /* disk */ }
+}
+
+// The mod's own record of the last seconds. Read on its own file, because the next character's
+// percepts overwrite the dead one within seconds and this file stays.
+let deathMtime = 0;
+function readDeath() {
+  try {
+    const mt = fs.statSync(DEATH_FILE).mtimeMs;
+    if (mt === deathMtime) return;
+    const rec = JSON.parse(fs.readFileSync(DEATH_FILE, 'utf8'));
+    deathMtime = mt;
+    const now = Date.now();
+    if (!observeDeath(stats, rec, mt, now)) return;
+    saveState();
+    // Orders still open died with her, even if the dead percept never reached us.
+    tracker.observe({ dead: true }, now);
+    logEnded();
+  } catch { /* no file yet, or a partial write: try again next second */ }
+}
+setInterval(readDeath, 1000);
 
 // The slow layer. tick() never blocks: it starts a plan in the background only when no
 // tactical turn is on the model and no fight is on, and the loop below does not wait for it.
@@ -640,7 +672,7 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <div class="note" id="lessons-note"></div>
 <ul id="lessons"></ul>
 <h2>Runs</h2>
-<table id="runs"><thead><tr><th>started</th><th>hours</th><th>kills</th><th>day</th><th>damage</th><th>searched</th><th>ended by</th></tr></thead><tbody></tbody></table>
+<table id="runs"><thead><tr><th>started</th><th>hours</th><th>kills</th><th>day</th><th>damage</th><th>searched</th><th>ended by</th><th>last seconds</th></tr></thead><tbody></tbody></table>
 <h2>Voice</h2>
 <div id="chat"></div>
 <p style="display:flex;gap:8px"><input id="god" placeholder="say something" onkeydown="if(event.key==='Enter')sendGod()"><button onclick="sendGod()">send</button></p>
@@ -715,7 +747,7 @@ async function tick(){
     const tr = document.createElement('tr');
     if (r.live) tr.className = 'live';
     const when = r.start ? r.start.slice(5, 16).replace('T', ' ') : '-';
-    for (const v of [when, r.hoursSurvived, r.kills, r.day, r.damage, r.searched, r.live ? 'alive' : r.cause]) {
+    for (const v of [when, r.hoursSurvived, r.kills, r.day, r.damage, r.searched, r.live ? 'alive' : r.cause, r.death ? r.death.summary : '']) {
       const td = document.createElement('td'); td.textContent = v; tr.append(td);
     }
     return tr;

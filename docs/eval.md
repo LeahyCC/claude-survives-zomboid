@@ -239,32 +239,52 @@ What this shows:
 | `day` | Highest `day` seen. |
 | `damage` | Total hp lost. Every drop between two percepts counts. Healing is not subtracted. |
 | `searched` | Buildings with a SEARCH that reported done, each counted once. |
-| `cause` | A guess from the last ten percepts. |
+| `cause` | Why she died, see below. `alive` for the live run. |
+| `death` | The facts behind the cause (below). Null for the live run. `/api/stats` adds `summary`, one line of words, which the `/mind` Runs table shows in its "last seconds" column. |
 
-Cause of death, in the order it is checked:
+### Cause of death
+
+`bridge/death.mjs` reads the mod's death record (`docs/percept.md`): 10 samples, one a second, and a last one taken as she died. The bridge reads it from `local_death.txt` once a second and applies each record once. It ends the live run, or fills in a run that ended a moment before on thinner evidence.
+
+Why the old guess said `unknown`: the mod's dead percept was rarely seen. The next character wrote over it, so the bridge saw hours going backwards, closed the run as `unknown` and never looked at its own last seconds. The saved record of the 2026-11-05 runs shows it: the first run's end time equals the next run's start time to the millisecond, which only happens on that path.
+
+Without a record (an old mod, or the bridge started late) the same guesser reads the bridge's own last 10 percepts. That source is thinner: no reflex mode, no infection. `death.source` says which one: `mod` or `bridge`.
+
+A zombie was on her when one was within 3 tiles in any of the last 5 samples, or when a chaser was about and she lost 10 hp or more in those 5 seconds. Checked in this order:
 
 ```
-fell        z dropped and no zombie within 3 tiles
-dehydrated  thirst 0.95 or more, no zombie within 3 tiles
-starved     hunger 0.95 or more, no zombie within 3 tiles
-bitten      a zombie within 3 tiles, or a bite wound
-bled out    bleeding in the last ten percepts
-unknown     none of the above, or the bridge was not watching
+fell                                 z dropped and 10 hp went with it, no zombie on her
+a zombie was on her:
+  overrun while entering a building    an ENTER job, or an ENTER order running, in the last 5 samples
+  overrun while fleeing                the reflex fled in the last 3 samples more than it fought
+  bitten in a fight                    the reflex fought in the last 3 samples
+  bitten while busy                    no reflex, and the job was SEARCH, LOOT, DRINK, EAT, SLEEP, ...
+  bitten                               none of those
+infection                            the infection flag is set and no zombie was on her
+thirst                               thirst 0.95 or more
+starved                              hunger 0.95 or more
+bled out                             bleeding in the last 5 samples
+unknown                              nothing fits, or there were no samples
 ```
 
-A run also ends when `hoursAlive` goes backwards by more than half an hour, which means a new character started while the bridge was not looking. Its cause is `unknown`.
+`death` holds: `job` and `order` (and `status`) running at the end, `zAdj` (zombies within 3 tiles), `zClose` (within 10), `zChasing`, `hpLost10` (hp lost across the 10 samples, drops only), `hpLostEnd` (the last 5), `inside`, `reflex`, `bleeding`, `infected`, `hunger`, `thirst`, `hp`, `samples`, `source`, and `text` (the game's own death line, when the mod sent it).
+
+Sickness, poison and temperature are in the record but not used: their scales are not checked. A character that dies of cold or sickness reads `unknown` or, if something else fits first, the wrong cause. Runs saved before this change keep `dehydrated`, the old name for `thirst`.
+
+A run also ends when `hoursAlive` goes backwards by more than half an hour, which means a new character started while the bridge was not looking. That run is guessed from the bridge's own tail, so it is `unknown` only when nothing fits.
 
 ## Decision log
 
 `bridge/decisions.jsonl` gets one line for every turn the policy or the model decided. Turns that wait (the reflex, sleep, a running job) write nothing. The file is only ever appended to, and it is ignored by git. Past about 20 MB it moves to `decisions.jsonl.1` (the old `.1` is dropped) and a new file starts. `PZ_DECISIONS_FILE` and `PZ_LOG_MAX_BYTES` change the path and the cap.
 
-Every line has `t` and `id`. The three kinds of line for one decision share the `id`.
+Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended.
 
 | `t` | Written | Fields |
 |---|---|---|
 | `decision` | when the turn is decided | `at`, `run` (the stats run's start time), `day`, `hour`, `percept` (a small copy), `menu` (id, verb, key, label), `by` (`policy`, `model` or `nudge`), `rule` (the policy rule), `choice`, `verb`, `key`, `thought`, `sent`, `seq`, `rules` (playbook rule ids and `lesson:` ids), `ms` (model time) |
 | `outcome` | when the order reports | `result` (`done` or `failed`), `why`, `verb`, `ms` (how long it ran), `hpDuring` (hp at the end minus hp at the start), `lostDuring` (hp lost along the way) |
 | `after` | when the follow-up closes | `hpAfter` and `lostAfter` (the 60 seconds after the order finished), `chased` (a zombie started chasing since the order was sent), `died` (she died within 5 minutes of the choice) |
+| `death` | when a run ends | `at`, `run` (the run's start, the same key the decision lines carry), `cause`, `day`, `hours`, `kills`, `job`, `order`, `status`, `zClose` (zombies within 3 tiles), `zNear` (within 10), `zChasing`, `hpLost10`, `inside`, `reflex`, `source` (`mod` or `bridge`), `text`. `id` starts with `death-` and no other line shares it. |
 
 Notes:
 
@@ -272,7 +292,8 @@ Notes:
 - An order that a newer order cancelled gets `result: replaced`. One with no result after 5 minutes gets `unfinished`. Death closes every open order as `unfinished` with `why: died`.
 - The windows use the wall clock, so fast-forward makes them longer in game time.
 - Orders still open when the bridge stops have a decision line and no outcome.
-- A new character that the bridge never saw die closes the open orders with `died: false`.
+- A new character that the bridge never saw die closes the open orders with `died: false`. When the mod's death record arrives first, the open orders close with `died: true`.
+- A run can get two `death` lines: one at once from the bridge's own tail, and a better one when the mod's record arrives a second later. Readers keep the newest line for each `run`. `review.mjs` does.
 
 ## Nudges
 
@@ -305,7 +326,7 @@ node bridge/tools/review.mjs                      both logs, all of it
 node bridge/tools/review.mjs --since 2026-11-04   from that date on
 ```
 
-It prints, in a few lines each: how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
+It prints, in a few lines each: deaths by cause (how many, the job she was doing, zombies close and chasing at the end, hp lost in the last 10 seconds, and how many came from the bridge's own guess), how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
 
 ## Nudges as scenarios
 

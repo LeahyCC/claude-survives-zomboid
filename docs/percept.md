@@ -13,7 +13,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 
 | Field | Type | Meaning | Source |
 |---|---|---|---|
-| `dead` | bool | The survivor is dead. | `p:isDead()` |
+| `dead` | bool | The survivor is dead. The dead percept also carries `death`, see "The death record". | `p:isDead()` |
 | `x` `y` `z` | int | Tile position. | `p:getX()` `getY()` `getZ()` |
 | `hour` | int | Hour of day, 0 to 23. | `getGameTime():getHour()` |
 | `day` | int | Nights survived. | `getGameTime():getNightsSurvived()` |
@@ -142,6 +142,55 @@ Facts that do not change (bounds, doors, beds) are kept by building id in `Local
 - `water` takes objects from `IsoRoom:getWaterSources()` plus any room object where `hasWater()` is true at scan time. It is offered when `getFluidAmount() >= 1` (the same line vanilla uses for water menus) and not `isTaintedWater()`. Once the water shuts off, sinks drop out.
 - `bed` is an object whose properties have `IsoFlagType.bed`, as vanilla checks in `ISWorldObjectContextMenu`. A double bed shows as two squares.
 - `buildings` entries are `{id, dx, dy, d, res, shop, door, visited}`. `dx dy d` go to the nearest wall, so 0 means inside. `res` is `isResidential()`, `shop` is `isShop()`. `door` is the nearest exterior ground-floor door `{x, y}`, or null before the door search reaches it or when none was found. `visited` means the survivor has stood inside it this session. Alarm flags and container contents are left out on purpose: a player cannot see them.
+
+## The death record
+
+The old dead percept carried only the vitals of a dead body, and often the bridge never saw it: the next character wrote over it first. The real runs saved so far all ended as `unknown` for that reason. `Death.lua` now keeps the last 10 seconds and writes them out when player 0 dies.
+
+```
+once a second   Sense.writePercept -> Death.sample -> ring of the last 10 samples (in memory)
+on death        OnPlayerDeath, or the tick loop's dead check, whichever comes first
+                  Death.onDeath: one last sample taken now, record built from the ring
+                  -> Zomboid/Lua/local_death.txt   the record, kept until the next death
+                  -> one final percept with dead: true and "death"
+new character   a living player 0 more than 5 seconds after the death clears the ring
+```
+
+The bridge relies on `local_death.txt`, because the next character does not overwrite it. The copy in the percept is for a bridge that is watching.
+
+Record (`death`):
+
+| Field | Meaning |
+|---|---|
+| `id` | `getTimestampMs()` when she died, as a string. The bridge applies each id once. |
+| `day` `hours` `kills` | `getNightsSurvived()`, `getHoursSurvived()`, `getZombieKills()`. |
+| `x` `y` `z` | Where. |
+| `text` | The game's own death line, `GameTime:getDeathString(p)`. A hint only. |
+| `ring` | Up to 10 samples, oldest first, one a second. |
+| `final` | One more sample, taken in the death handler. A key is missing when the game would not answer for a dead body. |
+
+Sample. Every key is optional: a read that fails leaves its key out, and the bridge treats a missing key as not known.
+
+| Key | Meaning | Source |
+|---|---|---|
+| `hp` | Overall health. | `getOverallBodyHealth()` |
+| `bleeding` `wounds` | Parts bleeding, and parts hurt. | `Sense.bodyFacts` |
+| `bite` `scratch` | Any bitten or scratched part. | same |
+| `infected` | The zombie infection flag. | `BodyDamage:IsInfected()` |
+| `infect` | Infection progress. Scale not checked. | `CharacterStat.ZOMBIE_INFECTION` |
+| `hunger` `thirst` | 0 to 1, 1 is worst. | `CharacterStat` |
+| `sick` `foodSick` `poison` `temp` | Sickness, food sickness, poison, body temperature. Kept in the record. Their scales are not checked, so the bridge does not guess a cause from them yet. | `CharacterStat.SICKNESS` `FOOD_SICKNESS` `POISON` `TEMPERATURE` |
+| `zClose` | Living zombies within 10 tiles. | `Sense.zombieScan` |
+| `zAdj` | Zombies within 3 tiles, among the nearest 6. | `Sense.zombieFacts` |
+| `zChasing` | Zombies after her. | same |
+| `nearest` | Distance to the nearest zombie. | same |
+| `inside` | Under a roof. | `not isOutside()` |
+| `z` | Floor. | `getZ()` |
+| `job` | The running skill or need job, `LS.skill.verb` or `LS.needsJob.verb`. | |
+| `order` `status` | The last order and its state. | `LS.result` |
+| `reflex` | `fight`, `flee`, `hold` or `none`, from what `Reflex.perform` did in the last 3 seconds (`LS.reflexKind`). `swing stomp shove close` count as a fight, `flee backoff` as a flight. | |
+
+A sample is about 230 bytes, so the record is near 3 KB. It is only in the dead percept. Which stat names, scales and `getDeathString` text the live game gives is not checked yet.
 
 ## Size
 

@@ -52,6 +52,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `planner.mjs` | The slow day plan: events, parsing, the background runner. See `docs/planner.md`. | service |
 | `lessons.mjs` | Lessons from past deaths and their triggers. See `docs/planner.md`. | service |
 | `decisions.mjs` | The decision log: decision, outcome and after lines, and the join between them. See `docs/eval.md`. | service |
+| `death.mjs` | Why she died: the cause and its facts, from the mod's death record. See `docs/eval.md`. | service |
 | `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
 | `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
