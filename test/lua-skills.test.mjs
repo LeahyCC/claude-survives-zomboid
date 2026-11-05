@@ -582,3 +582,159 @@ test('ENTER marks a window that will not open for smashing and moves on', () => 
   assert.notDeepEqual(queue(lua), ['ISClimbThroughWindow'], 'never climbs a shut window');
   assert.equal(lua.get('LocalSurvivor.skill.way.smashable') ?? lua.run('for _, w in ipairs(LocalSurvivor.skill and LocalSurvivor.skill.ways or {}) do if w.kind == "window" then return w.smashable end end'), true);
 });
+
+// ---------- the house job's rules: entry order, and no walk out of the house ----------
+const rank = (lua, facts) => lua.run(`return LocalSurvivor.Act.wayRank(${luaTable(facts)})`);
+
+test('wayRank: an unlocked door, then an open or broken window, then a shut one, and never a locked way', () => {
+  const lua = world();
+  const door = rank(lua, { kind: 'door' });
+  const keyed = rank(lua, { kind: 'door', locked: true, key: true });
+  const open = rank(lua, { kind: 'window', open: true });
+  const broken = rank(lua, { kind: 'window', smashed: true });
+  const shut = rank(lua, { kind: 'window' });
+  assert.ok(keyed < door && door < open && open === broken && broken < shut);
+  assert.equal(rank(lua, { kind: 'door', locked: true }), undefined);
+  assert.equal(rank(lua, { kind: 'window', locked: true }), undefined);
+  assert.equal(rank(lua, { kind: 'door', barricaded: true }), undefined);
+  assert.equal(rank(lua, { kind: 'window', open: true, barricaded: true }), undefined);
+  assert.ok(rank(lua, { kind: 'door', zombie: true }) > shut, 'a way with a zombie at it waits behind the rest');
+});
+
+// She stands 2 tiles from the window and 5 from the door: the case the old 2 tile credit got wrong.
+const NEAR_WINDOW = [32.5, 7.5];
+
+test('ENTER walks past a nearer window to an unlocked door', () => {
+  const lua = enterWorld({}, {}, NEAR_WINDOW);
+  order(lua, '1|ENTER|0|0||||B2');
+  tick(lua);
+  assert.equal(walkTarget(lua), '29,12');
+});
+
+test('ENTER takes an open or broken window and does not go to a door it can read is locked', () => {
+  for (const state of [{ open: true }, { smashed: true }]) {
+    const lua = enterWorld({ locked: true }, state, NEAR_WINDOW);
+    order(lua, '1|ENTER|0|0||||B2');
+    tick(lua);
+    assert.equal(walkTarget(lua), '32,9');
+    moveTo(lua, 32.5, 9.5);
+    tick(lua, 2);
+    assert.equal(queue(lua).includes('ISSmashWindow'), false);
+  }
+});
+
+test('ENTER clears the glass of a window that is already broken before it climbs', () => {
+  const lua = enterWorld({ locked: true }, { smashed: true }, NEAR_WINDOW);
+  order(lua, '1|ENTER|0|0||||B2');
+  tick(lua);
+  moveTo(lua, 32.5, 9.5);
+  tick(lua, 2);
+  assert.deepEqual(queue(lua), ['ISRemoveBrokenGlass']);
+});
+
+test('ENTER goes to another way when a zombie stands at the door', () => {
+  const lua = enterWorld({}, {}, NEAR_WINDOW);
+  lua.run('__zombies[1] = __makeZombie({ x = 28, y = 13 })');
+  order(lua, '1|ENTER|0|0||||B2');
+  tick(lua);
+  assert.equal(walkTarget(lua), '32,9');
+});
+
+// A long hall, x 10 to 24, with a yard along its north side.
+const LONG_HOUSE = `
+  B = __makeBuilding({ id = "B1", x = 10, y = 10, x2 = 24, y2 = 10, res = true })
+  HALL = __makeRoom({ name = "hall", x = 10, y = 10, x2 = 24, y2 = 10 })
+  B.def.getRooms = function() return __javaList({ HALL.def }) end
+  __floor(10, 10, 24, 10, { building = B, room = HALL })
+  __floor(10, 9, 24, 9, {})
+  LocalSurvivor.Sense.memoFor(B)
+`;
+
+test('insideRoute keeps to the building, goes through a shut door, and cuts a long way into legs', () => {
+  const lua = world(LONG_HOUSE);
+  const route = () => lua.run(`
+    local r = LocalSurvivor.Move.insideRoute(P, __squares["24,10,0"], B)
+    if not r then return nil end
+    local out = {}
+    for i, sq in ipairs(r) do out[i] = sq:getX() .. "," .. sq:getY() end
+    return out
+  `);
+  assert.equal(route().length, 14);
+  assert.equal(route().at(-1), '24,10');
+  assert.ok(route().every((s) => s.endsWith(',10')), 'no square of the yard');
+  assert.equal(lua.run('local leg = LocalSurvivor.Move.insideLeg(P, __squares["24,10,0"], B); return leg:getX()'), 16);
+  assert.equal(lua.run('local _, part = LocalSurvivor.Move.insideLeg(P, __squares["24,10,0"], B); return part'), true);
+  assert.equal(lua.run('local _, part = LocalSurvivor.Move.insideLeg(P, __squares["14,10,0"], B); return part'), false);
+  // A wall is no way, and the yard round it does not count. A shut door in the same place is a way.
+  lua.run('__squares["15,10,0"].opts.walls = { ["16,10"] = true }');
+  assert.equal(route(), undefined);
+  lua.run('__squares["15,10,0"].opts.doorsTo = { ["16,10"] = true }');
+  assert.equal(route().length, 14);
+});
+
+test('SEARCH walks a long way inside the house in legs', () => {
+  const lua = world(`${LONG_HOUSE}
+    __squares["24,10,0"].opts.blocked = true
+    PAN = __makeItem({ type = "Base.Crowbar", name = "Crowbar", melee = true, dmg = 1.15, range = 1.25, twoHand = true, cls = { "BLUNT" }, weight = 2 })
+    BOX = __makeContainer({ items = { PAN }, square = __squares["24,10,0"] })
+    HALL.getContainer = function() return __javaList({ BOX }) end
+    __adjacent = function() return __squares["23,10,0"] end
+  `);
+  order(lua, '1|SEARCH|0|0|||');
+  tick(lua, 3);
+  assert.equal(walkTarget(lua), '16,10', 'the first leg, not the far square');
+  moveTo(lua, 16.5, 10.5);
+  tick(lua, 2);
+  assert.equal(walkTarget(lua), '22,10');
+  moveTo(lua, 22.5, 10.5);
+  tick(lua, 2);
+  assert.equal(walkTarget(lua), '23,10');
+});
+
+// HOUSE has a kitchen and a bedroom with a yard between, so the way to the bedroom goes outside.
+function toTheBedroom(lua) {
+  order(lua, '1|SEARCH|0|0|||');
+  tick(lua, 3);
+  moveTo(lua, 11.5, 10.5);
+  tick(lua, 2);
+  lua.run('__take(P, COUNTER)');
+  tick(lua, 5);
+  assert.equal(walkTarget(lua), '21,10');
+  moveTo(lua, 14.5, 12.5);
+  tick(lua);
+}
+
+test('SEARCH that steps out of the house skips that room and walks back to the last square inside', () => {
+  const lua = world(HOUSE);
+  toTheBedroom(lua);
+  moveTo(lua, 15.5, 12.5);
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.skill.phase'), 'back');
+  assert.equal(result(lua).status, 'running', 'one step out does not fail the search');
+  tick(lua);
+  assert.equal(walkTarget(lua), '14,12');
+  moveTo(lua, 14.5, 12.5);
+  tick(lua, 8);
+  assert.equal(result(lua).status, 'done');
+  // The room gets one more try, and only then does it count as done.
+  assert.equal(lua.get('LocalSurvivor.searched.B1')['bedroom@20,10,0'], undefined);
+  assert.equal(lua.run('return LocalSurvivor.Act.roomsLeft(LocalSurvivor.Sense.memoFor(B))'), 1);
+  order(lua, '2|SEARCH|0|0|||');
+  tick(lua, 3);
+  moveTo(lua, 15.5, 12.5);
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.skill.phase'), 'back');
+  tick(lua);
+  moveTo(lua, 14.5, 12.5);
+  tick(lua, 8);
+  assert.equal(result(lua).status, 'done');
+  assert.equal(lua.get('LocalSurvivor.searched.B1')['bedroom@20,10,0'], true);
+});
+
+test('SEARCH carried well out of the house fails "not inside"', () => {
+  const lua = world(HOUSE);
+  toTheBedroom(lua);
+  moveTo(lua, 19.5, 12.5);
+  tick(lua);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'SEARCH', status: 'failed', why: 'not inside' });
+});

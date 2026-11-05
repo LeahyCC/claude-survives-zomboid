@@ -75,6 +75,75 @@ function Move.walkTo(p, sq)
   ISTimedActionQueue.add(ISWalkToTimedAction:new(p, sq))
 end
 
+-- ---------- staying in the house ----------
+-- The game's pathfinder takes the shortest way, and that can be out of one door and in by another.
+-- So a walk inside a house is cut into short legs along a way that stays on the building's own
+-- squares. Between squares a leg apart there is no shorter way round by the garden.
+Move.ROUTE_MAX = 800   -- squares one search may read
+Move.ROUTE_LEG = 6     -- squares per leg
+
+-- A square of this building, with a roof over it. The squares by an outside door have neither.
+function Move.insideSquare(sq, building)
+  local ok, inside = pcall(function() return sq ~= nil and building ~= nil and sq:getBuilding() == building and sq:getRoom() ~= nil end)
+  return ok and inside == true
+end
+
+-- isBlockedTo also says yes for a shut door, and most doors in a house are shut. The walk opens those.
+local function stepOpen(a, b)
+  local door = false
+  pcall(function() door = a:isDoorTo(b) == true end)
+  if door then return true end
+  local blocked = true
+  if not pcall(function() blocked = a:isBlockedTo(b) end) then return true end
+  return not blocked
+end
+
+-- The squares from where she stands to dest, staying inside, dest last. {} when she is on it. nil
+-- when there is no such way on this floor. Stairs are not followed, so another floor is nil too.
+function Move.insideRoute(p, dest, building)
+  local start = nil
+  pcall(function() start = p:getSquare() end)
+  if not start or not dest or not Move.insideSquare(start, building) then return nil end
+  if start == dest then return {} end
+  local z = start:getZ()
+  if dest:getZ() ~= z then return nil end
+  local key = function(sq) return sq:getX() .. "," .. sq:getY() end
+  local from, front, count = { [key(start)] = false }, { start }, 1
+  local i = 1
+  while front[i] and count < Move.ROUTE_MAX do
+    local cur = front[i]
+    i = i + 1
+    for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+      local n = Move.square(cur:getX() + d[1], cur:getY() + d[2], z)
+      if n and from[key(n)] == nil and Move.insideSquare(n, building) and stepOpen(cur, n)
+        and (n == dest or Move.canStand(n)) then
+        from[key(n)] = cur
+        count = count + 1
+        if n == dest then
+          local back, at = {}, n
+          while at do
+            table.insert(back, at)
+            at = from[key(at)]
+          end
+          local route = {}
+          for k = #back - 1, 1, -1 do table.insert(route, back[k]) end
+          return route
+        end
+        table.insert(front, n)
+      end
+    end
+  end
+  return nil
+end
+
+-- Where to walk now to get to dest without leaving: a square one leg along the inside way, or dest
+-- itself when it is close or no inside way is known. The second value is true for a leg.
+function Move.insideLeg(p, dest, building)
+  local route = Move.insideRoute(p, dest, building)
+  if route and #route > Move.ROUTE_LEG then return route[Move.ROUTE_LEG], true end
+  return dest, false
+end
+
 -- Free square next to sq the player can stand on, the way vanilla picks one for a container.
 function Move.adjacent(p, sq)
   local adj = nil

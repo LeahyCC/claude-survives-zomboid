@@ -614,14 +614,54 @@ test('SECURE leaves a porch light on an outside square alone', () => {
   assert.equal(result(lua).why, 'nothing open; 1 out of reach');
 });
 
-test('SECURE fails "not inside" when he ends up outside the building', () => {
+// SECURE with its walk to the door under way. The sweep has seen him inside by then.
+function secureWalking(lua) {
+  order(lua, '1|SECURE|0|0|||');
+  for (let i = 0; i < 6 && !queue(lua).length; i++) step(lua);
+  assert.deepEqual(queue(lua), ['ISWalkToTimedAction']);
+}
+// The walk ends with him on another square than it was sent to, and the sweep looks again.
+function landOn(lua, square) {
+  lua.run(`ISTimedActionQueue.clear(__players[0]); __players[0].sq = ${square}`);
+  for (let i = 0; i < 3 && !queue(lua).length && result(lua).status === 'running'; i++) step(lua);
+}
+
+test('SECURE fails "not inside" when he ends up well outside the building', () => {
   const lua = createHarness();
   lua.autoload();
   wallHouse(lua, { kind: 'door', wall: 'south' });
-  order(lua, '1|SECURE|0|0|||');
-  lua.run('__players[0].sq = __outside');
-  finish(lua);
-  step(lua);
+  secureWalking(lua);
+  landOn(lua, '__makeSquare({ x = 30, y = 30 })');
+  assert.deepEqual(result(lua), { seq: 1, verb: 'SECURE', status: 'failed', why: 'not inside' });
+});
+
+test('SECURE that steps out of a door walks back in and carries on', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'door', wall: 'south' });
+  secureWalking(lua);
+  landOn(lua, '__outside');
+  assert.equal(result(lua).status, 'running');
+  assert.deepEqual(queue(lua), ['ISWalkToTimedAction']);
+  assert.equal(lua.run('return ISTimedActionQueue.getTimedActionQueue(__players[0]).queue[1].args[2] == __hall'), true, 'back to the last square inside');
+  for (let i = 0; i < 20 && result(lua).status === 'running'; i++) {
+    finish(lua);
+    step(lua);
+  }
+  assert.equal(result(lua).status, 'done');
+});
+
+test('SECURE gives up after walking back in twice', () => {
+  const lua = createHarness();
+  lua.autoload();
+  wallHouse(lua, { kind: 'door', wall: 'south' });
+  secureWalking(lua);
+  for (let i = 0; i < 2; i++) {
+    landOn(lua, '__outside');
+    assert.equal(result(lua).status, 'running', `walk back ${i + 1}`);
+    assert.deepEqual(queue(lua), ['ISWalkToTimedAction']);
+  }
+  landOn(lua, '__outside');
   assert.deepEqual(result(lua), { seq: 1, verb: 'SECURE', status: 'failed', why: 'not inside' });
 });
 

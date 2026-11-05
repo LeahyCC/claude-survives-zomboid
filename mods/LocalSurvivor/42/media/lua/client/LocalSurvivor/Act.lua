@@ -1154,6 +1154,50 @@ local function finishSearch(p, s, full)
   endSearch(s, full)
 end
 
+-- She went outside in the middle of a search. A room whose way leads out of the house is skipped:
+-- every container in it counts as out of reach, so the room gets its one more try (Act.ROOM_TRIES)
+-- and is then done, and she walks back to the last square she stood on inside. Far from it, she did
+-- not stray but was carried off (a flee), and the search is over.
+Act.BACK_R = 4
+Act.BACKS_MAX = 3
+local function steppedOut(p, s, here)
+  local far = true
+  pcall(function() far = math.abs(here:getX() - s.lastIn:getX()) + math.abs(here:getY() - s.lastIn:getY()) > Act.BACK_R end)
+  s.backs = (s.backs or 0) + 1
+  ISTimedActionQueue.clear(p)
+  if far or s.backs > Act.BACKS_MAX then return Act.finish(s, "failed", "not inside") end
+  for _, c in ipairs(s.cons or {}) do
+    if not c.done then c.done, c.skipped = true, true end
+  end
+  s.leg, s.direct = nil, nil
+  Act.newLeg(s)
+  s.phase = "back"
+end
+
+-- A walk to dest on this floor that keeps to the house: legs along the inside way when it is a long
+-- one (Move.insideLeg). The way is worked out once per leg, because it reads hundreds of squares and
+-- this runs every tick. With no inside way known it walks straight there, and steppedOut catches it.
+function Act.walkInside(p, s, dest)
+  if s.leg then
+    local r = Act.walkToSquare(p, s, s.leg)
+    if r ~= "arrived" then return r end
+    s.leg = nil
+    Act.newLeg(s)
+  end
+  if s.direct ~= dest then
+    local building = nil
+    pcall(function() building = p:getSquare():getBuilding() end)
+    local leg, partWay = Move.insideLeg(p, dest, building)
+    if partWay then
+      s.leg = leg
+      Act.newLeg(s)
+      return Act.walkToSquare(p, s, leg)
+    end
+    s.direct = dest
+  end
+  return Act.walkToSquare(p, s, dest)
+end
+
 local function roomDistance(p, r)
   local dz = math.abs((r.z or 0) - math.floor(p:getZ()))
   if not r.x then return dz * 4 end
@@ -1165,6 +1209,39 @@ end
 -- simply run the phase again.
 searchStep = function(p, s)
   local done = (s.bid and not s.ignoreDone) and (LS.searched[s.bid] or {}) or {}
+
+  -- Every step looks whether she is still in the house, so a walk that went out of a door stops on
+  -- the first square outside. LOOT is left out: it may be ordered from outside.
+  if s.verb == "SEARCH" and s.bid and s.phase ~= "back" and s.phase ~= "backdoor" then
+    local here = nil
+    pcall(function() here = p:getSquare() end)
+    if here and Act.squareIn(here, s.bid) then s.lastIn = here
+    elseif here then return steppedOut(p, s, here) end
+  end
+
+  if s.phase == "back" then
+    local r = Act.walkToSquare(p, s, s.lastIn)
+    if r == "arrived" then
+      -- The walk out opened a door, and SECURE had shut it. doCloseDoor sets an error when there is
+      -- no door, which is no error here.
+      local err = LS.lastError
+      ISTimedActionQueue.clear(p)
+      pcall(Act.doCloseDoor, p)
+      LS.lastError = err
+      s.waitTick = LS.tick
+      s.phase = "backdoor"
+    elseif r ~= "walking" then
+      ISTimedActionQueue.clear(p)
+      Act.finish(s, "failed", "not inside")
+    end
+    return
+  end
+
+  if s.phase == "backdoor" then
+    if Core.queueLength(p) > 0 and LS.tick - s.waitTick < 300 then return end
+    s.phase = s.cons and "next" or "room"
+    return
+  end
 
   if s.phase == "equip" then
     if Core.queueLength(p) > 0 and LS.tick - s.waitTick < 600 then return end
@@ -1240,6 +1317,7 @@ searchStep = function(p, s)
     s.cur = best
     pcall(function() s.tx, s.ty = best.sq:getX() + 0.5, best.sq:getY() + 0.5 end)
     s.dest = nil
+    s.leg, s.direct = nil, nil
     Act.newLeg(s)
     s.phase = "walk"
     return
@@ -1252,7 +1330,7 @@ searchStep = function(p, s)
     if near then s.phase = "take"; return end
     if not s.dest then s.dest = Move.adjacent(p, c.sq) end
     if not s.dest then c.done, c.skipped = true, true; s.phase = "next"; return end
-    local r = Act.walkToSquare(p, s, s.dest)
+    local r = Act.walkInside(p, s, s.dest)
     if r == "arrived" then s.phase = "take"
     elseif r ~= "walking" then c.done, c.skipped = true, true; s.phase = "next" end
     return
@@ -1450,10 +1528,11 @@ Act.SKILL.DROP = {
 }
 
 -- ---------- ENTER ----------
--- Get into a building by its id from the percept. Doors first (a locked one is unlocked when he
--- carries its key), then a window that opens, and only then a smashed window. A locked door is
--- only found by walking up and trying it.
+-- Get into a building by its id from the percept. A door first (a locked one is unlocked when he
+-- carries its key), then a window that is already open or broken, then one that opens, and only
+-- then a window she smashes herself. A way with a zombie at it waits behind all of those.
 Act.QUIET_TRIES = 4
+Act.WAY_ZOMBIE_R = 4        -- a living zombie this close to a way puts it last
 
 function Act.inBuilding(p, id)
   local inside = false
@@ -1542,21 +1621,62 @@ function Act.haveKeyFor(p, door)
   return fits
 end
 
-local function chooseWay(p, s)
-  local smashable = false
-  for _, w in ipairs(s.ways) do if w.smashable and not w.smashTried then smashable = true end end
-  local best, bestD = nil, 99999
-  for _, w in ipairs(s.ways) do
-    if not w.tried then
-      local d = Move.distTo(p, w.x, w.y) - (w.kind == "door" and 2 or 0)
-      -- A door he holds the key to beats any window, however far it is.
-      if w.kind == "door" then
-        local door = Act.wayObject(w)
-        if door and Act.haveKeyFor(p, door) then d = d - 1000 end
-      end
-      if d < bestD then best, bestD = w, d end
+-- Pure. Which way to try first, lower first, from what can be read of it without walking there.
+-- nil means it cannot be used quietly. In the soak a door only had 2 tiles of credit, so a window 3
+-- tiles closer won, and an open window had none: 19 doors, 55 windows, 5 smashed. So this is a
+-- strict order, and distance only decides inside a rank. A square not loaded yet reads as a way that
+-- is closed and not locked, and is found out on arrival, as before.
+function Act.wayRank(f)
+  if f.barricaded then return nil end
+  local rank
+  if f.kind == "door" then
+    if f.locked and not f.key then return nil end
+    rank = f.key and 1 or 2
+  else
+    if f.open or f.smashed then rank = 3
+    elseif f.locked then return nil
+    else rank = 4 end
+  end
+  if f.zombie then rank = rank + 10 end
+  return rank
+end
+
+function Act.wayFacts(p, w)
+  local f = { kind = w.kind }
+  local obj = Act.wayObject(w)
+  if obj then
+    pcall(function() f.barricaded = obj:isBarricaded() == true end)
+    pcall(function() f.open = obj:IsOpen() == true end)
+    if w.kind == "door" then
+      pcall(function() f.locked = obj:isLocked() == true or obj:isLockedByKey() == true end)
+      f.key = f.locked and Act.haveKeyFor(p, obj)
+    else
+      pcall(function() f.smashed = obj:isSmashed() == true end)
+      pcall(function() f.locked = obj:isLocked() == true or obj:isPermaLocked() == true end)
     end
   end
+  f.zombie = Act.zombieNear(w.x + 0.5, w.y + 0.5, Act.WAY_ZOMBIE_R)
+  return f
+end
+
+local function chooseWay(p, s)
+  local best, bestD, bestRank = nil, 99999, 99
+  for _, w in ipairs(s.ways) do
+    if not w.tried then
+      local f = Act.wayFacts(p, w)
+      local rank = Act.wayRank(f)
+      if not rank then
+        -- No walk to a way that cannot open. A window locked from inside can still be smashed.
+        w.tried = "locked"
+        if w.kind == "window" and not f.barricaded then w.smashable = true end
+      else
+        local d = Move.distTo(p, w.x, w.y)
+        if rank < bestRank or (rank == bestRank and d < bestD) then best, bestD, bestRank = w, d, rank end
+      end
+    end
+  end
+  local smashable = false
+  for _, w in ipairs(s.ways) do if w.smashable and not w.smashTried then smashable = true end end
   if best and (s.quiet < Act.QUIET_TRIES or not smashable) then
     s.quiet = s.quiet + 1
     s.way, s.smashing = best, nil
