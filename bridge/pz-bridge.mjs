@@ -27,6 +27,7 @@ import { reactionRows } from './reactions.mjs';
 import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
 import { createReflexFollower } from './reflexlog.mjs';
 import { createCommentator, linesFromLog } from './commentator.mjs';
+import { createCritic, situationText } from './critic.mjs';
 import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -94,6 +95,9 @@ const stats = loadStats(state.stats);
 const runId = () => (stats.run ? stats.run.start : null);
 const appendDecisionLine = createAppender(DECISIONS_FILE, { maxBytes: LOG_MAX_BYTES });
 const tracker = createTracker({ write: appendDecisionLine });
+// A second opinion from Jev, logged beside each decision. Fire and forget: nothing it says ever
+// reaches the prompt or the order line (docs/brain.md, "Critic"). Off without TYPESAFE_API_KEY.
+const critic = createCritic({ write: appendDecisionLine, log: (kind, text) => log(kind, text) });
 // Commentary only. The busy check also covers the whole menu turn and the death review, so it never
 // starts while anything the brain needs is waiting on Ollama, and llm.mjs cancels it if one arrives.
 const pepe = createCommentator({
@@ -406,11 +410,17 @@ function rememberMenu(plan, extra) {
 // One line in decisions.jsonl. The log must never stop her, so a failure is swallowed.
 function logDecision(plan, seen, option, d) {
   try {
-    tracker.decide({
-      percept: seen, run: runId(), menu: plan.offered || plan.options, option, seq: state.seq,
+    const menu = plan.offered || plan.options;
+    // Built before the tracker adds this order to the history, so it matches what the brain was shown.
+    // Colin's own nudges are not reviewed: the critic looks at the brain.
+    const wantReview = critic.enabled && d.by !== 'nudge';
+    const situation = wantReview ? situationText(seen, memoryStats(map), tracker.history(), runId()) : '';
+    const id = tracker.decide({
+      percept: seen, run: runId(), menu, option, seq: state.seq,
       rules: [...(plan.rules || []).map((r) => r.id), ...(plan.lessons || []).map((l) => `lesson:${l.id}`)],
       ...d,
     }, Date.now());
+    if (wantReview) critic.review({ id, state: situation, menu, choice: d.choice });
   } catch (err) {
     log('error', `decision log: ${String(err && err.message || err).slice(0, 120)}`);
   }
@@ -687,6 +697,7 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 #reacts{border-collapse:collapse;width:100%}#reacts th,#reacts td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
 #reacts th{font-size:11px;color:#8899aa;text-transform:uppercase}#reacts tr.failed td:nth-child(3){color:#f3b4b4}#reacts tr.running td{color:#7fd1b9}
 #reacts tr.replaced td,#reacts tr.unfinished td{color:#8899aa}#reacts td.hp{text-align:right;white-space:nowrap}
+#reacts td.critic{white-space:nowrap}#reacts td.critic.flag{color:#e0a458}#reacts td.critic.agree{color:#7fd1b9}
 #pepe{list-style:none;padding:0;margin:0}#pepe li{padding:6px 10px;border-radius:4px;margin:3px 0;background:#151b22;border-left:3px solid #c28fe0}
 #pepe .when{color:#8899aa;font-size:12px}#pepe .brain{color:#a9b8c8;font-size:12px;margin-bottom:2px}
 #nudge-buttons{display:flex;flex-direction:column;gap:4px;margin:6px 0}
@@ -716,7 +727,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <ul id="options"></ul>
 <h2>Reactions</h2>
 <div class="note">The last 8 orders: how each went, and what she chose next.</div>
-<table id="reacts"><thead><tr><th>time</th><th>choice</th><th>result</th><th>HP</th><th>next choice</th></tr></thead><tbody></tbody></table>
+<div class="note" id="critic-note"></div>
+<table id="reacts"><thead><tr><th>time</th><th>choice</th><th>result</th><th>HP</th><th>next choice</th><th>critic</th></tr></thead><tbody></tbody></table>
 <h2>Inner voice</h2>
 <div class="note" id="pepe-note"></div>
 <ul id="pepe"></ul>
@@ -773,6 +785,7 @@ async function tick(){
   fill('rules', t.rules || [], (r) => { const li = document.createElement('li'); li.textContent = r; return li; });
   renderNudge(s);
   renderReactions(s.reactions || []);
+  renderCriticNote(s.critic);
   renderPepe(s.pepe);
   const plan = s.plan;
   const pl = s.planner || {};
@@ -831,7 +844,7 @@ function renderReactions(rows){
   const body = document.querySelector('#reacts tbody');
   if (!rows.length) {
     const tr = document.createElement('tr'); const td = document.createElement('td');
-    td.colSpan = 5; td.textContent = 'No orders yet.'; tr.append(td); body.replaceChildren(tr); return;
+    td.colSpan = 6; td.textContent = 'No orders yet.'; tr.append(td); body.replaceChildren(tr); return;
   }
   body.replaceChildren(...rows.map((r) => {
     const tr = document.createElement('tr');
@@ -843,8 +856,30 @@ function renderReactions(rows){
       if (i === 3) { td.className = 'hp'; if (r.lost >= 1) td.title = 'lost ' + Math.round(r.lost) + ' HP along the way'; }
       tr.append(td);
     });
+    tr.append(criticCell(r.critic));
     return tr;
   }));
+}
+// agree or flag, the brain pick's probability, Jev's pick when it differs, and how much danger it sees.
+function criticCell(c){
+  const td = document.createElement('td'); td.className = 'critic';
+  if (!c) { td.textContent = '-'; return td; }
+  td.classList.add(c.flag ? 'flag' : 'agree');
+  const pc = (x) => Math.round(x * 100) + '%';
+  td.textContent = (c.flag ? 'flag ' : 'agree ') + pc(c.pPick) + (c.top ? ', Jev: ' + c.top : '') + ', danger ' + pc(c.danger);
+  td.title = 'Jev gave the brain\\'s pick ' + pc(c.pPick) + '. Wound first ' + pc(c.treat) + ', a mistake ' + pc(c.mistake) + ', confidence ' + pc(c.confidence) + ', ' + c.ms + ' ms.';
+  return td;
+}
+function renderCriticNote(c){
+  const el = document.getElementById('critic-note');
+  let text = '';
+  if (c) {
+    text = c.on
+      ? 'Critic: ' + c.model + ' reviews each choice, flags it under ' + Math.round(c.flagAt * 100) + '%, and never changes what she does. ' + c.ok + ' answered, ' + (c.errors + c.timeouts) + ' failed, ' + (c.busy + c.backoff) + ' skipped.'
+        + (c.pausedMs > 0 ? ' Paused for ' + Math.ceil(c.pausedMs / 1000) + ' s.' : '') + (c.lastError ? ' Last problem: ' + c.lastError : '')
+      : 'Critic off: ' + c.off + '.';
+  }
+  if (el.textContent !== text) el.textContent = text;
 }
 // Commentary from a second model, shown newest first. Rebuilt only when a line changed. The bridge
 // sends the last 10 on every refresh and reloads them from pepe.log at start, so a reload keeps them.
@@ -978,7 +1013,8 @@ http.createServer((req, res) => {
         lastError: planner.lastError,
       },
       nudge: nudgeView(),
-      reactions: reactionRows(tracker.history(), percept),
+      reactions: reactionRows(tracker.history(), percept, undefined, critic.rowFor),
+      critic: critic.view(),
       pepe: { ...pepe.view(), model: PEPE_MODEL },
       nudges: nudgeCount,
       examples: EXAMPLES_ON,

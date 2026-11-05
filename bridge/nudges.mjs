@@ -37,6 +37,20 @@ export function situationOf(p) {
   };
 }
 
+// The same, from the small percept copy the decision log keeps (decisions.mjs compactPercept).
+export function situationOfCompact(cp) {
+  const c = cp && typeof cp === 'object' ? cp : {};
+  const hour = Number(c.hour);
+  const list = (Array.isArray(c.needs) ? c.needs : []).filter((n) => n !== 'night outside');
+  list.sort((a, b) => NEED_ORDER.indexOf(a) - NEED_ORDER.indexOf(b));
+  return {
+    where: c.inside ? 'inside' : 'outside',
+    time: Number.isFinite(hour) && (hour >= 21 || hour < 6) ? 'night' : 'day',
+    chased: !!(c.z && Number(c.z.chasing) > 0),
+    needs: list,
+  };
+}
+
 export function situationLabel(s) {
   return [s.where, s.time, s.chased ? 'chased' : 'not chased', s.needs[0] || 'no urgent need'].join(', ');
 }

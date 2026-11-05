@@ -174,6 +174,18 @@ test('the strip: the last 8 rows, each with the choice that came next', () => {
   assert.equal(reactionRows([enter({ result: 'replaced', hp: -3 })])[0].hp, null);
 });
 
+test('the strip carries each order\'s id and the critic summary for it, when there is one', () => {
+  const h = [rec({ id: 'a1', seq: 1, at: 1, name: 'n1', result: 'done' }), rec({ id: 'a2', seq: 2, at: 2, name: 'n2' })];
+  const seen = [];
+  const rows = reactionRows(h, null, 8, (id) => { seen.push(id); return id === 'a1' ? { flag: true, pPick: 0.04, top: 'away', danger: 0.8 } : null; });
+  assert.deepEqual(rows.map((r) => r.id), ['a1', 'a2']);
+  assert.deepEqual(rows[0].critic, { flag: true, pPick: 0.04, top: 'away', danger: 0.8 });
+  assert.equal(rows[1].critic, null);
+  assert.deepEqual(seen, ['a1', 'a2']);
+  assert.equal(reactionRows(h)[0].critic, null, 'no critic, no summary');
+  assert.equal(reactionRows([{ verb: 'GOTO' }], null, 8, () => { throw new Error('asked with no id'); })[0].critic, null);
+});
+
 test('the tracker keeps a record per order with its result, hp change, chase and name', () => {
   const lines = [];
   const tr = createTracker({ write: (o) => lines.push(o) });

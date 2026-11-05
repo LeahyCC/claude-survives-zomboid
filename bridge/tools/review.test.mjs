@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildReport, groupMissing, failures, harmful, deathsByCause, reflexByStance, main } from './review.mjs';
+import { buildReport, groupMissing, failures, harmful, deathsByCause, reflexByStance, criticReview, main } from './review.mjs';
 import { joinRecords } from '../decisions.mjs';
 
 const REVIEW = fileURLToPath(new URL('./review.mjs', import.meta.url));
@@ -167,4 +167,73 @@ test('the report prints the reflex by stance, and says so when there is none', (
   assert.ok(text.includes('  FIGHT: 1 calls (- 1); escaped 0 of 1 (0%), 1 hits, 3 hp lost, 1 kills'), text);
   assert.match(buildReport({}), /No reflex lines logged/);
   assert.match(buildReport({ decisions: REFLEX, nudges: [], from: new Date('2026-11-06') }), /No reflex lines logged/);
+});
+
+// A critic line for a decision. p is the probability Jev gave the brain's pick.
+const critic = (id, p, o = {}) => ({
+  t: 'critic', id, at: '2026-11-05T09:00:05Z', pick: 'b1', top: p < 0.15 ? 'away' : 'b1', pPick: p, pTop: 0.9, confidence: 0.8,
+  danger: 0.2, treat: 0.1, mistake: 0.1, agree: p >= 0.15, flag: p < 0.15, flagAt: 0.15, ms: 110, inTokens: 468, outTokens: 12, ...o,
+});
+const cp = (o = {}) => ({ hour: 12, inside: false, needs: [], z: { chasing: 0 }, ...o });
+
+// Two flagged decisions that went badly, three calm ones that went well, one with no critic line.
+const WITH_CRITIC = [
+  decision('c1', '2026-11-05T09:00:00Z', { percept: cp() }), outcome('c1', 'failed', 'zombie', 8), after('c1', { lostAfter: 4, chased: true }), critic('c1', 0.05),
+  decision('c2', '2026-11-05T09:01:00Z', { percept: cp() }), outcome('c2', 'failed', 'stuck'), after('c2', { died: true }), critic('c2', 0.1),
+  decision('c3', '2026-11-05T09:02:00Z', { percept: cp() }), outcome('c3', 'done'), after('c3'), critic('c3', 0.7),
+  decision('c4', '2026-11-05T09:03:00Z', { percept: cp({ inside: true, hour: 23, needs: ['tired'] }), by: 'policy', rule: 'sleep' }), outcome('c4', 'done'), after('c4'), critic('c4', 0.4),
+  decision('c5', '2026-11-05T09:04:00Z', { percept: cp() }), outcome('c5', 'done'), after('c5'), critic('c5', 0.9),
+  decision('c6', '2026-11-05T09:05:00Z', { percept: cp() }), outcome('c6', 'done'), after('c6'),
+];
+
+test('the critic section: how often Jev agreed, flags by situation and by who decided', () => {
+  const text = buildReport({ decisions: WITH_CRITIC, nudges: [] });
+  assert.match(text, /Critic \(Jev's second opinion, logged only, it never steers her\)/);
+  assert.match(text, /5 of 6 decisions were reviewed\. Jev's top pick matched the brain's 3 times \(60%\)\./);
+  assert.match(text, /Flagged \(the brain's pick got under 15% of Jev's probability\): 2 \(40%\)\./);
+  assert.match(text, /outside, day, not chased, no urgent need: 2 of 4 \(50%\)/);
+  assert.match(text, /inside, night, not chased, tired: 0 of 1 \(0%\)/);
+  assert.match(text, /model: 2 of 4 \(50%\)/);
+  assert.match(text, /policy \(sleep\): 0 of 1 \(0%\)/);
+});
+
+test('the critic section sets the outcomes after a flag beside those after no flag', () => {
+  const c = criticReview(joinRecords(WITH_CRITIC));
+  assert.deepEqual(c.afterFlagged, { orders: 2, reported: 2, failed: 2, followed: 2, damaged: 1, chased: 1, died: 1 });
+  assert.deepEqual(c.afterCalm, { orders: 3, reported: 3, failed: 0, followed: 3, damaged: 0, chased: 0, died: 0 });
+  const text = buildReport({ decisions: WITH_CRITIC, nudges: [] });
+  assert.ok(text.includes('    flagged:   2 orders; failed 2 of 2 (100%); lost 5 hp or more 1 of 2 (50%); a zombie started chasing 1 of 2 (50%); died within 5 min 1 of 2 (50%)'), text);
+  assert.ok(text.includes('    unflagged: 3 orders; failed 0 of 3 (0%); lost 5 hp or more 0 of 3 (0%); a zombie started chasing 0 of 3 (0%); died within 5 min 0 of 3 (0%)'), text);
+});
+
+test('a decision still waiting on its result counts as an order but not as a failure or a death yet', () => {
+  const waiting = [decision('w1', '2026-11-05T09:00:00Z', { percept: cp() }), critic('w1', 0.01)];
+  assert.deepEqual(criticReview(joinRecords(waiting)).afterFlagged, { orders: 1, reported: 0, failed: 0, followed: 0, damaged: 0, chased: 0, died: 0 });
+  assert.match(buildReport({ decisions: waiting, nudges: [] }), /failed 0 of 0 \(n\/a\)/);
+});
+
+test('no critic lines: the section says how to turn it on, and the rest of the report is unchanged', () => {
+  const text = buildReport({ decisions: DECISIONS, nudges: NUDGES });
+  assert.match(text, /No critic lines\. Set TYPESAFE_API_KEY to turn it on/);
+  assert.match(text, /Overall: the brain had your pick 1 of 3 times/);
+  assert.match(buildReport({}), /No critic lines/);
+});
+
+test('--since applies to the critic section too, and a critic line with no decision is ignored', () => {
+  const lines = [...WITH_CRITIC, critic('orphan', 0.01)];
+  assert.match(buildReport({ decisions: lines, nudges: [], from: new Date('2026-11-06') }), /No critic lines/);
+  assert.match(buildReport({ decisions: lines, nudges: [] }), /5 of 6 decisions were reviewed/);
+});
+
+test('the command prints the critic section from a file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-review-critic-'));
+  try {
+    const d = path.join(dir, 'decisions.jsonl');
+    fs.writeFileSync(d, WITH_CRITIC.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const run = spawnSync(process.execPath, [REVIEW, '--decisions', d, '--nudges', path.join(dir, 'none.jsonl')], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /5 of 6 decisions were reviewed/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -8,9 +8,10 @@ A scoreboard for the brain. Change a prompt, a rule or a model, run the eval, an
 node bridge/eval/run.mjs                           default model, 3 runs per scenario
 node bridge/eval/run.mjs --model llama3.1:8b --n 2
 node bridge/eval/run.mjs --only bleeding
+node bridge/eval/run.mjs --backend jev             Jev's choice over the same menus
 ```
 
-Needs Ollama on `http://127.0.0.1:11434` (or `OLLAMA_URL`). If it is not reachable the script says so and stops. The exit code is always 0: it is a report, not a test. A fast unit test (`bridge/eval/scenarios.test.mjs`, part of `npm test`) checks that every scenario file is valid and that its accepted ids exist on the menu the builder makes for it.
+Needs Ollama on `http://127.0.0.1:11434` (or `OLLAMA_URL`). If it is not reachable the script says so and stops. `--backend jev` needs `TYPESAFE_API_KEY` instead and does not use Ollama. See "Jev as a contender" below. The exit code is always 0: it is a report, not a test. A fast unit test (`bridge/eval/scenarios.test.mjs`, part of `npm test`) checks that every scenario file is valid and that its accepted ids exist on the menu the builder makes for it.
 
 ## What a scenario is
 
@@ -53,6 +54,16 @@ Each scenario goes through the real turn path: `planTurn` builds the menu and de
 The summary line counts model turns only. Policy turns are listed separately because they cost nothing and never vary.
 
 Two runs per scenario is a small sample. A single scenario flipping between runs is noise. A model that never picks the right id on a scenario is a finding.
+
+## Jev as a contender
+
+`--backend jev` runs the same scenarios through the same turn path, then asks Jev (TypeSafe's hosted model, the one the critic uses) instead of Ollama. It sends one `choice` question over the scenario's menu, `--n` times, and scores the top pick as accepted, wrong or other. The table, the summary line and the exit code are the same as for a model. Latency is the API round trip, with one throwaway call first.
+
+- Policy scenarios are decided by a rule and never reach Jev, so they cost nothing and read the same as for any model.
+- Jev is shown the situation text the critic sends (the digest and her last orders), not the playbook rules, the day plan, the lessons or the examples from nudges. So this scores the outside view, not the whole prompt. A lower score than gemma4:12b can mean the missing rules, not a weaker judge.
+- It costs about 470 input tokens a call, at $0.042 per million. A full run at `--n 3` is under a cent.
+- A call that fails or returns a reply that fails the checks counts as a bad reply.
+- There is no run of it in this file yet. The first one is for after the key is set on this PC.
 
 ## Latest run: gemma4:12b, 39 scenarios, guns and a hand-picked weapon
 
@@ -306,7 +317,7 @@ A run also ends when `hoursAlive` goes backwards by more than half an hour, whic
 
 `bridge/decisions.jsonl` gets one line for every turn the policy or the model decided. Turns that wait (the reflex, sleep, a running job) write nothing. The file is only ever appended to, and it is ignored by git. Past about 20 MB it moves to `decisions.jsonl.1` (the old `.1` is dropped) and a new file starts. `PZ_DECISIONS_FILE` and `PZ_LOG_MAX_BYTES` change the path and the cap.
 
-Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended. A fifth, `reflex`, is copied from the mod's reflex log by `bridge/reflexlog.mjs`.
+Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended. A fifth, `reflex`, is copied from the mod's reflex log by `bridge/reflexlog.mjs`. A sixth, `critic`, is Jev's second opinion on a decision, and shares that decision's `id`.
 
 | `t` | Written | Fields |
 |---|---|---|
@@ -314,6 +325,7 @@ Every line has `t` and `id`. The three kinds of line for one decision share the 
 | `outcome` | when the order reports | `result` (`done` or `failed`), `why`, `verb`, `ms` (how long it ran), `hpDuring` (hp at the end minus hp at the start), `lostDuring` (hp lost along the way) |
 | `after` | when the follow-up closes | `hpAfter` and `lostAfter` (the 60 seconds after the order finished), `chased` (a zombie started chasing since the order was sent), `died` (she died within 5 minutes of the choice) |
 | `death` | when a run ends | `at`, `run` (the run's start, the same key the decision lines carry), `cause`, `day`, `hours`, `kills`, `job`, `order`, `status`, `zClose` (zombies within 3 tiles), `zNear` (within 10), `zChasing`, `hpLost10`, `inside`, `reflex`, `source` (`mod` or `bridge`), `text`. `id` starts with `death-` and no other line shares it. |
+| `critic` | a moment after the decision, when Jev answers (only with `TYPESAFE_API_KEY` set; a turn that was busy, paused or timed out has none) | `at`, `model`, `pick` (the brain's), `top` (Jev's), `pPick`, `pTop`, `confidence`, `danger`, `treat`, `mistake` (0 to 1), `agree`, `flag`, `flagAt`, `ms`, `inTokens`, `outTokens`. See "Critic" in `docs/brain.md`. |
 | `reflex` | when the reflex takes a stance (`kind: call`) and 5 seconds later (`kind: out`) | the mod's own fields, see "The reflex log" in `docs/combat.md`. A call and its out share the `id`. `at` is when the bridge copied it. |
 
 Notes:
@@ -356,7 +368,7 @@ node bridge/tools/review.mjs                      both logs, all of it
 node bridge/tools/review.mjs --since 2026-11-04   from that date on
 ```
 
-It prints, in a few lines each: deaths by cause (how many, the job she was doing, zombies close and chasing at the end, hp lost in the last 10 seconds, and how many came from the bridge's own guess), how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
+It prints, in a few lines each: deaths by cause (how many, the job she was doing, zombies close and chasing at the end, hp lost in the last 10 seconds, and how many came from the bridge's own guess), how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. A Critic section sits before the nudge agreement: how many decisions Jev reviewed and how often its top pick matched the brain's, how many were flagged (overall, by situation and by who decided), and how the orders went after a flagged choice next to those after an unflagged one: failed, 5 hp or more lost, a zombie started chasing, died within 5 minutes. The failed rate counts orders that reported. The other three count orders whose follow-up has closed. If the flagged row is not worse than the unflagged one, the flags do not predict trouble. With no critic lines the section says how to turn it on. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
 
 ## Nudges as scenarios
 
