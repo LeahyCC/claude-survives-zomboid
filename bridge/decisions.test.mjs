@@ -198,3 +198,24 @@ test('readers skip junk lines and a missing file', () => {
   assert.deepEqual(parseLines('{"a":1}\nnot json\n\n[1]\n{"b":2'), [{ a: 1 }]);
   assert.deepEqual(readLog(path.join(os.tmpdir(), 'ls-no-such-file.jsonl')), []);
 });
+
+test('a death line carries the cause, the job and the zombies close, and is not a decision', () => {
+  const { lines, tr } = setup();
+  tr.death({
+    start: '2026-11-05T07:03:14.591Z', cause: 'overrun while fleeing', day: 3, hoursAlive: 12.5, startHours: 1, kills: 6,
+    death: { job: 'GOTO', order: 'GOTO', status: 'running', zAdj: 3, zClose: 5, zChasing: 2, hpLost10: 90, inside: false, reflex: 'flee', source: 'mod', text: 'You died.' },
+  }, 5000);
+  const d = lines[0];
+  assert.equal(d.t, 'death');
+  assert.equal(d.run, '2026-11-05T07:03:14.591Z');
+  assert.equal(d.cause, 'overrun while fleeing');
+  assert.equal(d.job, 'GOTO');
+  assert.equal(d.zClose, 3);
+  assert.equal(d.zChasing, 2);
+  assert.equal(d.hpLost10, 90);
+  assert.equal(d.hours, 11.5);
+  assert.equal(d.source, 'mod');
+  assert.deepEqual(joinRecords(lines), []);
+  tr.death(null);
+  assert.equal(lines.length, 1);
+});

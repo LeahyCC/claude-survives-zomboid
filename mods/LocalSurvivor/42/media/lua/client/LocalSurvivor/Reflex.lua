@@ -543,6 +543,8 @@ function Reflex.perform(p, a, snap, objs)
   if kind ~= "backoff" then R.backingOff = false end
   if kind ~= "hold" then R.holdWalk = false; R.holdSince = nil end
   if kind == "none" then return false end
+  -- The death record reads this: was she fighting or fleeing in her last seconds.
+  LS.reflexKind, LS.reflexKindTick = kind, LS.tick
   -- Every branch below may queue a walk, and a walk queued above speed 2 is dropped.
   Core.snapSpeed()
   if kind == "swing" then

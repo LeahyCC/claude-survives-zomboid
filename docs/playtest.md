@@ -67,7 +67,20 @@ What to watch:
 - `Zomboid/console.txt`: Lua errors and `LocalSurvivor` lines.
 - `Zomboid/Lua/local_percept.txt`: the senses, once a second.
 - `http://localhost:8799/mind`: what the brain chose and why.
-- `bridge/decisions.jsonl`: one line per decided turn and what came of it. `node bridge/tools/review.mjs` summarizes it.
+- `bridge/decisions.jsonl`: one line per decided turn and what came of it, and one `death` line per run. `node bridge/tools/review.mjs` summarizes it, deaths by cause first.
+- `Zomboid/Lua/local_death.txt`: the last 10 seconds of the character that just died.
+
+## Checking a death
+
+After she dies, three places should agree:
+
+1. `Zomboid/Lua/local_death.txt` exists and is new. It holds the last 10 seconds as JSON (`docs/percept.md`). Open it and check `ring` has up to 10 samples with sensible `hp`, `zAdj`, `job` and `reflex`, and that `final` is there. Keys that are missing in `final` mean the game would not answer for a dead body.
+2. `http://localhost:8799/mind`, Runs table: the "ended by" cell names a cause and "last seconds" says what she was doing, how many were close and chasing, and the hp lost.
+3. `bridge/decisions.jsonl` ends with a `death` line. `node bridge/tools/review.mjs` prints it under "Deaths by cause".
+
+The cause says `(from the bridge's own guess)` in the review when the mod's record did not arrive. That should not happen with the new mod. If it does, check that `OnPlayerDeath` fired: with `ls_trace.txt` on, nothing is logged for it yet, so look at whether `local_death.txt` was written at all.
+
+Not checked in a live game yet: the stat names (`ZOMBIE_INFECTION`, `SICKNESS`, `TEMPERATURE`) and their scales, whether `getDeathString` works on a dead player, and whether `getSpecificPlayer(0)` still answers after death (the event is the main path, the tick loop's dead check is the backup).
 
 ## Nudging while you watch
 

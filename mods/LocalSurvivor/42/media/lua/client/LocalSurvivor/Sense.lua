@@ -719,7 +719,10 @@ function Sense.buildPercept(p)
   j = j .. ',"reflexed":' .. tostring(LS.tick - LS.reflexTick < 600)
   j = j .. ',"lastSeq":' .. LS.lastSeq
   j = j .. ',"err":"' .. esc(LS.lastError) .. '"'
-  return j .. Sense.perceptV2(p, px, py, room, weaponScore) .. '}'
+  j = j .. Sense.perceptV2(p, px, py, room, weaponScore)
+  -- The last seconds before death, only on the dead percept (docs/percept.md).
+  if LS.deathRecord and p:isDead() then j = j .. ',"death":' .. Core.json(LS.deathRecord) end
+  return j .. '}'
 end
 
 -- The v2 fields, each part guarded on its own so one bad call only blanks its own field.
@@ -801,6 +804,8 @@ function Sense.perceptV2(p, px, py, room, weaponScore)
 end
 
 function Sense.writePercept(p)
+  -- One sample a second goes into the death ring while she lives.
+  if LS.Death and not p:isDead() then LS.Death.sample(p) end
   local ok, err = pcall(function()
     local w = getFileWriter("local_percept.txt", true, false)
     if not w then error("writer nil") end

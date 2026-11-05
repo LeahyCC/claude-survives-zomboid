@@ -7,6 +7,8 @@
 //   after     written when the follow-up window closes: the 60 seconds after it finished,
 //             a zombie starting to chase, and whether she died within 5 minutes of the choice
 //
+// A fourth line, death, is written when a run ends (tracker.death), with the cause from death.mjs.
+//
 // Clocks are wall clock, not game time, so fast-forward shortens the windows in game hours.
 
 import { chasing, needs, inside, untreated, panic01 } from './senses.mjs';
@@ -143,6 +145,21 @@ export function createTracker({ write }) {
         }
         if (e.afterHp !== undefined && now - e.at >= DEATH_MS) close(e, now, false, hp);
       }
+    },
+
+    // One line when a run ends: why, and what she was doing (death.mjs). A run is a character, so
+    // run is its start time, the same key the decision lines carry. review.mjs counts these.
+    death(r, now = Date.now()) {
+      if (!isObj(r)) return;
+      const f = isObj(r.death) ? r.death : {};
+      write({
+        t: 'death', id: `death-${idFor(now)}`, at: new Date(now).toISOString(), run: r.start || null,
+        cause: String(r.cause || 'unknown'), day: num(r.day), hours: round(num(r.hoursAlive) - num(r.startHours), 1),
+        kills: num(r.kills), job: f.job || null, order: f.order || null, status: f.status || null,
+        zClose: num(f.zAdj), zNear: num(f.zClose), zChasing: num(f.zChasing), hpLost10: num(f.hpLost10),
+        inside: f.inside === undefined ? null : !!f.inside, reflex: f.reflex || null, source: f.source || null,
+        text: f.text ? String(f.text).slice(0, 120) : null,
+      });
     },
 
     openCount: () => open.length,

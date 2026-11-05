@@ -233,6 +233,7 @@ function getGameTime()
     getHour = function() return __time.hour end,
     getNightsSurvived = function() return __time.nights end,
     isNight = function() return __time.night or false end,
+    getDeathString = function() return "You died: stub" end,
     setMultiplier = function(_, m) __time.mult = m end,
   }
 end
@@ -296,6 +297,8 @@ function __makePlayer(opts)
       -- A test sets p.hp to take damage, and p.bleeding to open a wound.
       getOverallBodyHealth = function() return self.hp or opts.hp or 100 end,
       getNumPartsBleeding = function() return self.bleeding or 0 end,
+      -- p.infected: the zombie infection flag.
+      IsInfected = function() return self.infected or false end,
       getBodyParts = function() return __javaList(opts.parts or {}) end,
     }
   end

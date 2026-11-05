@@ -21,6 +21,7 @@ require "LocalSurvivor/Act"
 require "LocalSurvivor/Reflex"
 require "LocalSurvivor/Needs"
 require "LocalSurvivor/HUD"
+require "LocalSurvivor/Death"
 
 local LS = LocalSurvivor
 local Core = LS.Core
@@ -46,9 +47,15 @@ function LS.onTick()
   if not LS.announced then LS.announced = true; pcall(function() p:Say("Local model online. Let's survive this.") end) end
   if p:isDead() then
     hud.action = "DEAD"
+    -- OnPlayerDeath normally got here first. This catches a death the event missed.
+    pcall(function() LS.Death.onDeath(p) end)
     if tick % (Core.PERCEPT_EVERY * 5) == 0 then LS.Sense.writePercept(p) end
     return
   end
+
+  -- A living character a few seconds after a death is a new one: forget the old ring. The wait
+  -- covers a death event that fires before the dead flag is set.
+  if LS.deathDone and tick - (LS.deathTick or 0) > 300 then pcall(function() LS.Death.reset() end) end
 
   -- track movement for the manual auto-resume
   local px, py = p:getX(), p:getY()
@@ -144,4 +151,5 @@ if not LS.eventsRegistered then
   Events.OnGameStart.Add(function() LS.HUD.start() end)
   Events.OnCreatePlayer.Add(function() LS.HUD.start() end)
   Events.OnKeyPressed.Add(function(key) LS.HUD.onKeyPressed(key) end)
+  Events.OnPlayerDeath.Add(function(player) LS.Death.onEvent(player) end)
 end

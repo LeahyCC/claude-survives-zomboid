@@ -12,6 +12,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLog } from '../jsonl.mjs';
 import { joinRecords, harm } from '../decisions.mjs';
 
+const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+
 // Hit points lost in one choice's window that count as "followed by damage".
 export const DAMAGE_MIN = 5;
 const TOP = 8;
@@ -102,6 +104,31 @@ export function harmful(records) {
     .sort((a, b) => b.died - a.died || b.damaged / b.n - a.damaged / a.n || b.n - a.n);
 }
 
+// Death lines grouped by cause, most common first. A run can have two lines (the bridge guesses at
+// once, and the mod's record may arrive a second later), so the newest line per run is the one kept.
+export function deathsByCause(lines) {
+  const byRun = new Map();
+  let anon = 0;
+  for (const l of Array.isArray(lines) ? lines : []) {
+    if (!isObj(l) || l.t !== 'death') continue;
+    byRun.set(l.run || `no-run-${anon++}`, l);
+  }
+  const groups = new Map();
+  for (const d of byRun.values()) {
+    const cause = String(d.cause || 'unknown');
+    const g = groups.get(cause) || { cause, n: 0, jobs: new Map(), close: 0, chasing: 0, hp: 0, mod: 0 };
+    g.n += 1;
+    const job = d.job || d.order || 'none';
+    g.jobs.set(job, (g.jobs.get(job) || 0) + 1);
+    g.close += num(d.zClose);
+    g.chasing += num(d.zChasing);
+    g.hp += num(d.hpLost10);
+    if (d.source === 'mod') g.mod += 1;
+    groups.set(cause, g);
+  }
+  return [...groups.values()].sort((a, b) => b.n - a.n || a.cause.localeCompare(b.cause));
+}
+
 const since = (iso, from) => !from || (typeof iso === 'string' && Date.parse(iso) >= from);
 
 // decisions and nudges are the raw lines. from is a Date or null.
@@ -117,6 +144,17 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
   line(`Review${from ? ` since ${from.toISOString().slice(0, 10)}` : ''}`);
   line(`  ${records.length} decisions (policy ${byWho('policy')}, model ${byWho('model')}, nudge ${byWho('nudge')}), ${sent.length} sent an order, ${records.filter((r) => r.outcome).length} have a result.`);
   line(`  ${notes.length} nudges, ${notes.filter((n) => n.pick).length} with a pick, ${notes.filter((n) => n.missing).length} saying an option is missing.`);
+
+  line();
+  line('Deaths by cause');
+  const deaths = deathsByCause((Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && l.t === 'death' && since(l.at, fromMs)));
+  if (!deaths.length) line('  No deaths logged.');
+  for (const g of deaths.slice(0, TOP)) {
+    const jobs = [...g.jobs].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([j, n]) => `${j} ${n}`).join(', ');
+    const avg = (v) => String(Math.round((10 * v) / g.n) / 10);
+    const thin = g.mod < g.n ? ` (${g.n - g.mod} from the bridge's own guess)` : '';
+    line(`  ${g.n}x ${g.cause}: doing ${jobs}; ${avg(g.close)} close and ${avg(g.chasing)} chasing at the end, ${avg(g.hp)} hp lost in the last 10 s${thin}`);
+  }
 
   line();
   line('Agreement with your nudges');
