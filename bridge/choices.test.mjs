@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildScenario } from './eval/scenarios.mjs';
-import { buildOptions, runningKey } from './options.mjs';
+import { buildOptions, runningKey, setSearchLog } from './options.mjs';
 import { decidePolicy, POLICY_RULES } from './policy.mjs';
 import { planTurn, resolveChoice } from './brain.mjs';
 import { selectRules } from './playbook.mjs';
@@ -12,6 +12,9 @@ import { updateMemory, recordOrder, blockedWhy, building } from './memory.mjs';
 import { running, LONG_VERBS, isAsleep, canTreat, betterWeapon, weaponPoor, bareHanded } from './senses.mjs';
 
 const NOW = 1_000_000;
+// The "no SEARCH" lines, kept here so they do not print into the test output.
+let logged = [];
+setSearchLog((text) => logged.push(text));
 const ids = (opts) => opts.map((o) => o.id);
 const byId = (opts, id) => opts.find((o) => o.id === id);
 
@@ -113,6 +116,45 @@ test('SEARCH says how many rooms are left, and is not offered at 0', () => {
     const m = moment({ ...INSIDE, inBldg: { ...INSIDE.inBldg, roomsLeft: bad } }, INSIDE_MEM);
     assert.ok(byId(menu(m), 'search'), `roomsLeft ${String(bad)} is ignored`);
   }
+});
+
+const NEAR_Z = { dx: 5, dy: 0, d: 5, chase: false, down: false, crawl: false };
+
+test('SEARCH and DROP ignore a zombie behind a wall that is not after her', () => {
+  const rooms = { ...INSIDE, inBldg: { ...INSIDE.inBldg, roomsLeft: 3 } };
+  // The old rule: 5 tiles, no wall field, SEARCH is off.
+  assert.equal(byId(menu(moment({ ...rooms, zList: [NEAR_Z] }, INSIDE_MEM)), 'search'), undefined);
+  // Behind a wall outside: SEARCH is back.
+  assert.ok(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, wall: true }] }, INSIDE_MEM)), 'search'));
+  // Same wall but it is after her, or it is in her building: SEARCH stays off.
+  assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, wall: true, chase: true }] }, INSIDE_MEM)), 'search'), undefined);
+  assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, d: 20, dx: 20, wall: true, inside: true }] }, INSIDE_MEM)), 'search'), undefined);
+  // In the open and close: off. Far and in the open: on.
+  assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, wall: false }] }, INSIDE_MEM)), 'search'), undefined);
+  assert.ok(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, d: 12, dx: 12 }] }, INSIDE_MEM)), 'search'));
+  // DROP follows the same rule. The weight line is the same as before.
+  assert.ok(byId(menu(moment({ weight: 7.5, zList: [{ ...NEAR_Z, wall: true }] })), 'drop'));
+  assert.equal(byId(menu(moment({ weight: 7.5, zList: [{ ...NEAR_Z, wall: false }] })), 'drop'), undefined);
+  assert.equal(byId(menu(moment({ weight: 7.5, zList: [{ ...NEAR_Z, wall: true, inside: true }] })), 'drop'), undefined);
+  assert.equal(byId(menu(moment({ ...rooms, weight: 7.5, zList: [{ ...NEAR_Z, wall: true }] }, INSIDE_MEM)), 'search'), undefined, 'still too heavy to search');
+});
+
+test('the log says why SEARCH is missing when she is inside with rooms left', () => {
+  const rooms = { ...INSIDE, inBldg: { ...INSIDE.inBldg, roomsLeft: 3 } };
+  const why = (patch, mem = INSIDE_MEM) => {
+    logged = [];
+    menu(moment({ ...rooms, ...patch }, mem));
+    return logged;
+  };
+  assert.deepEqual(why({ zList: [{ ...NEAR_Z, wall: true }] }), [], 'SEARCH is on the menu: nothing to say');
+  assert.deepEqual(why({ zList: [NEAR_Z] }), ['no SEARCH, zombie close, no wall 5 tiles (3 rooms left)']);
+  assert.match(why({ zList: [{ ...NEAR_Z, d: 18, dx: 18, inside: true }] })[0], /zombie in the building 18 tiles/);
+  assert.match(why({ zList: [{ ...NEAR_Z, chase: true }] })[0], /zombie chasing/);
+  assert.match(why({ weight: 7.5 })[0], /too heavy/);
+  assert.match(why({ weight: 7.5, zList: [NEAR_Z] })[0], /too heavy, zombie close/);
+  assert.match(why({}, { ...INSIDE_MEM, buildings: { 4021: { ...INSIDE_MEM.buildings[4021], searched: true } } })[0], /already searched/);
+  assert.deepEqual(why({ inBldg: { ...rooms.inBldg, roomsLeft: 0 }, zList: [NEAR_Z] }), [], 'no rooms left: nothing missing');
+  assert.deepEqual(why({ outside: true, inBldg: null, zList: [NEAR_Z] }), [], 'outside: no SEARCH to miss');
 });
 
 test('BANDAGE only when a bandage is carried or one could be ripped', () => {
