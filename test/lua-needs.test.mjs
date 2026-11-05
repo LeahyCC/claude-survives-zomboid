@@ -395,10 +395,24 @@ function openHouse(lua) {
   `);
 }
 
-test('SECURE closes, locks and switches off, then says what it did', () => {
+test('SECURE leaves exterior doors unlocked by default', () => {
   const lua = createHarness();
   lua.autoload();
   openHouse(lua);
+  order(lua, '1|SECURE|0|0|||');
+  for (let i = 0; i < 12 && result(lua).status === 'running'; i++) {
+    finish(lua);
+    step(lua);
+  }
+  assert.deepEqual(calls(lua), ['onOpenCloseDoor', 'onOpenCloseCurtain', 'onToggleLight']);
+  assert.equal(result(lua).why, 'closed 1 door, 1 curtain; 1 light off');
+});
+
+test('SECURE closes, locks and switches off when locking is on', () => {
+  const lua = createHarness();
+  lua.autoload();
+  openHouse(lua);
+  lua.run('LocalSurvivor.needsOpts.lock = true');
   order(lua, '1|SECURE|0|0|||');
   for (let i = 0; i < 12 && result(lua).status === 'running'; i++) {
     finish(lua);

@@ -85,7 +85,7 @@ It eats through `ISInventoryPaneContextMenu.eatItem`, which takes a mask off, mo
 
 1. Checks: fatigue over 0.3, more than an hour since the last sleep, no panic, no pain at level 2 or more (unless fatigue is over 0.85). These are vanilla's lines.
 2. Walk next to the nearest bed in the building. Beds come from the place scan, or the current room. No bed, or no way to it: the floor.
-3. Close the doors, windows and curtains of the room, lock its exterior doors and turn its lights off (the SECURE sweep, room only).
+3. Close the doors, windows and curtains of the room, lock its exterior doors if `needsOpts.lock` is on, and turn its lights off (the SECURE sweep, room only).
 4. Walk back to the bed if the sweep moved him.
 5. `ISWorldObjectContextMenu.onSleepWalkToComplete(playerIndex, bed)`. It runs vanilla's checks and sets the wake time.
 
@@ -145,7 +145,7 @@ What it does, nearest first, a door before a window or curtain before a light (`
 | open curtain | close (`onOpenCloseCurtain`) |
 | light switch on | off (`onToggleLight`) |
 
-A target that will not change after two tries, or that no walk reaches, counts as out of reach. `LocalSurvivor.needsOpts.lock = false` turns locking off.
+A target that will not change after two tries, or that no walk reaches, counts as out of reach. Locking is off by default (`LocalSurvivor.needsOpts.lock = false`): zombies cannot open doors, and the pathfinder may not walk back out through a locked one. Set it to `true` to lock.
 
 | status | why |
 |---|---|

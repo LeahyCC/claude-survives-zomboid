@@ -13,8 +13,9 @@ local Sense = LS.Sense
 
 -- The running job, or nil. On the namespace so a reload keeps it.
 if LS.needsJob == nil then LS.needsJob = false end
--- Switches. lock = false leaves exterior doors unlocked during SECURE.
-if LS.needsOpts == nil then LS.needsOpts = { lock = true } end
+-- Switches. lock = true also locks exterior doors during SECURE. Off by default: zombies
+-- cannot open doors anyway, and the pathfinder may not walk back out through a locked one.
+if LS.needsOpts == nil then LS.needsOpts = { lock = false } end
 
 Needs.N = {
   PAUSE_CLEAR = 30,     -- ticks without a reflex action before a paused job goes on
