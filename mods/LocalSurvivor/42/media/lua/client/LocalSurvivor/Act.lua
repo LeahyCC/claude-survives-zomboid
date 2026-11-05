@@ -11,22 +11,6 @@ local Core = LS.Core
 local Move = LS.Move
 
 -- ---------- other actions ----------
-function Act.doEat(p)
-  local items = p:getInventory():getItems()
-  for i = 0, items:size() - 1 do
-    local it = items:get(i)
-    if Core.isEdible(it, p) then ISTimedActionQueue.add(ISEatFoodAction:new(p, it, 1)); return end
-  end
-  LS.lastError = "eat: no food"
-end
-function Act.doDrink(p)
-  local items = p:getInventory():getItems()
-  for i = 0, items:size() - 1 do
-    local it = items:get(i)
-    if Core.isWaterItem(it) then ISTimedActionQueue.add(ISDrinkFluidAction:new(p, it, 1)); return end
-  end
-  LS.lastError = "drink: no water"
-end
 function Act.doEquip(p)
   local w = nil
   pcall(function()
@@ -899,7 +883,7 @@ searchStep = function(p, s)
         table.insert(s.names, e.name)
       end
     end
-    -- A transfer that was cut (the unstick helper clears the queue) gets one more go.
+    -- A transfer that was cut (the reflex clears the queue when it fights or flees) gets one more go.
     if left > 0 and not c.retried then
       c.retried = true
       s.dest = nil
@@ -914,8 +898,9 @@ searchStep = function(p, s)
 end
 
 -- ---------- ENTER ----------
--- Get into a building by its id from the percept. Doors first, then a window that opens, and
--- only then a smashed window. A locked door is only found by walking up and trying it.
+-- Get into a building by its id from the percept. Doors first (a locked one is unlocked when he
+-- carries its key), then a window that opens, and only then a smashed window. A locked door is
+-- only found by walking up and trying it.
 Act.QUIET_TRIES = 4
 
 function Act.inBuilding(p, id)
@@ -994,6 +979,17 @@ function Act.doorInside(sq, door, id)
   return nil
 end
 
+-- True when the door is shut by a key and he carries the one that fits. This is the test the
+-- vanilla unlock action makes (ISLockDoor:isValid): the door's key id against his inventory.
+function Act.haveKeyFor(p, door)
+  local fits = false
+  pcall(function()
+    local id = door:checkKeyId()
+    fits = id ~= nil and id ~= -1 and p:getInventory():haveThisKeyId(id) ~= nil
+  end)
+  return fits
+end
+
 local function chooseWay(p, s)
   local smashable = false
   for _, w in ipairs(s.ways) do if w.smashable and not w.smashTried then smashable = true end end
@@ -1001,6 +997,11 @@ local function chooseWay(p, s)
   for _, w in ipairs(s.ways) do
     if not w.tried then
       local d = Move.distTo(p, w.x, w.y) - (w.kind == "door" and 2 or 0)
+      -- A door he holds the key to beats any window, however far it is.
+      if w.kind == "door" then
+        local door = Act.wayObject(w)
+        if door and Act.haveKeyFor(p, door) then d = d - 1000 end
+      end
       if d < bestD then best, bestD = w, d end
     end
   end
@@ -1077,9 +1078,13 @@ Act.SKILL.ENTER = {
         local open, locked = false, false
         pcall(function() open = obj:IsOpen() end)
         pcall(function() locked = obj:isLocked() or obj:isLockedByKey() end)
-        if not open and locked then return tryNext(p, s, "locked") end
+        local unlock = not open and locked and Act.haveKeyFor(p, obj)
+        if not open and locked and not unlock then return tryNext(p, s, "locked") end
         local inside = Act.doorInside(sq, obj, s.id)
         if not inside then return tryNext(p, s, "unreachable") end
+        -- The vanilla unlock action, then the door opens like any other. If the key did not
+        -- free it, the walk in fails and the next way is tried.
+        if unlock then ISTimedActionQueue.add(ISLockDoor:new(p, obj, false)) end
         if not open then ISTimedActionQueue.add(ISOpenCloseDoor:new(p, obj)) end
         Move.walkTo(p, inside)
         s.how = "door"

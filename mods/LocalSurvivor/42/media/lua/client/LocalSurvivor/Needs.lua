@@ -302,23 +302,6 @@ function Needs.update(p, acted)
   Needs.step(p, job)
 end
 
--- True while a job's action is running in place. Reflex.releaseDoor reads a body that stands
--- still with a queue as stuck on a door, and would cut off eating or bandaging.
-function Needs.holdsSpot(p)
-  local job = LS.needsJob
-  if not job or not job.busy then return false end
-  local inPlace = false
-  pcall(function()
-    local q = ISTimedActionQueue.getTimedActionQueue(p)
-    local head = q and q.queue and q.queue[1]
-    if head then
-      local t = head.Type
-      inPlace = t ~= "ISWalkToTimedAction" and t ~= "ISPathFindAction"
-    end
-  end)
-  return inPlace
-end
-
 -- ---------- world readers ----------
 local function squareKey(sq)
   local key = nil
