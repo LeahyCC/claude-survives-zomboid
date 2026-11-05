@@ -37,7 +37,12 @@ export function zombies(p) {
   return [{ dx: num(p.zdx), dy: num(p.zdy), d, chase: num(p.zChasing) > 0, down: false, crawl: false }];
 }
 
-// The reflex owns a chaser inside 10 tiles and anything inside 3 (docs/combat.md). An order
+// Zombies after her. The list when the mod sent one, else the game's own count.
+export function chasing(p) {
+  return zombies(p).filter((z) => z.chase).length || num(p && p.zChasing);
+}
+
+// The reflex owns a chaser inside 10 tiles and anything it can see inside 3 (docs/combat.md). An order
 // then would pull her out of the fight or the flee. An idle zombie further off is the brain's.
 export function holdReason(p) {
   if (!p || p.dead) return '';
@@ -47,6 +52,9 @@ export function holdReason(p) {
   } else if (num(p.zChasing) > 0 && num(p.zClose) > 0) {
     return 'zombie chasing inside 10 tiles';
   }
+  // A close zombie she cannot see and that is not chasing is behind a wall. The reflex leaves it
+  // alone, so holding for it froze her for minutes in the live run. Let the brain move her on.
+  if (p.zVisible !== undefined && num(p.zVisible) === 0) return '';
   const d = num(p.zDist, -1);
   const close = zombies(p).some((z) => z.d <= HOLD_ANY_R) || (d >= 0 && d <= HOLD_ANY_R);
   return close ? 'zombie inside 3 tiles' : '';

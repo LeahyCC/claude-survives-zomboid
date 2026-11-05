@@ -42,6 +42,8 @@ test('every v2 fixture is v2, the old one is not', () => {
 test('hold only for a chaser inside 10 or anything inside 3', () => {
   assert.match(holdReason(readFixture('v2-outside-chased.json')), /chasing/);
   assert.match(holdReason(readFixture('v2-close-unaware.json')), /inside 3/);
+  // The same zombie behind a wall: not seen, not chasing, so no hold.
+  assert.equal(holdReason({ ...readFixture('v2-close-unaware.json'), zVisible: 0 }), '');
   // An idle zombie 7 tiles off, which the old zClose rule went silent for.
   const idle = readFixture('v2-outside-unaware-near.json');
   assert.equal(idle.zClose, 1);

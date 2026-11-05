@@ -13,11 +13,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { callLLM, callChoice, parseChoice, BACKEND, MODEL } from './llm.mjs';
+import { callLLM, callChoice, parseChoice, callPlanner, tacticalBusy, BACKEND, MODEL, PLANNER_MODEL } from './llm.mjs';
 import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside } from './decide.mjs';
 import { isV2, holdReason } from './senses.mjs';
 import { loadMemory, updateMemory, recordOrder, memoryStats } from './memory.mjs';
 import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
+import { createPlanner } from './planner.mjs';
+import { loadLessons, addLessons, recordRun, deleteLesson, lessonStats, reviewDeath } from './lessons.mjs';
+import { digest } from './digest.mjs';
 import { loadStats, observe as observeStats, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +30,7 @@ const LUA_DIR = process.env.PZ_LUA_DIR || path.join(os.homedir(), 'Zomboid', 'Lu
 const PERCEPT_FILE = path.join(LUA_DIR, 'local_percept.txt');
 const INTENT_FILE = path.join(LUA_DIR, 'local_intent.txt');
 const STATE_FILE = process.env.PZ_STATE_FILE || path.join(DIR, 'pz-state.json');
+const LESSONS_FILE = process.env.PZ_LESSONS_FILE || path.join(DIR, 'lessons.json');
 
 function writeIntentFile(line) {
   fs.mkdirSync(LUA_DIR, { recursive: true });
@@ -65,6 +69,25 @@ const saveState = () => {
   } catch { /* disk */ }
 };
 
+// Lessons live in their own file so wiping the mind (pz-state.json) keeps what past deaths taught.
+let store = loadLessons(null);
+try {
+  store = loadLessons(JSON.parse(fs.readFileSync(LESSONS_FILE, 'utf8')));
+} catch { /* first run, or a file that is not JSON */ }
+
+const saveLessons = () => {
+  try {
+    const tmp = LESSONS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 1));
+    fs.renameSync(tmp, LESSONS_FILE);
+  } catch { /* disk */ }
+};
+
+// What this character has done so far, for the run record written at death.
+const freshRun = () => ({ hours: 0, kills: 0, day: 0, hour: 0, used: new Set(), last: null });
+let run = freshRun();
+let reviewNote = '';
+
 let percept = null;
 let perceptAt = 0;
 let perceptMtime = 0;
@@ -83,7 +106,7 @@ let lastKind = '';
 let turn = { kind: 'none', why: '', decidedBy: '', options: [], choice: '', rules: [], ms: 0, at: '' };
 
 const log = (kind, text) => {
-  const line = { t: new Date().toISOString().slice(11, 19), kind, text: String(text).slice(0, 400) };
+  const line = { t: new Date().toISOString().slice(11, 19), at: Date.now(), kind, text: String(text).slice(0, 400) };
   state.log.push(line);
   console.log(`[${line.t}] ${kind}: ${line.text}`);
 };
@@ -99,6 +122,61 @@ function readPercept() {
   } catch { /* partial write, or the game is not up */ }
 }
 setInterval(readPercept, 1000);
+
+// The slow layer. tick() never blocks: it starts a plan in the background only when no
+// tactical turn is on the model and no fight is on, and the loop below does not wait for it.
+const planner = createPlanner({
+  plan: state.plan && typeof state.plan.goal === 'string' && Array.isArray(state.plan.steps) ? state.plan : null,
+  ask: callPlanner,
+  busy: tacticalBusy,
+  lessons: () => store.lessons,
+  log,
+  onChange: () => { state.plan = planner.plan; saveState(); },
+});
+setInterval(() => {
+  if (!percept || Date.now() - perceptAt > 15000 || !isV2(percept)) return;
+  // The first plan can come before the first tactical turn has filled the map, and the plan's
+  // home has to be a building the map knows. Updating twice on one percept changes nothing.
+  updateMemory(map, percept, Date.now());
+  planner.tick(percept, map);
+}, 2000);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const REVIEW_WINDOW_MS = 5 * 60_000;
+const REVIEW_KINDS = new Set(['decide', 'error', 'game', 'reply', 'plan', 'death']);
+
+// After a death: the planner model reads the last minutes and writes up to 3 lessons. It runs
+// in the background and waits for the model to be free; nobody is playing, so it can take its time.
+async function reviewRun(finished) {
+  reviewNote = 'reviewing the run';
+  try {
+    for (let i = 0; i < 20 && tacticalBusy(); i++) await sleep(500);
+    const cutoff = Date.now() - REVIEW_WINDOW_MS;
+    const all = state.log.filter((l) => REVIEW_KINDS.has(l.kind));
+    const recent = all.filter((l) => (l.at || 0) >= cutoff);
+    const lines = (recent.length >= 5 ? recent : all).slice(-40);
+    if (!lines.length) {
+      reviewNote = 'no log to review';
+      return;
+    }
+    const res = await reviewDeath(callPlanner, {
+      log: lines,
+      run: finished,
+      digestText: digest(finished.last, memoryStats(map)),
+      final: { day: finished.day, hour: finished.hour },
+      known: store.lessons,
+    });
+    const added = addLessons(store, res.lessons, Date.now());
+    saveLessons();
+    for (const l of added.added) log('lesson', `(${l.when}) ${l.text}`);
+    for (const l of added.dropped) log('lesson', `dropped the oldest to stay at 20: ${l.text}`);
+    reviewNote = `${added.added.length} new, ${added.duplicates} repeated, ${res.rejected.length} rejected${res.rejected.length ? ` (${res.rejected.join('; ')})` : ''}`;
+    log('lesson', `review done: ${reviewNote}`);
+  } catch (err) {
+    reviewNote = `review failed: ${String(err && err.message || err).slice(0, 160)}`;
+    log('error', reviewNote);
+  }
+}
 
 function sayBack(god, line) {
   if (!god.length || !line) return '';
@@ -185,7 +263,7 @@ function showTurn(plan, extra = {}) {
     decidedBy: extra.decidedBy || plan.kind,
     options: (plan.offered || plan.options || []).map((o) => ({ id: o.id, verb: o.verb || 'keep', label: o.label })),
     choice: extra.choice || '',
-    rules: (plan.rules || []).map((r) => r.text),
+    rules: [...(plan.rules || []).map((r) => r.text), ...(plan.lessons || []).map((l) => `lesson (${l.when}): ${l.text}`)],
     ms: extra.ms || 0,
     at: new Date().toISOString().slice(11, 19),
   };
@@ -194,7 +272,7 @@ function showTurn(plan, extra = {}) {
 async function decideV2() {
   const now = Date.now();
   updateMemory(map, percept, now);
-  const plan = planTurn(percept, map, { now, last: lastLook, pending, voice: godQueue, recent: state.recent });
+  const plan = planTurn(percept, map, { now, last: lastLook, pending, voice: godQueue, recent: state.recent, plan: planner.plan, lessons: store.lessons });
   if (plan.kind !== 'pending') pending = null;
   if (['hold', 'asleep', 'pending', 'skill', 'none'].includes(plan.kind)) {
     const notes = { hold: 'reflex owns it', asleep: 'asleep, no orders', pending: 'waiting on the body', skill: 'waiting on a skill', none: 'no senses' };
@@ -217,6 +295,8 @@ async function decideV2() {
   brainNote = 'thinking';
   const god = godQueue.splice(0);
   const ids = plan.options.map((o) => o.id);
+  // A lesson that went into a prompt counts as active in this run.
+  for (const l of plan.lessons || []) run.used.add(l.id);
   try {
     let reply;
     let picked;
@@ -262,6 +342,20 @@ async function decideV2() {
   }
 }
 
+// Hours and kills only go up within one character. A drop means a new character that the
+// bridge did not see die (loaded another save), so the old tally is let go, not recorded.
+function trackRun(p) {
+  const hours = Number(p.hoursAlive);
+  if (Number.isFinite(hours)) {
+    if (hours < run.hours - 0.05) run = freshRun();
+    run.hours = Math.max(run.hours, hours);
+  }
+  run.kills = Math.max(run.kills, Number(p.kills) || 0);
+  run.day = Number(p.day) || 0;
+  run.hour = Number(p.hour) || 0;
+  run.last = p;
+}
+
 async function decide() {
   if (inFlight) return;
   if (!percept || Date.now() - perceptAt > 15000) {
@@ -289,10 +383,20 @@ async function decide() {
       log('death', `Run ended. Nights survived: ${percept.day}.`);
       brainNote = 'dead. Load or start a character and this resumes.';
       saveState();
+      // A run we never saw alive has nothing to learn from.
+      if (run.last) {
+        const finished = run;
+        recordRun(store, { hours: finished.hours, kills: finished.kills, used: [...finished.used] }, Date.now());
+        saveLessons();
+        planner.reset();
+        reviewRun(finished);
+      }
+      run = freshRun();
     }
     return;
   }
   eulogized = false;
+  trackRun(percept);
   const seen = Number(percept.lastSeq) || 0;
   if (seen > state.seq) state.seq = seen;
   try {
@@ -322,6 +426,11 @@ function cadence() {
   decide().finally(() => setTimeout(loop, cadence()));
 })();
 
+function lessonView() {
+  const stats = new Map(lessonStats(store).map((s) => [s.id, s]));
+  return store.lessons.map((l) => ({ ...l, ...stats.get(l.id) }));
+}
+
 const PAGE = `<!doctype html><meta charset="utf-8"><title>Local survivor</title>
 <style>
 body{background:#101418;color:#dde3ea;font:14px/1.5 system-ui,Segoe UI,sans-serif;max-width:860px;margin:24px auto;padding:0 16px}
@@ -336,6 +445,11 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 #options{list-style:none;padding:0;margin:0}#options li{padding:4px 10px;border-radius:4px;margin:2px 0;background:#151b22}
 #options li.chosen{background:#1f3b33;border-left:3px solid #7fd1b9}#options code{color:#ffd479;margin-right:8px}
 #rules{margin:0;padding-left:18px;color:#c4ccd6}
+#steps{margin:4px 0 0;padding-left:18px;color:#c4ccd6}
+#lessons{list-style:none;padding:0;margin:0}#lessons li{padding:6px 10px;border-radius:4px;margin:3px 0;background:#151b22}
+#lessons li.flag{border-left:3px solid #e0a458}#lessons code{color:#ffd479;margin-right:8px}
+.warn{color:#e0a458;font-size:12px}
+.del{padding:2px 10px;margin-left:10px;background:#3a2326;color:#f3b4b4;font-weight:400}
 #runs{border-collapse:collapse;width:100%}#runs th,#runs td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
 #runs th{font-size:11px;color:#8899aa;text-transform:uppercase}#runs tr.live td{color:#7fd1b9}
 </style>
@@ -345,6 +459,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <div class="bubble" id="thought"></div>
 <div class="bubble say" id="say"></div>
 <div class="grid" id="stats"></div>
+<h2>Plan</h2>
+<div class="bubble"><div id="plan-goal"></div><ol id="steps"></ol><div class="note" id="plan-note"></div></div>
 <h2>This turn</h2>
 <div class="grid">
 <div class="stat"><b>Decided by</b><span id="by"></span></div>
@@ -356,6 +472,9 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <ul id="options"></ul>
 <h2>Playbook rules used</h2>
 <ul id="rules"></ul>
+<h2>Lessons</h2>
+<div class="note" id="lessons-note"></div>
+<ul id="lessons"></ul>
 <h2>Runs</h2>
 <table id="runs"><thead><tr><th>started</th><th>hours</th><th>kills</th><th>day</th><th>damage</th><th>searched</th><th>ended by</th></tr></thead><tbody></tbody></table>
 <h2>Voice</h2>
@@ -391,6 +510,40 @@ async function tick(){
     return li;
   });
   fill('rules', t.rules || [], (r) => { const li = document.createElement('li'); li.textContent = r; return li; });
+  const plan = s.plan;
+  const pl = s.planner || {};
+  document.getElementById('plan-goal').textContent = plan ? plan.goal : (pl.running ? 'thinking about a plan...' : '(no plan yet)');
+  fill('steps', plan ? plan.steps : [], (t) => { const li = document.createElement('li'); li.textContent = t; return li; });
+  const age = plan && p && p.hoursAlive != null ? ' · made ' + Math.max(0, p.hoursAlive - plan.hours).toFixed(1) + ' game hours ago' : '';
+  document.getElementById('plan-note').textContent = [
+    plan && plan.home ? 'home: building ' + plan.home : plan ? 'no home chosen' : '',
+    plan ? 'asked because: ' + plan.why + age + (plan.ms ? ' · ' + Math.round(plan.ms / 1000) + ' s' : '') : '',
+    pl.running ? 'planner is thinking' : '',
+    pl.pending && pl.pending.length ? 'waiting to plan: ' + pl.pending.join(', ') : '',
+    pl.lastError ? 'last error: ' + pl.lastError : '',
+    'model ' + (pl.model || '?'),
+  ].filter(Boolean).join(' · ');
+  const lessons = s.lessons || [];
+  document.getElementById('lessons-note').textContent = lessons.length + ' of 20 lessons · ' + (s.runsRecorded || 0) + ' runs recorded' + (s.review ? ' · last review: ' + s.review : '');
+  const hrs = (x) => x == null ? 'n/a' : x.toFixed(1) + ' h';
+  fill('lessons', lessons, (l) => {
+    const li = document.createElement('li');
+    if (l.flagged) li.className = 'flag';
+    const c = document.createElement('code'); c.textContent = l.when;
+    li.append(c, document.createTextNode(l.text));
+    const note = document.createElement('div'); note.className = 'note';
+    note.textContent = 'active in ' + l.runs + ' runs · survived ' + hrs(l.avgWith) + ' with it (' + l.runsWith + ' runs), ' + hrs(l.avgWithout) + ' without (' + l.runsWithout + ')';
+    const del = document.createElement('button'); del.className = 'del'; del.textContent = 'delete';
+    del.addEventListener('click', () => delLesson(l.id));
+    note.append(del);
+    li.append(note);
+    if (l.flagged) {
+      const w = document.createElement('div'); w.className = 'warn';
+      w.textContent = 'Runs with this lesson ended sooner than runs without it. Worth deleting? Nothing is deleted for you.';
+      li.append(w);
+    }
+    return li;
+  });
   const st = await (await fetch('/api/stats')).json();
   const body = document.querySelector('#runs tbody');
   body.replaceChildren(...[st.current, ...st.runs].filter(Boolean).map((r) => {
@@ -404,6 +557,10 @@ async function tick(){
   }));
   document.getElementById('chat').textContent = (s.chat || []).map(m => m.t + ' ' + m.from + ': ' + m.text).join('\\n');
   document.getElementById('log').textContent = (s.log || []).slice().reverse().map(l => '[' + l.t + '] ' + l.kind + ': ' + l.text).join('\\n');
+}
+async function delLesson(id){
+  await fetch('/api/lessons/delete?id=' + encodeURIComponent(id), { method: 'POST', headers: { 'x-mind': '1' } });
+  tick();
 }
 async function sendGod(){
   const i = document.getElementById('god');
@@ -435,11 +592,33 @@ http.createServer((req, res) => {
       model: MODEL,
       turn,
       map: memoryStats(map),
+      plan: planner.plan,
+      planner: {
+        model: PLANNER_MODEL,
+        running: planner.running,
+        pending: [...planner.pending],
+        lastError: planner.lastError,
+      },
+      lessons: lessonView(),
+      runsRecorded: store.runs.length,
+      review: reviewNote,
     }));
   }
   if (url.pathname === '/api/stats') {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(statsSummary(stats)));
+  }
+  if (url.pathname === '/api/lessons/delete' && req.method === 'POST') {
+    // A page on another site can send a bare POST to localhost. A custom header forces a
+    // preflight that this server never answers, so only /mind itself can delete.
+    if (req.headers['x-mind'] !== '1') {
+      res.writeHead(403);
+      return res.end();
+    }
+    const ok = deleteLesson(store, String(url.searchParams.get('id') || ''));
+    if (ok) saveLessons();
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok }));
   }
   if (url.pathname === '/god') {
     const text = (url.searchParams.get('text') || '').slice(0, 300);

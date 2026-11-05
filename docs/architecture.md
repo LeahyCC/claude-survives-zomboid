@@ -41,11 +41,11 @@ Rules:
 - Every game call is in `pcall`. A failure in the mod must never stop the tick.
 - Lua here is 5.1 (Kahlua): no `goto`, no `//`, no bitwise operators.
 
-State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`, `needsJob` (the running needs job, or false) and `needsOpts`. Act keeps `skill` (the long order running, or nil), `searched` (rooms finished, by building id) and `lootTypes` (loot facts per item type). Move keeps `unstickLog` and `moveWatch` (unstick fires it has seen). Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
+State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `lastTickMs`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`, `needsJob` (the running needs job, or false) and `needsOpts`. Act keeps `skill` (the long order running, or nil), `searched` (rooms finished, by building id) and `lootTypes` (loot facts per item type). Move keeps `unstickLog` and `moveWatch` (unstick fires it has seen). Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
 
 ## Tick cadence
 
-`LocalSurvivor.onTick` runs every game tick. Order inside it is fixed.
+`LocalSurvivor.onTick` runs at a steady 60 ticks a second, whatever the frame rate: on a faster frame it returns early (`LS.TICK_MS`, timed with `getTimestampMs`). Every timer in the mod counts these ticks, so 90 ticks is 1.5 seconds. Order inside it is fixed.
 
 ```
 every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode;
