@@ -51,6 +51,9 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `words.mjs` `geom.mjs` | Words for numbers, compass, distances. | pure helpers |
 | `planner.mjs` | The slow day plan: events, parsing, the background runner. See `docs/planner.md`. | service |
 | `lessons.mjs` | Lessons from past deaths and their triggers. See `docs/planner.md`. | service |
+| `decisions.mjs` | The decision log: decision, outcome and after lines, and the join between them. See `docs/eval.md`. | service |
+| `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
+| `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
 | `pz-bridge.mjs` | Reads the percept, runs the loop, writes the order, serves `/mind`. | I/O |
 | `decide.mjs` | The v1 brain for old mods, and `intentLine`. | v1 |
@@ -195,9 +198,35 @@ It also keeps the last 12 orders sent (seq, verb, key, building), the fails with
 
 `http://localhost:8799/mind` shows the options offered (the chosen one marked), the choice, who decided (policy and its rule, the model, waiting on a skill, the reflex, asleep), the model time, the playbook rules used, and the map memory size. `PZ_LUA_DIR` and `PZ_STATE_FILE` point the bridge at other files, for a page check without the game.
 
+The Nudge panel on the same page lets you pick the option you would have chosen. See "Nudges" in `docs/eval.md`. A model thought that was still running when you pressed "Do it now" is dropped when it finishes, so it cannot overwrite your order.
+
+## Examples from your nudges
+
+With `PZ_EXAMPLES` on, the user message gets up to two lines from your past nudges, after the rules:
+
+```
+EXAMPLES:
+- In a similar spot, the better pick was away (walk quietly 15 tiles W, away from the zombie that has not seen you) because the zombie is too close to walk past.
+```
+
+A nudge counts as similar when she was in the same place (inside or outside), at the same time of day (night is 21:00 to 06:00), chased or not, and at least half of the needs match (thirsty, tired, heavy and so on). Its pick has to be on today's menu, matched by key, and the line quotes today's id. Picks where you disagreed with the brain come first, then ones with a reason, then the newest. Only the last 200 nudges are looked at. The lines are left out when none fit, so a bridge with no nudge file sends the same prompt as before.
+
+`PZ_EXAMPLES=0` turns them off, `1` on. It is on by default.
+
+Why on: measured with `node bridge/tools/try-brain.mjs --examples --n 10` on 2026-11-04 (gemma4:12b, RTX 5080, six fixtures with a model call, two stand-in example lines of the usual length, best of 10 per turn):
+
+| | plain | with examples | added |
+|---|---|---|---|
+| turn time, best of 10 | 437 ms | 454 ms | 17 ms |
+| turn time, median of 10 | 456 ms | 483 ms | 27 ms |
+| prompt tokens | 559 | 627 | 68 |
+| time reading the prompt | 230 ms | 256 ms | 26 ms |
+
+That is far under the 150 ms line, so it is on. Both numbers come from the same message asked alternately, so a slow GPU moment hits both. A first try of the same command, while two other large models were using the GPU, gave 3.8 s against 4.6 s with a spread of seconds per fixture, so it showed nothing. The best-of number is the one to trust, and the command prints the median beside it.
+
 ## Live check
 
-`node bridge/tools/try-brain.mjs [model ...]` runs every `v2-*` fixture through the real model, twice, and through the old prompt on the same percept. `--dry` prints the plan, the menu and the user message without a model. Policy turns are also put to the model with the full menu, to show what it would pick.
+`node bridge/tools/try-brain.mjs [model ...]` runs every `v2-*` fixture through the real model, twice, and through the old prompt on the same percept. `--dry` prints the plan, the menu and the user message without a model. Policy turns are also put to the model with the full menu, to show what it would pick. `--examples [--n 5]` times each turn with and without the example lines instead.
 
 Run on 2026-11-04, RTX 5080, game not running. "1st" is a new user message with the system prompt cached, which is what a real turn costs. "warm" is the same message again.
 

@@ -16,12 +16,15 @@ import { fileURLToPath } from 'node:url';
 import { callLLM, callChoice, parseChoice, callPlanner, tacticalBusy, BACKEND, MODEL, PLANNER_MODEL } from './llm.mjs';
 import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside } from './decide.mjs';
 import { isV2, holdReason } from './senses.mjs';
-import { loadMemory, updateMemory, recordOrder, memoryStats } from './memory.mjs';
+import { loadMemory, updateMemory, recordOrder, memoryStats, memorySlice } from './memory.mjs';
 import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
 import { createPlanner } from './planner.mjs';
 import { loadLessons, addLessons, recordRun, deleteLesson, lessonStats, reviewDeath } from './lessons.mjs';
 import { digest } from './digest.mjs';
 import { loadStats, observe as observeStats, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
+import { createTracker } from './decisions.mjs';
+import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
+import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8799);
@@ -31,6 +34,10 @@ const PERCEPT_FILE = path.join(LUA_DIR, 'local_percept.txt');
 const INTENT_FILE = path.join(LUA_DIR, 'local_intent.txt');
 const STATE_FILE = process.env.PZ_STATE_FILE || path.join(DIR, 'pz-state.json');
 const LESSONS_FILE = process.env.PZ_LESSONS_FILE || path.join(DIR, 'lessons.json');
+// Append-only logs of what she chose and what Colin would have chosen (docs/eval.md).
+const DECISIONS_FILE = process.env.PZ_DECISIONS_FILE || path.join(DIR, 'decisions.jsonl');
+const NUDGES_FILE = process.env.PZ_NUDGES_FILE || path.join(DIR, 'nudges.jsonl');
+const LOG_MAX_BYTES = Number(process.env.PZ_LOG_MAX_BYTES) || DEFAULT_MAX_BYTES;
 
 function writeIntentFile(line) {
   fs.mkdirSync(LUA_DIR, { recursive: true });
@@ -62,6 +69,13 @@ const map = loadMemory(state.map);
 state.map = map;
 if (!Array.isArray(state.recent)) state.recent = [];
 const stats = loadStats(state.stats);
+const runId = () => (stats.run ? stats.run.start : null);
+const tracker = createTracker({ write: createAppender(DECISIONS_FILE, { maxBytes: LOG_MAX_BYTES }) });
+const appendNudge = createAppender(NUDGES_FILE, { maxBytes: LOG_MAX_BYTES });
+const EXAMPLES_ON = examplesEnabled();
+const pastNudges = readLog(NUDGES_FILE, { rotated: false });
+let nudgeIndex = EXAMPLES_ON ? indexNudges(pastNudges) : [];
+let nudgeCount = pastNudges.filter((n) => n.t === 'nudge').length;
 
 const saveState = () => {
   try {
@@ -104,6 +118,14 @@ let lastLook = null;
 let pending = null;
 let lastKind = '';
 let turn = { kind: 'none', why: '', decidedBy: '', options: [], choice: '', rules: [], ms: 0, at: '' };
+// The last menus the page could have shown, newest last, so a nudge is frozen against the menu Colin
+// was looking at. A new entry starts only when the options or the brain's pick change.
+const MAX_SNAPSHOTS = 12;
+let snapshots = [];
+let snapshotSig = '';
+let snapshotSerial = 0;
+// When a nudge last sent an order. A model thought that started before it is dropped.
+let nudgedAt = 0;
 
 const log = (kind, text) => {
   const line = { t: new Date().toISOString().slice(11, 19), at: Date.now(), kind, text: String(text).slice(0, 400) };
@@ -119,6 +141,7 @@ function readPercept() {
     perceptMtime = mt;
     perceptAt = Date.now();
     if (observeStats(stats, percept, perceptAt)) saveState();
+    tracker.observe(percept, perceptAt);
   } catch { /* partial write, or the game is not up */ }
 }
 setInterval(readPercept, 1000);
@@ -267,12 +290,53 @@ function showTurn(plan, extra = {}) {
     ms: extra.ms || 0,
     at: new Date().toISOString().slice(11, 19),
   };
+  rememberMenu(plan, extra);
+}
+
+// Keep the menu for the nudge panel. A turn with no menu (the reflex or sleep owns it) leaves the
+// last one in place, so a click that was already on its way still finds what he was looking at.
+function rememberMenu(plan, extra) {
+  const menu = plan.offered || plan.options || [];
+  if (!menu.length || !percept) return;
+  // While a job runs the brain's pick is "keep", even though it never asked.
+  const brain = extra.choice || (plan.kind === 'skill' && menu.some((o) => o.id === 'keep') ? 'keep' : '');
+  // Labels hold distances that change every second, so they stay out of the signature.
+  const sig = JSON.stringify([menu.map((o) => `${o.id}|${o.key}`), brain]);
+  const fresh = {
+    percept, menu, choice: brain, by: extra.decidedBy || plan.kind, rule: plan.policy ? plan.policy.rule : null,
+    thought: extra.thought ?? lastThought, kind: plan.kind, memory: memorySlice(map, percept), plan: planSlice(planner.plan),
+  };
+  if (sig === snapshotSig && snapshots.length) {
+    Object.assign(snapshots[snapshots.length - 1], fresh);
+    return;
+  }
+  snapshotSig = sig;
+  snapshotSerial += 1;
+  snapshots = [...snapshots, { serial: snapshotSerial, ...fresh }].slice(-MAX_SNAPSHOTS);
+}
+
+// One line in decisions.jsonl. The log must never stop her, so a failure is swallowed.
+function logDecision(plan, seen, option, d) {
+  try {
+    tracker.decide({
+      percept: seen, run: runId(), menu: plan.offered || plan.options, option, seq: state.seq,
+      rules: [...(plan.rules || []).map((r) => r.id), ...(plan.lessons || []).map((l) => `lesson:${l.id}`)],
+      ...d,
+    }, Date.now());
+  } catch (err) {
+    log('error', `decision log: ${String(err && err.message || err).slice(0, 120)}`);
+  }
 }
 
 async function decideV2() {
   const now = Date.now();
+  // What the plan was built from. The model reply can arrive after a newer percept has.
+  const seen = percept;
   updateMemory(map, percept, now);
-  const plan = planTurn(percept, map, { now, last: lastLook, pending, voice: godQueue, recent: state.recent, plan: planner.plan, lessons: store.lessons });
+  const plan = planTurn(percept, map, {
+    now, last: lastLook, pending, voice: godQueue, recent: state.recent, plan: planner.plan, lessons: store.lessons,
+    nudges: nudgeIndex,
+  });
   if (plan.kind !== 'pending') pending = null;
   if (['hold', 'asleep', 'pending', 'skill', 'none'].includes(plan.kind)) {
     const notes = { hold: 'reflex owns it', asleep: 'asleep, no orders', pending: 'waiting on the body', skill: 'waiting on a skill', none: 'no senses' };
@@ -287,10 +351,12 @@ async function decideV2() {
   if (plan.kind === 'policy') {
     lastLook = snapshot(percept, now);
     send(plan.policy.option, plan.policy.thought, '', 'policy');
-    showTurn(plan, { decidedBy: `policy (${plan.policy.rule})`, choice: plan.policy.option.id });
+    showTurn(plan, { decidedBy: `policy (${plan.policy.rule})`, choice: plan.policy.option.id, thought: plan.policy.thought });
+    logDecision(plan, percept, plan.policy.option, { by: 'policy', rule: plan.policy.rule, choice: plan.policy.option.id, thought: plan.policy.thought });
     saveState();
     return;
   }
+  const startedAt = Date.now();
   inFlight = true;
   brainNote = 'thinking';
   const god = godQueue.splice(0);
@@ -320,9 +386,15 @@ async function decideV2() {
       showTurn(plan, { decidedBy: 'dropped late', choice: picked.choice, ms: reply.ms });
       return;
     }
+    if (nudgedAt > startedAt) {
+      // Colin sent an order while the model was thinking. His wins.
+      if (god.length) godQueue.unshift(...god);
+      log('decide', 'Thought finished after a nudge. Order dropped.');
+      return;
+    }
     lastLook = snapshot(percept, Date.now());
     const decidedBy = plan.policy ? `policy (${plan.policy.rule}), voice answered by ${MODEL}` : `model ${MODEL}`;
-    showTurn(plan, { decidedBy, choice: picked.choice, ms: reply.ms });
+    showTurn(plan, { decidedBy, choice: picked.choice, ms: reply.ms, thought: picked.thought });
     const spoken = sayBack(god, picked.thought);
     const option = resolveChoice(percept, map, plan.options, picked.choice);
     if (!option) {
@@ -332,6 +404,7 @@ async function decideV2() {
     } else {
       send(option, picked.thought, spoken, 'model');
     }
+    logDecision(plan, seen, option, { by: plan.policy ? 'policy' : 'model', rule: plan.policy ? plan.policy.rule : null, choice: picked.choice, thought: picked.thought, ms: reply.ms });
     saveState();
   } catch (err) {
     // A failed call must not eat what was said on the page.
@@ -422,6 +495,9 @@ function cadence() {
   return 3000;
 }
 
+// Read the senses once before the first turn. Without this the first look finds no percept and
+// the loop waits the 10 seconds it uses for "no game" before looking again.
+readPercept();
 (function loop() {
   decide().finally(() => setTimeout(loop, cadence()));
 })();
@@ -429,6 +505,74 @@ function cadence() {
 function lessonView() {
   const stats = new Map(lessonStats(store).map((s) => [s.id, s]));
   return store.lessons.map((l) => ({ ...l, ...stats.get(l.id) }));
+}
+
+// The newest menu, as the nudge panel draws it.
+function nudgeView() {
+  const s = snapshots[snapshots.length - 1];
+  if (!s) return null;
+  return {
+    serial: s.serial, brain: s.choice, kind: s.kind,
+    options: s.menu.map((o) => ({ id: o.id, verb: o.verb || 'keep', label: o.label, key: o.key || '' })),
+  };
+}
+
+// Colin's order goes out through send(), the same call a policy order uses.
+function sendNudge(option, why, menu) {
+  const now = Date.now();
+  nudgedAt = now;
+  lastLook = snapshot(percept, now);
+  const thought = (why ? `Colin picked this: ${why}` : 'Colin picked this.').replace(/[|\r\n]/g, ' ').slice(0, 160);
+  send(option, thought, '', 'nudge');
+  turn = { ...turn, decidedBy: 'nudge (Colin)', why: 'picked on the page', choice: option.id, at: new Date().toISOString().slice(11, 19) };
+  logDecision({ options: menu }, percept, option, { by: 'nudge', rule: null, choice: option.id, thought });
+  saveState();
+}
+
+function readBody(req, limit) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size <= limit) chunks.push(c);
+    });
+    req.on('end', () => resolve(size > limit ? null : Buffer.concat(chunks).toString('utf8')));
+    req.on('error', () => resolve(null));
+  });
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+async function handleNudge(req, res) {
+  // Same guard as the lesson delete: a custom header forces a preflight this server never answers.
+  if (req.headers['x-mind'] !== '1') {
+    res.writeHead(403);
+    return res.end();
+  }
+  const text = await readBody(req, MAX_BODY);
+  if (text === null) return sendJson(res, 413, { ok: false, message: 'That request was too big.' });
+  const body = parseNudgeBody(text);
+  if (!body.ok) return sendJson(res, 400, body);
+  const got = planNudge(body, {
+    snapshots, percept, perceptAt, map, now: Date.now(), run: runId(),
+    resolve: (menu, id) => resolveChoice(percept, map, menu, id),
+  });
+  if (!got.ok) return sendJson(res, got.status, { ok: false, message: got.message });
+  // Written before anything is sent, so an order never goes out without its record.
+  if (!appendNudge(got.record)) return sendJson(res, 500, { ok: false, message: 'Could not write nudges.jsonl. Nothing was sent.' });
+  nudgeCount += 1;
+  if (EXAMPLES_ON && got.record.pickKey) nudgeIndex = [...nudgeIndex, indexOne(got.record)].slice(-MAX_INDEX);
+  if (got.order) sendNudge(got.order, got.record.why, got.record.menu);
+  const picked = got.record.pick ? `${got.record.pick} (${got.record.pickVerb || 'keep'})` : 'a missing option';
+  log('nudge', `${body.mode}: ${picked}; brain had ${got.record.brain.id || 'nothing'}${got.record.why ? `; ${got.record.why}` : ''}`);
+  sendJson(res, 200, {
+    ok: true, applied: !!got.order,
+    message: got.order ? `Sent ${got.record.pick}. Logged.` : 'Logged. Nothing changed in the game.',
+  });
 }
 
 const PAGE = `<!doctype html><meta charset="utf-8"><title>Local survivor</title>
@@ -452,6 +596,13 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 .del{padding:2px 10px;margin-left:10px;background:#3a2326;color:#f3b4b4;font-weight:400}
 #runs{border-collapse:collapse;width:100%}#runs th,#runs td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
 #runs th{font-size:11px;color:#8899aa;text-transform:uppercase}#runs tr.live td{color:#7fd1b9}
+#nudge-buttons{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+#nudge-buttons button{text-align:left;font-weight:400;background:#151b22;color:#dde3ea;border:1px solid #26303a}
+#nudge-buttons button.brain::after{content:"  \\2190  brain's pick";color:#7fd1b9;font-size:12px}
+#nudge-buttons button.sel{border-color:#ffd479;background:#2a2615}
+#nudge input{width:100%;box-sizing:border-box;margin:3px 0}
+#nudge .row{display:flex;gap:8px;margin-top:6px}#nudge .row button:last-child{background:#26303a;color:#dde3ea}
+#nudge-msg.ok{color:#7fd1b9}
 </style>
 <h1>Local survivor</h1>
 <div class="note" id="note"></div>
@@ -470,6 +621,17 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 </div>
 <h2>Options offered</h2>
 <ul id="options"></ul>
+<h2>Nudge</h2>
+<div class="bubble" id="nudge">
+<div class="note" id="nudge-note">No menu yet.</div>
+<div id="nudge-buttons"></div>
+<label class="note" for="nudge-why">Why (short)</label>
+<input id="nudge-why" maxlength="300" placeholder="why (short)" autocomplete="off">
+<label class="note" for="nudge-missing">None of these fit: what option should exist?</label>
+<input id="nudge-missing" maxlength="300" placeholder="none of these fit: what option should exist?" autocomplete="off">
+<div class="row"><button id="nudge-now" onclick="sendNudge('now')">Do it now</button><button id="nudge-log" onclick="sendNudge('log')">Just log it</button></div>
+<div class="note" id="nudge-msg"></div>
+</div>
 <h2>Playbook rules used</h2>
 <ul id="rules"></ul>
 <h2>Lessons</h2>
@@ -510,6 +672,7 @@ async function tick(){
     return li;
   });
   fill('rules', t.rules || [], (r) => { const li = document.createElement('li'); li.textContent = r; return li; });
+  renderNudge(s);
   const plan = s.plan;
   const pl = s.planner || {};
   document.getElementById('plan-goal').textContent = plan ? plan.goal : (pl.running ? 'thinking about a plan...' : '(no plan yet)');
@@ -558,6 +721,71 @@ async function tick(){
   document.getElementById('chat').textContent = (s.chat || []).map(m => m.t + ' ' + m.from + ': ' + m.text).join('\\n');
   document.getElementById('log').textContent = (s.log || []).slice().reverse().map(l => '[' + l.t + '] ' + l.kind + ': ' + l.text).join('\\n');
 }
+// The nudge panel is built once. A refresh only rebuilds the buttons when the menu itself changed,
+// and never touches the text boxes, so what is being typed or picked survives it.
+const nudgeSeen = { serial: null, id: '', key: '', brain: '' };
+function markNudge(){
+  for (const b of document.getElementById('nudge-buttons').children) {
+    b.classList.toggle('sel', b.dataset.id === nudgeSeen.id);
+    b.classList.toggle('brain', b.dataset.id === nudgeSeen.brain);
+  }
+}
+function renderNudge(s){
+  const n = s.nudge;
+  const t = s.turn || {};
+  const box = document.getElementById('nudge-buttons');
+  const note = document.getElementById('nudge-note');
+  if (!n || !n.options.length) { box.replaceChildren(); nudgeSeen.serial = null; note.textContent = 'No menu yet.'; return; }
+  if (n.serial !== nudgeSeen.serial) {
+    // A new menu: keep the pick if the same job is still on it, else drop it.
+    const same = nudgeSeen.key ? n.options.find((o) => o.key === nudgeSeen.key) : null;
+    nudgeSeen.serial = n.serial;
+    nudgeSeen.id = same ? same.id : '';
+    nudgeSeen.key = same ? same.key : '';
+    box.replaceChildren(...n.options.map((o) => {
+      const b = document.createElement('button');
+      b.dataset.id = o.id;
+      b.addEventListener('click', () => { nudgeSeen.id = o.id; nudgeSeen.key = o.key; markNudge(); });
+      return b;
+    }));
+  }
+  for (const b of box.children) {
+    const o = n.options.find((x) => x.id === b.dataset.id);
+    const text = o.id + ': ' + o.label;
+    if (b.textContent !== text) b.textContent = text;
+  }
+  nudgeSeen.brain = n.brain;
+  markNudge();
+  const held = t.kind === 'hold' || t.kind === 'asleep';
+  note.textContent = held
+    ? 'The reflex owns this moment or she is asleep (' + (t.why || t.kind) + '). "Do it now" will be refused. "Just log it" still works on the last menu.'
+    : 'Pick the option you would have chosen. This is the menu from ' + (t.at || 'her last turn') + '.';
+}
+async function sendNudge(mode){
+  const msg = document.getElementById('nudge-msg');
+  const why = document.getElementById('nudge-why');
+  const missing = document.getElementById('nudge-missing');
+  if (!nudgeSeen.id && !missing.value.trim()) { msg.className = 'warn'; msg.textContent = 'Pick an option, or say what is missing.'; return; }
+  const buttons = [document.getElementById('nudge-now'), document.getElementById('nudge-log')];
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    const res = await fetch('/api/nudge', {
+      method: 'POST',
+      headers: { 'x-mind': '1', 'content-type': 'application/json' },
+      body: JSON.stringify({ mode, turn: nudgeSeen.serial, pick: nudgeSeen.id || null, why: why.value, missing: missing.value }),
+    });
+    const j = await res.json().catch(() => ({}));
+    msg.className = res.ok ? 'note ok' : 'warn';
+    msg.textContent = j.message || (res.ok ? 'Done.' : 'Failed (' + res.status + ').');
+    // Only a nudge that went through clears the form. A refusal keeps everything typed.
+    if (res.ok) { why.value = ''; missing.value = ''; nudgeSeen.id = ''; nudgeSeen.key = ''; markNudge(); }
+  } catch (err) {
+    msg.className = 'warn';
+    msg.textContent = 'Could not reach the bridge.';
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
 async function delLesson(id){
   await fetch('/api/lessons/delete?id=' + encodeURIComponent(id), { method: 'POST', headers: { 'x-mind': '1' } });
   tick();
@@ -599,6 +827,9 @@ http.createServer((req, res) => {
         pending: [...planner.pending],
         lastError: planner.lastError,
       },
+      nudge: nudgeView(),
+      nudges: nudgeCount,
+      examples: EXAMPLES_ON,
       lessons: lessonView(),
       runsRecorded: store.runs.length,
       review: reviewNote,
@@ -619,6 +850,12 @@ http.createServer((req, res) => {
     if (ok) saveLessons();
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ ok }));
+  }
+  if (url.pathname === '/api/nudge' && req.method === 'POST') {
+    return handleNudge(req, res).catch((err) => {
+      log('error', `nudge: ${String(err && err.message || err).slice(0, 120)}`);
+      if (!res.headersSent) sendJson(res, 500, { ok: false, message: 'The bridge hit an error. Nothing was sent.' });
+    });
   }
   if (url.pathname === '/god') {
     const text = (url.searchParams.get('text') || '').slice(0, 300);

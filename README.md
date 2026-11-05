@@ -47,6 +47,8 @@ node pz-bridge.mjs
 
 `bridge/lessons.json` holds the lessons written after each death, and the run record that checks them. It is kept apart so a fresh mind still remembers what past deaths taught. Delete it, or press delete on a lesson at `/mind`, to forget. Both files are ignored by git.
 
+`bridge/decisions.jsonl` records every decided turn and what came of it. `bridge/nudges.jsonl` holds the picks you make in the Nudge panel on `/mind`. Both are ignored by git and only ever appended to. `node bridge/tools/review.mjs` prints a short report from them, and `node bridge/tools/nudges-to-eval.mjs` turns your picks into eval scenarios. See `docs/eval.md`.
+
 A slower planner writes a short day plan and a death review writes lessons (`docs/planner.md`). It uses `PZ_PLANNER_MODEL`, which defaults to `PZ_MODEL`.
 
 `node bridge/tools/try-brain.mjs` runs the test percepts through the real model and prints each choice and its time.
