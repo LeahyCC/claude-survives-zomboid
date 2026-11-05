@@ -19,8 +19,11 @@ One JSON file in `bridge/eval/scenarios/`. It is a patch over `bridge/eval/base.
 ```
 name, note   what the moment is
 patch        v2 percept fields that differ from the base
-memory       map memory to seed: current building, buildings by id (door, searched, water, bed)
+memory       map memory to seed: current building, buildings by id (door, searched, water, bed),
+             fails ({key: {why, ago}}, orders that failed `ago` seconds ago)
 plan         the planner's day plan {goal, steps, home}, only where the moment depends on it
+history      the orders she sent just before, oldest first: {verb, key, name, result, why, lost, chase, ago}.
+             Only where the right pick depends on how they went (docs/brain.md, "Reactions")
 accept       option ids a good player would take
 wrong        option ids that are clearly bad
 ```
@@ -51,7 +54,20 @@ The summary line counts model turns only. Policy turns are listed separately bec
 
 Two runs per scenario is a small sample. A single scenario flipping between runs is noise. A model that never picks the right id on a scenario is a finding.
 
-## Latest run: gemma4:12b, 34 scenarios
+## Latest run: gemma4:12b, 37 scenarios, with outcomes in the prompt
+
+2026-11-04, after the brain began to tell the model how its last orders went (`docs/brain.md`, "Reactions"). Three scenarios are new: `retry-failed-house`, `flee-loop-quieter-house` and `two-houses-failed-pick-third`. In each one the nearest house just failed and is on the menu again, and the right pick is another house. `--n 2`, default prompt, RTX 5080 with Ollama on the same PC, game not running.
+
+```
+Model turns: 40/44 accepted, 1 wrong, 3 other, 0 bad replies. Mean 387 ms, p90 438 ms.
+Policy turns (no model): 15 scenarios, 15 accepted, 0 wrong.
+```
+
+- The three new scenarios: 6 of 6 accepted (`b2 b2`, `b2 b2`, `b3 b3`). Asked six times each without the history, all three pick the failed house every time (0 of 18). The table is in `docs/brain.md`.
+- The other misses are the ones seen before: `winded-no-chase` (0 of 2, `b1` instead of `rest`), `can-with-opener` (1 of 2) and `panicked-outside` (1 of 2, one wrong). The first run of the same code this day had `panicked-outside` 0 of 2 and `can-with-opener` 0 of 2. Read the totals.
+- Latency is higher than the run below (mean 387 ms against 269 ms). Two scenarios had a slow call (`two-chasers-house-close` p90 941 ms, `unsearched-house-no-weapon` p90 904 ms). A run of the same code earlier the same hour had a mean of 340 ms. The cause of the gap was not checked. The prompt alone adds 16 ms a turn at its longest (`docs/brain.md`).
+
+## Earlier run: gemma4:12b, 34 scenarios
 
 After the brain began to read `asleep`, `res.target`, `inBldg.roomsLeft`, `inv.canRip` and the weapon scores, and gained the hunger, equip and overloaded policy rules, the DROP verb and the walk home. `--n 3`, default prompt, RTX 5080 with Ollama on the same PC.
 

@@ -1,0 +1,54 @@
+{
+ "name": "retry-failed-house",
+ "note": "The nearest house (N) just failed 50 seconds ago: zombies at the door, 20 HP lost. Its retry time is over, so it is on the menu again. Another house sits further east.",
+ "patch": {
+  "hp": 75,
+  "buildings": [
+   {
+    "d": 9,
+    "door": {
+     "x": 10651,
+     "y": 9821
+    },
+    "dx": 0,
+    "dy": -9,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 16,
+    "door": {
+     "x": 10666,
+     "y": 9830
+    },
+    "dx": 16,
+    "dy": 0,
+    "id": "4061",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "history": [
+  {
+   "verb": "ENTER",
+   "key": "ENTER:4060",
+   "name": "ENTER house N",
+   "result": "failed",
+   "why": "zombie",
+   "lost": 20,
+   "hp": -20,
+   "ago": 50
+  }
+ ],
+ "accept": [
+  "b2"
+ ],
+ "wrong": [
+  "b1",
+  "wait"
+ ]
+}

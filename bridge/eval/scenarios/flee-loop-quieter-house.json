@@ -1,0 +1,77 @@
+{
+ "name": "flee-loop-quieter-house",
+ "note": "Two times she fled the north house and walked back to it, and the last time zombies at the door cost 20 HP. The house is back on the menu. Another house sits further east.",
+ "patch": {
+  "hp": 75,
+  "buildings": [
+   {
+    "d": 9,
+    "door": {
+     "x": 10651,
+     "y": 9821
+    },
+    "dx": 0,
+    "dy": -9,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 16,
+    "door": {
+     "x": 10666,
+     "y": 9830
+    },
+    "dx": 16,
+    "dy": 0,
+    "id": "4061",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "history": [
+  {
+   "verb": "GOTO",
+   "key": "AWAY",
+   "name": "GOTO away",
+   "result": "done",
+   "chase": 1,
+   "ago": 115
+  },
+  {
+   "verb": "ENTER",
+   "key": "ENTER:4060",
+   "name": "ENTER house N",
+   "result": "replaced",
+   "ago": 100
+  },
+  {
+   "verb": "GOTO",
+   "key": "AWAY",
+   "name": "GOTO away",
+   "result": "done",
+   "chase": 2,
+   "ago": 80
+  },
+  {
+   "verb": "ENTER",
+   "key": "ENTER:4060",
+   "name": "ENTER house N",
+   "result": "failed",
+   "why": "zombie",
+   "lost": 20,
+   "hp": -20,
+   "ago": 60
+  }
+ ],
+ "accept": [
+  "b2"
+ ],
+ "wrong": [
+  "b1",
+  "wait"
+ ]
+}

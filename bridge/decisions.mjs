@@ -10,12 +10,15 @@
 // Clocks are wall clock, not game time, so fast-forward shortens the windows in game hours.
 
 import { chasing, needs, inside, untreated, panic01 } from './senses.mjs';
+import { shortName } from './reactions.mjs';
 
 export const AFTER_MS = 60_000;
 export const DEATH_MS = 5 * 60_000;
 // Orders whose follow-up is still being watched. The game closing leaves some open, and they
 // are forgotten rather than kept forever.
 const MAX_OPEN = 20;
+// Finished orders kept for the prompt and the Reactions strip on /mind. Memory only, not saved.
+const MAX_HISTORY = 12;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const round = (v, k = 2) => Math.round(num(v) * 10 ** k) / 10 ** k;
@@ -58,15 +61,18 @@ const menuOf = (options) => (Array.isArray(options) ? options : []).map((o) => (
 export function createTracker({ write }) {
   let serial = 0;
   let open = [];
+  let history = [];
 
   const idFor = (now) => `${now.toString(36)}-${(serial++).toString(36)}`;
 
-  function finish(e, now, result, why, hp) {
+  // chaseNow: how many zombies were chasing when it ended. Only the Reactions record keeps it.
+  function finish(e, now, result, why, hp, chaseNow = 0) {
     if (e.done) return;
     e.done = true;
     e.doneAt = now;
     e.hpDone = hp;
     e.lostAtDone = e.lost;
+    Object.assign(e.rec, { result, why: String(why || '').slice(0, 120), hp: round(hp - e.hp0, 1), lost: round(e.lost, 1), chase: chaseNow });
     write({
       t: 'outcome', id: e.id, at: new Date(now).toISOString(), verb: e.verb, result, why: String(why || '').slice(0, 120),
       ms: now - e.at, hpDuring: round(hp - e.hp0, 1), lostDuring: round(e.lost, 1),
@@ -93,7 +99,7 @@ export function createTracker({ write }) {
       const sent = !!d.option;
       const hp = num(p && p.hp, 100);
       // A newer order cancels the one before it, which then never reports.
-      for (const e of [...open]) if (!e.done && sent) finish(e, now, 'replaced', 'a newer order was sent', e.lastHp);
+      for (const e of [...open]) if (!e.done && sent) finish(e, now, 'replaced', 'a newer order was sent', e.lastHp, chasing(p));
       write({
         t: 'decision', id, at: new Date(now).toISOString(), run: d.run || null,
         day: num(p && p.day), hour: num(p && p.hour), percept: compactPercept(p), menu: menuOf(d.menu),
@@ -103,9 +109,13 @@ export function createTracker({ write }) {
         rules: (d.rules || []).map(String).slice(0, 8), ms: num(d.ms),
       });
       if (!sent) return id;
+      // The record the prompt reads: name and key to say what it was, result and the rest filled in when it ends.
+      const rec = { id, seq: num(d.seq), at: now, run: d.run || null, verb: d.option.verb, key: d.option.key || null,
+        name: shortName(d.option), by: String(d.by || ''), result: null, why: '', hp: 0, lost: 0, chase: 0 };
+      history = [...history, rec].slice(-MAX_HISTORY);
       open.push({
         id, seq: num(d.seq), verb: d.option.verb, at: now, hp0: hp, lastHp: hp, lost: 0, chase0: chasing(p),
-        chased: false, hours0: num(p && p.hoursAlive), done: false,
+        chased: false, hours0: num(p && p.hoursAlive), done: false, rec,
       });
       if (open.length > MAX_OPEN) open = open.slice(-MAX_OPEN);
       return id;
@@ -133,7 +143,7 @@ export function createTracker({ write }) {
         e.lastHp = hp;
         const r = isObj(p.res) ? p.res : null;
         if (!e.done && r && num(r.seq) === e.seq && (r.status === 'done' || r.status === 'failed')) {
-          finish(e, now, r.status, r.why, hp);
+          finish(e, now, r.status, r.why, hp, chasing(p));
         } else if (!e.done && now - e.at >= DEATH_MS) {
           finish(e, now, 'unfinished', 'no result in 5 minutes', hp);
         }
@@ -146,6 +156,9 @@ export function createTracker({ write }) {
     },
 
     openCount: () => open.length,
+
+    // Orders sent so far, oldest first, each with its result once it has one (docs/brain.md, Reactions).
+    history: () => history.map((h) => ({ ...h })),
   };
 }
 

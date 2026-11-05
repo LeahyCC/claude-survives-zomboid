@@ -1,9 +1,12 @@
 // Scenario files for the eval (docs/eval.md). Each is a patch over base.json, so a file only
 // says what is different about that moment.
 //
-//   { name, note, patch, memory: { current, buildings }, plan: { goal, steps, home }, accept: [ids], wrong: [ids] }
+//   { name, note, patch, memory: { current, buildings, fails }, plan: { goal, steps, home }, history: [orders], accept: [ids], wrong: [ids] }
 //
 // plan is the planner's day plan, only for a moment that depends on it (the walk home).
+// memory.fails is { key: { why, ago } }: orders that failed `ago` seconds ago (they stay off the menu while
+// their retry time lasts). history is the orders she sent just before, oldest first, each
+// { verb, key, name, result, why, lost, chase, ago }, for a moment that depends on how they went.
 //
 // accept: option ids a good player would take. wrong: ids that are clearly bad. Any other
 // id counts as "other". An id that is not on the menu this turn is simply never picked.
@@ -44,6 +47,10 @@ export function buildScenario(s, now = 1_000_000) {
     memory.buildings[id] = { id, firstSeen: 0, lastSeen: 0, lastVisit: 0, visited: false, searched: false, partly: false,
       took: [], water: false, bed: false, res: false, shop: false, zombies: 0, securedAt: null, enteredAt: null, ...b };
   }
+  for (const [key, f] of Object.entries(seed.fails || {})) memory.fails[key] = { why: String(f.why || ''), at: now - 1000 * Number(f.ago || 0) };
   updateMemory(memory, percept, now);
-  return { percept, memory, plan: s.plan || null };
+  const history = (s.history || []).map((h, i) => ({
+    id: `h${i}`, seq: i + 1, at: now - 1000 * Number(h.ago || 0), run: null, by: 'model', result: null, why: '', hp: 0, lost: 0, chase: 0, ...h,
+  }));
+  return { percept, memory, plan: s.plan || null, history };
 }
