@@ -14,7 +14,8 @@ What `playtest.ps1` does:
 2. Adds `LocalSurvivorDev` to `Zomboid/mods/default.txt`. Main-menu Lua only runs for mods in that list.
 3. Writes `Zomboid/Lua/ls_autoload.txt`. While that file exists, the helper continues the latest save from the main menu.
 4. Starts the game through Steam if it is not running, then clicks the middle of the window every 8 seconds to get past "Click to Start".
-5. Stops once `local_percept.txt` is fresh, and deletes the flag file so the next normal launch is not affected.
+5. The helper turns off the first-time survival guide for the session, since it pauses the game until closed.
+6. Stops once `local_percept.txt` is fresh, and deletes the flag file so the next normal launch is not affected.
 
 What to watch:
 
