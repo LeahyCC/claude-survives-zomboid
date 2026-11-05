@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildReport, groupMissing, failures, harmful, deathsByCause, reflexByStance, criticReview, stuckInChase, main } from './review.mjs';
+import { buildReport, groupMissing, failures, harmful, deathsByCause, sessionEnds, reflexSplit, reflexByStance, criticReview, stuckInChase, main } from './review.mjs';
 import { joinRecords } from '../decisions.mjs';
 
 const REVIEW = fileURLToPath(new URL('./review.mjs', import.meta.url));
@@ -163,10 +163,68 @@ test('reflex lines are counted by stance: calls, escapes, hits, hp lost and kill
 
 test('the report prints the reflex by stance, and says so when there is none', () => {
   const text = buildReport({ decisions: REFLEX, nudges: [] });
-  assert.ok(text.includes('  BREAK: 3 calls (pack 2, hurt 1); escaped 1 of 2 (50%), 2 hits, 10 hp lost, 0 kills'), text);
-  assert.ok(text.includes('  FIGHT: 1 calls (- 1); escaped 0 of 1 (0%), 1 hits, 3 hp lost, 1 kills'), text);
+  assert.ok(text.includes('  BREAK: 3 calls (pack 2, hurt 1); escaped at 5 s 1 of 2 (50%), at 30 s no data; 2 hits, 10 hp lost, 0 kills'), text);
+  assert.ok(text.includes('  FIGHT: 1 calls (- 1); escaped at 5 s 0 of 1 (0%), at 30 s no data; 1 hits, 3 hp lost, 1 kills'), text);
+  assert.ok(text.includes('  Left out: 0 calls with no chaser, 0 climb waits.'), text);
   assert.match(buildReport({}), /No reflex lines logged/);
   assert.match(buildReport({ decisions: REFLEX, nudges: [], from: new Date('2026-11-06') }), /No reflex lines logged/);
+});
+
+const t = (sec) => new Date(Date.parse('2026-11-05T09:00:00Z') + sec * 1000).toISOString();
+const facts = (chasers, within3 = 0) => ({ chasers, within3 });
+const pdec = (id, sec, chasing, zList = []) => decision(id, t(sec), { percept: { z: { chasing }, zList } });
+
+test('calls with no chaser and climb waits are left out and counted apart', () => {
+  const { rows, left } = reflexSplit([
+    reflex('call', 'SNEAK', { id: 'a', at: t(0), f: facts(0) }), reflex('out', 'SNEAK', { id: 'a', at: t(5), escaped: true }),
+    reflex('call', 'CLIMB', { id: 'b', at: t(10), act: 'wait', why: 'climbing', f: facts(2) }), reflex('out', 'CLIMB', { id: 'b', at: t(15), escaped: true }),
+    reflex('call', 'CLIMB', { id: 'c', at: t(20), act: 'wait', why: 'climbing', f: facts(0) }),
+    reflex('call', 'CLIMB', { id: 'd', at: t(30), act: 'climb', why: 'fence', f: facts(1) }), reflex('out', 'CLIMB', { id: 'd', at: t(35), escaped: false, hits: 1, hpLost: 4 }),
+  ]);
+  assert.deepEqual(left, { noChaser: 1, climbWait: 2 });
+  assert.deepEqual(rows.map((r) => [r.stance, r.calls, r.outs, r.escaped, r.hpLost]), [['CLIMB', 1, 1, 0, 4]]);
+});
+
+test('escaped at 30 s comes from the next line that shows the chasers, or says no data', () => {
+  const { rows } = reflexSplit([
+    reflex('call', 'HIDE', { id: 'h1', at: t(0), f: facts(2) }),
+    reflex('call', 'HIDE', { id: 'h2', at: t(100), f: facts(1) }),
+    reflex('call', 'HIDE', { id: 'h3', at: t(200), f: facts(1) }),
+    reflex('call', 'HIDE', { id: 'h4', at: t(300), f: facts(1) }),
+    pdec('p1', 40, 0),
+    pdec('p2', 135, 1),
+    reflex('call', 'FLEE', { id: 'f1', at: t(240), f: facts(0, 0) }),
+    pdec('p3', 1000, 0),
+    pdec('p4', 332, 0, [{ d: 2, chase: false }]),
+  ]);
+  const hide = rows.find((r) => r.stance === 'HIDE');
+  // h1 -> p1 at 40 s (gone), h2 -> p2 at 135 s (still chased), h3 -> the FLEE call at 165 s counts
+  // as a line with no chaser (gone), h4 -> p4 has a zombie within 3 (not gone).
+  assert.deepEqual({ late: hide.late, escapedLate: hide.escapedLate, noLate: hide.noLate }, { late: 4, escapedLate: 2, noLate: 0 });
+  const none = reflexSplit([reflex('call', 'BREAK', { id: 'x', at: t(0), f: facts(1) }), pdec('far', 3000, 0)]).rows[0];
+  assert.deepEqual({ late: none.late, noLate: none.noLate }, { late: 0, noLate: 1 });
+});
+
+test('the report prints the left-out counts and the 30 s check', () => {
+  const text = buildReport({ decisions: [
+    reflex('call', 'SNEAK', { id: 'a', at: t(0), f: facts(0) }),
+    reflex('call', 'BREAK', { id: 'b', at: t(0), f: facts(3) }), reflex('out', 'BREAK', { id: 'b', at: t(5), escaped: true, hits: 0, hpLost: 0, kills: 0 }),
+    pdec('p', 34, 0),
+  ], nudges: [] });
+  assert.ok(text.includes('  BREAK: 1 calls (- 1); escaped at 5 s 1 of 1 (100%), at 30 s 1 of 1 (100%); 0 hits, 0 hp lost, 0 kills'), text);
+  assert.ok(text.includes('  Left out: 1 calls with no chaser, 0 climb waits.'), text);
+});
+
+test('an unknown death at full hp with nothing before it is a session end, shown apart', () => {
+  const end = death('r9', 'unknown', { hp: 100, zClose: 0, zChasing: 0, hpLost10: 0, source: 'bridge' });
+  const real = death('r8', 'unknown', { hp: 30, hpLost10: 12 });
+  assert.equal(sessionEnds([end, real]).length, 1);
+  // The mod's no-record line has no hp field at all.
+  assert.equal(sessionEnds([death('r7', 'unknown', { zClose: 0, zChasing: 0, hpLost10: 0, source: 'none' })]).length, 1);
+  assert.deepEqual(deathsByCause([end, real]).map((g) => g.cause), ['unknown']);
+  const text = buildReport({ decisions: [end], nudges: [] });
+  assert.ok(text.includes('Not deaths: 1 session end'), text);
+  assert.ok(!text.includes('1x unknown'), text);
 });
 
 // A loop that hit its limit: the call line says "stuck" in its why and its act says what she did.

@@ -107,15 +107,32 @@ export function harmful(records) {
 
 // Death lines grouped by cause, most common first. A run can have two lines (the bridge guesses at
 // once, and the mod's record may arrive a second later), so the newest line per run is the one kept.
-export function deathsByCause(lines) {
+function latestDeaths(lines) {
   const byRun = new Map();
   let anon = 0;
   for (const l of Array.isArray(lines) ? lines : []) {
     if (!isObj(l) || l.t !== 'death') continue;
     byRun.set(l.run || `no-run-${anon++}`, l);
   }
+  return [...byRun.values()];
+}
+
+// A death line that says "unknown" with full hp and nothing in the last 10 seconds is the log
+// stopping (the game was closed), not a death. Real deaths always have a hit or a drain behind them.
+export function isSessionEnd(d) {
+  // A line with no samples at all (source "none") has no hp field; that is the same case.
+  return String(d.cause || 'unknown') === 'unknown' && (d.hp === undefined || num(d.hp) >= 100)
+    && !num(d.hpLost10) && !num(d.zClose) && !num(d.zChasing) && !num(d.zAdj);
+}
+
+export function sessionEnds(lines) {
+  return latestDeaths(lines).filter(isSessionEnd);
+}
+
+export function deathsByCause(lines) {
   const groups = new Map();
-  for (const d of byRun.values()) {
+  for (const d of latestDeaths(lines)) {
+    if (isSessionEnd(d)) continue;
     const cause = String(d.cause || 'unknown');
     const g = groups.get(cause) || { cause, n: 0, jobs: new Map(), close: 0, chasing: 0, hp: 0, mod: 0 };
     g.n += 1;
@@ -130,33 +147,90 @@ export function deathsByCause(lines) {
   return [...groups.values()].sort((a, b) => b.n - a.n || a.cause.localeCompare(b.cause));
 }
 
-// Reflex lines (the mod's call and out lines, copied in by reflexlog.mjs) grouped by stance:
-// how often it was taken, how often she got away within five seconds, and what it cost.
-// Most taken first. An out line names its stance, so a call whose out never came still counts.
-export function reflexByStance(lines) {
-  const rows = new Map();
-  const row = (stance) => {
-    const key = String(stance || 'NONE');
-    if (!rows.has(key)) rows.set(key, { stance: key, calls: 0, outs: 0, escaped: 0, chased: 0, hits: 0, hpLost: 0, kills: 0, why: new Map() });
-    return rows.get(key);
-  };
-  for (const l of Array.isArray(lines) ? lines : []) {
-    if (!isObj(l) || l.t !== 'reflex') continue;
-    const r = row(l.stance);
-    if (l.kind === 'call') {
-      r.calls += 1;
-      const why = l.why || '-';
-      r.why.set(why, (r.why.get(why) || 0) + 1);
-    } else if (l.kind === 'out') {
-      r.outs += 1;
-      if (l.escaped) r.escaped += 1;
-      if (l.chased) r.chased += 1;
-      r.hits += num(l.hits);
-      r.hpLost += num(l.hpLost);
-      r.kills += num(l.kills);
+// How long after a call the second escape check looks, and how late a line may be and still count.
+const LATE_CHECK_MS = 30_000;
+const LATE_SLACK_MS = 60_000;
+
+// The log has no line at exactly 30 seconds, so the check uses the next line that shows the
+// chasers: a decision line (its percept), a reflex call (its facts) or an out line. Each is
+// { ms, escaped }, sorted by time.
+function stateTimeline(list) {
+  const at = [];
+  for (const l of list) {
+    if (!isObj(l)) continue;
+    const ms = Date.parse(l.at);
+    if (!Number.isFinite(ms)) continue;
+    if (l.t === 'decision' && isObj(l.percept) && isObj(l.percept.z)) {
+      const near3 = (Array.isArray(l.percept.zList) ? l.percept.zList : []).filter((z) => isObj(z) && num(z.d, 99) <= 3).length;
+      at.push({ ms, escaped: num(l.percept.z.chasing) === 0 && near3 === 0 });
+    } else if (l.t === 'reflex' && l.kind === 'call' && isObj(l.f)) {
+      at.push({ ms, escaped: num(l.f.chasers) === 0 && num(l.f.within3) === 0 });
+    } else if (l.t === 'reflex' && l.kind === 'out' && typeof l.escaped === 'boolean') {
+      at.push({ ms, escaped: l.escaped });
     }
   }
-  return [...rows.values()].sort((a, b) => b.calls - a.calls || a.stance.localeCompare(b.stance));
+  return at.sort((a, b) => a.ms - b.ms);
+}
+
+// Reflex lines (the mod's call and out lines, copied in by reflexlog.mjs) grouped by stance.
+// Only calls with a chaser at the time count, and the climb waits are left out: a SNEAK call never
+// had a chaser, and most CLIMB calls are the wait during a climb already under way (ENTER's own
+// window climb), so counting them made both look like escapes. The left-out calls are returned
+// beside the rows so nothing is hidden. Escaped is checked 5 seconds on (the out line) and 30
+// seconds on (the next line that shows the chasers, or "no data"). Most taken first.
+export function reflexSplit(lines) {
+  const list = Array.isArray(lines) ? lines : [];
+  const timeline = stateTimeline(list);
+  const rows = new Map();
+  const left = { noChaser: 0, climbWait: 0 };
+  const counted = new Set();
+  const row = (stance) => {
+    const key = String(stance || 'NONE');
+    if (!rows.has(key)) rows.set(key, { stance: key, calls: 0, outs: 0, escaped: 0, chased: 0, hits: 0, hpLost: 0, kills: 0, late: 0, escapedLate: 0, noLate: 0, why: new Map() });
+    return rows.get(key);
+  };
+  for (const l of list) {
+    if (!isObj(l) || l.t !== 'reflex' || l.kind !== 'call') continue;
+    // Old lines have no facts; those still count rather than vanish.
+    const chasers = isObj(l.f) ? num(l.f.chasers) : 1;
+    const wait = String(l.stance) === 'CLIMB' && (l.act === 'wait' || l.why === 'climbing');
+    if (wait) {
+      left.climbWait += 1;
+      continue;
+    }
+    if (chasers <= 0) {
+      left.noChaser += 1;
+      continue;
+    }
+    counted.add(l.id);
+    const r = row(l.stance);
+    r.calls += 1;
+    const why = l.why || '-';
+    r.why.set(why, (r.why.get(why) || 0) + 1);
+    const want = Date.parse(l.at) + LATE_CHECK_MS;
+    const hit = Number.isFinite(want) ? timeline.find((t) => t.ms >= want && t.ms <= want + LATE_SLACK_MS) : null;
+    if (!hit) {
+      r.noLate += 1;
+    } else {
+      r.late += 1;
+      if (hit.escaped) r.escapedLate += 1;
+    }
+  }
+  for (const l of list) {
+    if (!isObj(l) || l.t !== 'reflex' || l.kind !== 'out' || !counted.has(l.id)) continue;
+    const r = row(l.stance);
+    r.outs += 1;
+    if (l.escaped) r.escaped += 1;
+    if (l.chased) r.chased += 1;
+    r.hits += num(l.hits);
+    r.hpLost += num(l.hpLost);
+    r.kills += num(l.kills);
+  }
+  return { rows: [...rows.values()].sort((a, b) => b.calls - a.calls || a.stance.localeCompare(b.stance)), left };
+}
+
+export function reflexByStance(lines) {
+  return reflexSplit(lines).rows;
 }
 
 // Escape loops that hit their limit, and the turns the reflex handed back to the brain
@@ -276,24 +350,30 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
 
   line();
   line('Deaths by cause');
-  const deaths = deathsByCause((Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && l.t === 'death' && since(l.at, fromMs)));
-  if (!deaths.length) line('  No deaths logged.');
+  const deathLines = (Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && l.t === 'death' && since(l.at, fromMs));
+  const deaths = deathsByCause(deathLines);
+  const ends = sessionEnds(deathLines);
+  if (!deaths.length && !ends.length) line('  No deaths logged.');
   for (const g of deaths.slice(0, TOP)) {
     const jobs = [...g.jobs].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([j, n]) => `${j} ${n}`).join(', ');
     const avg = (v) => String(Math.round((10 * v) / g.n) / 10);
     const thin = g.mod < g.n ? ` (${g.n - g.mod} from the bridge's own guess)` : '';
     line(`  ${g.n}x ${g.cause}: doing ${jobs}; ${avg(g.close)} close and ${avg(g.chasing)} chasing at the end, ${avg(g.hp)} hp lost in the last 10 s${thin}`);
   }
+  if (ends.length) line(`  Not deaths: ${ends.length} session end${ends.length > 1 ? 's' : ''} (full hp or no record, nothing in the last 10 s, the log just stopped).`);
 
   line();
-  line('Reflex by stance (escaped: nothing chasing within 10 and nothing within 3, five seconds on)');
+  line('Reflex by stance (calls with a chaser only; escaped: nothing chasing within 10 and nothing within 3, at 5 s and at 30 s)');
   const inRange = (Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && since(l.at, fromMs));
-  const stances = reflexByStance(inRange);
-  if (!stances.length) line('  No reflex lines logged.');
+  const { rows: stances, left } = reflexSplit(inRange);
+  const anyLeft = left.noChaser + left.climbWait > 0;
+  if (!stances.length && !anyLeft) line('  No reflex lines logged.');
   for (const r of stances) {
     const why = [...r.why].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${w} ${n}`).join(', ');
-    line(`  ${r.stance}: ${r.calls} calls (${why || '-'}); escaped ${r.escaped} of ${r.outs} (${pct(r.escaped, r.outs)}), ${r.hits} hits, ${Math.round(r.hpLost)} hp lost, ${r.kills} kills`);
+    const late = r.late ? `${r.escapedLate} of ${r.late} (${pct(r.escapedLate, r.late)})${r.noLate ? `, ${r.noLate} no data` : ''}` : 'no data';
+    line(`  ${r.stance}: ${r.calls} calls (${why || '-'}); escaped at 5 s ${r.escaped} of ${r.outs} (${pct(r.escaped, r.outs)}), at 30 s ${late}; ${r.hits} hits, ${Math.round(r.hpLost)} hp lost, ${r.kills} kills`);
   }
+  if (anyLeft || stances.length) line(`  Left out: ${left.noChaser} calls with no chaser, ${left.climbWait} climb waits.`);
 
   line();
   line('Stuck in a chase (an escape loop hit its limit, or the reflex held the brain off for a minute)');
