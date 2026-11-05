@@ -24,3 +24,16 @@ What to watch:
 - `http://localhost:8799/mind`: what the brain chose and why.
 
 The screenshot is taken from the screen, so anything on top of the game window shows up in it.
+
+## Live runs, 2026-11-04
+
+Four runs of about six minutes each with the menu brain on gemma4:12b. Same PC, frame cap 240.
+
+| run | build | unstick fires | what happened |
+|---|---|---|---|
+| 1 | menu brain merged | 252 | ENTER, SEARCH and GOTO kept failing `stuck`. SECURE called 14 targets out of reach. |
+| 2 | ticks at 60 a second | 13 | Walked every room, got in through a window. Then stood still for 2 minutes: a zombie 2 tiles away behind a wall held every order. |
+| 3 | no hold for an unseen zombie | 16 | In by a door, searched (took 10 items), filled 2 bottles, bandaged. |
+| 4 | planner and eval merged | 16 | Plans came back with sensible goals. Searched two houses and secured one at dusk. Two plans came back empty (fixed after the run). |
+
+Still wrong in run 4: her weapon was a pen, BANDAGE was offered with no bandage and failed `no bandage`, and SECURE once walked outside. No locked door with a matching key came up, so ENTER's key use is still untested live.
