@@ -2,6 +2,9 @@
 // The mod owns the verbs. A bad type becomes WAIT, it never becomes a new verb.
 
 export const ACTIONS = ['MOVE', 'LOOT', 'EAT', 'DRINK', 'EQUIP', 'CLOSEDOOR', 'CONCEAL', 'BREAKIN', 'STOP', 'WAIT'];
+// The body also runs GOTO, ENTER and SEARCH (docs/skills.md). They stay out of ACTIONS until a
+// prompt offers them: this prompt explains dx,dy as a step, so a stray GOTO 16,0 would walk to
+// tile (16, 0), and SEARCH is a word a model reaches for unasked.
 
 const PERSONA = `You play one survivor in Project Zomboid. Reply with ONE JSON object and nothing else.
 A fast reflex already fights or flees any zombie inside 10 tiles. You are only asked when none is that close. Pick the next step, not each swing.
@@ -58,6 +61,7 @@ export function normalize(out) {
     say: clip(out && out.say, 90),
     thought: clip(out && out.thought, 200),
     goal: clip(out && out.goal, 200),
+    target: clip(action.target ?? (out && out.target), 90),
     subtask: clip(out && out.subtask, 120),
     memory: clip(out && out.memory, 600),
     reply: clip(out && out.reply, 120),
@@ -66,7 +70,7 @@ export function normalize(out) {
 
 export function intentLine(seq, decision) {
   const goalField = clip(decision.subtask || decision.goal, 90);
-  // The 8th field names what a verb acts on. Nothing fills it yet, and the mod reads a missing one as empty.
+  // The 8th field names what a verb acts on, like a building id for ENTER. The mod reads a missing one as empty.
   const targetField = clip(decision.target, 90);
   return `${seq}|${decision.type}|${decision.dx}|${decision.dy}|${decision.say}|${decision.thought}|${goalField}|${targetField}`;
 }

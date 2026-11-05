@@ -65,6 +65,8 @@ function LS.onTick()
   -- (it froze the game). The flee reflex handles dire moments instead; pause manually if you want.
   local acted = false
   if tick % 5 == 0 then pcall(function() acted = LS.Reflex.survive(p) end) end
+  -- Long orders (GOTO, ENTER, SEARCH, LOOT) step every tick and stand aside while the reflex acts.
+  pcall(function() LS.Act.update(p, acted) end)
 
   -- CROUCH/SNEAK to avoid drawing zombies when they're around but we're not mid-flee; stand tall
   -- (no sneak) while actively escaping so we move at full speed.

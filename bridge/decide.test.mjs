@@ -23,6 +23,11 @@ assert.equal(line, '3|WAIT|0|0||holding|hide|');
 const aimed = intentLine(4, { ...normalize({ action: { type: 'LOOT' }, thought: 'grab' }), target: ' door|7\nnorth ' });
 assert.equal(aimed, '4|LOOT|0|0||grab||door 7 north');
 
+// Skills the body knows but this prompt does not offer stay WAIT, so a model cannot pick them by accident.
+for (const type of ['GOTO', 'ENTER', 'SEARCH']) assert.equal(normalize({ action: { type, dx: 16, dy: 0 } }).type, 'WAIT');
+assert.equal(normalize({ action: { type: 'LOOT', target: 'B|1' } }).target, 'B 1');
+assert.equal(intentLine(5, normalize({ action: { type: 'LOOT' }, target: '123' })), '5|LOOT|0|0||||123');
+
 const inch = normalize({ action: { type: 'MOVE', dx: -1, dy: 0 } });
 assert.equal(inch.type, 'MOVE');
 assert.equal(inch.dx, -16);

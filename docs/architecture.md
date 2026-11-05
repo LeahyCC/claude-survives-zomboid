@@ -23,8 +23,10 @@ LocalSurvivor/
                 LocalSurvivor.Core  esc n2 json split queueLength, item classification
   Sense.lua     LocalSurvivor.Sense zombieScan scanBuildings step buildPercept writePercept,
                                     and pure summarisers (summarizeWounds, summarizeZombies, ...)
-  Move.lua      LocalSurvivor.Move  canStand stepWalk queuedWalkOnly doMove momentum
-  Act.lua       LocalSurvivor.Act   the doX actions, manageLight, execIntent, pollIntent, the verbs
+  Move.lua      LocalSurvivor.Move  canStand stepWalk queuedWalkOnly doMove momentum, lineClear,
+                                    progress and the unstick watch the skills share
+  Act.lua       LocalSurvivor.Act   the doX actions, manageLight, execIntent, pollIntent, the verbs,
+                                    the skills (GOTO ENTER SEARCH LOOT), update, the loot table
   Reflex.lua    LocalSurvivor.Reflex fleeVector nearestZombie engage reflex survive releaseDoor manageSpeed
   HUD.lua       LocalSurvivor.HUD   start, onKeyPressed (and the LocalHUD panel class)
 ```
@@ -38,7 +40,7 @@ Rules:
 - Every game call is in `pcall`. A failure in the mod must never stop the tick.
 - Lua here is 5.1 (Kahlua): no `goto`, no `//`, no bitwise operators.
 
-State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`. Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
+State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`. Act keeps `skill` (the long order running, or nil), `searched` (rooms finished, by building id) and `lootTypes` (loot facts per item type). Move keeps `unstickLog` and `moveWatch` (unstick fires it has seen). Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
 
 ## Tick cadence
 
@@ -48,6 +50,7 @@ State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick
 every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode)
              manual mode: write percept each 60, stand down until idle 600 ticks, return
 %5           Reflex.survive          fight or flee; if it acted, skip momentum, glance and poll
+every tick   Act.update              the running skill takes a step, or waits while the reflex acts
 %30          sneak toggle
 %15          Reflex.manageSpeed
 %90          Act.manageLight
@@ -83,13 +86,13 @@ One line in `Zomboid/Lua/local_intent.txt`, polled every 45 ticks. A line runs o
 SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
 ```
 
-`A` and `B` are `dx` and `dy` for MOVE. `TARGET` is new and optional. Nothing sets it yet. The bridge always writes the eighth field, the mod reads a missing one as empty.
+`A` and `B` are `dx` and `dy` for MOVE, and `x` and `y` for GOTO. `TARGET` is a building id for ENTER. The bridge always writes the eighth field, the mod reads a missing one as empty.
 
 ## Verb registry
 
 `LocalSurvivor.verbs[VERB] = function(p, args) ... end`. `args` is a table of strings: `seq`, `action`, `a`, `b`, `say`, `thought`, `goal`, `target`. A verb fails by setting `LocalSurvivor.lastError`.
 
-Today's verbs: `MOVE EAT DRINK LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`. An unknown verb runs as `WAIT`. A new verb is one assignment from its own file. `Act.execIntent` does not change.
+Today's verbs: `MOVE GOTO ENTER SEARCH LOOT EAT DRINK EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`. An unknown verb runs as `WAIT`. `GOTO ENTER SEARCH LOOT` are skills that run over many ticks. Each verb, when it is done and why it fails, is in `docs/skills.md`. The bridge's `ACTIONS` list leaves out `GOTO ENTER SEARCH` until a prompt offers them. A new verb is one assignment from its own file. `Act.execIntent` does not change.
 
 ## Result record
 
@@ -97,7 +100,9 @@ Today's verbs: `MOVE EAT DRINK LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`. 
 
 - `idle` at start.
 - `running` when `execIntent` starts a verb.
-- `failed` with `why = lastError` when the verb set `lastError` or threw.
+- `done` or `failed` with a short `why` when a skill or a MOVE finishes (`docs/skills.md`).
+- `failed` with `why = lastError` when an older verb set `lastError` or threw.
+- A `WAIT` during a skill leaves the record to the skill.
 
 The percept carries it as `res`.
 
