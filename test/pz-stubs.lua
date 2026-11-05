@@ -72,6 +72,7 @@ IsoFlagType = nameTable()
 MoodleType = nameTable()
 ItemBodyLocation = nameTable()
 ItemTag = nameTable()
+WeaponCategory = nameTable()
 BodyPartType = { ToString = function(t) return tostring(t) end }
 
 -- ---------- UI classes ----------
@@ -112,9 +113,15 @@ end
 for _, name in ipairs({
   "ISWalkToTimedAction", "ISEatFoodAction", "ISDrinkFluidAction", "ISEquipWeaponAction",
   "ISInventoryTransferAction", "ISOpenCloseDoor", "ISSmashWindow", "ISClimbThroughWindow",
-  "ISOpenCloseCurtain", "ISTakeWaterAction", "ISApplyBandage", "ISDisinfect", "ISWearClothing",
-  "ISUnequipAction", "ISRemoveGlass", "ISSitOnGround", "ISLockDoor", "ISOpenCloseWindow", "ISToggleLightAction",
+  "ISOpenCloseCurtain", "ISRemoveBrokenGlass", "ISOpenCloseWindow", "ISWearClothing",
+  "ISTakeWaterAction", "ISApplyBandage", "ISDisinfect", "ISUnequipAction", "ISRemoveGlass", "ISSitOnGround",
+  "ISLockDoor", "ISToggleLightAction",
 }) do actionClass(name) end
+-- The vanilla pathfind action is built by named constructors, not new().
+ISPathFindAction = { Type = "ISPathFindAction" }
+function ISPathFindAction:pathToNearest(character, locations)
+  return { Type = "ISPathFindAction", args = { character, locations } }
+end
 
 ISTimedActionQueue = {}
 function ISTimedActionQueue.getTimedActionQueue(p)
@@ -135,7 +142,19 @@ luautils = { walkAdj = function() return true end }
 -- A stub object says what it is with __class. Anything else is no Java class.
 function instanceof(o, name) return type(o) == "table" and o.__class == name end
 
+-- Free square next to one. A test sets __adjacent(sq, p) to pick; by default the first loaded
+-- neighbour west, east, north, south that is free.
+__adjacent = nil
+local function firstFreeNeighbour(sq)
+  for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do
+    local n = __squares[(sq:getX() + d[1]) .. "," .. (sq:getY() + d[2]) .. "," .. sq:getZ()]
+    if n and n:isFree(true) then return n end
+  end
+  return nil
+end
 AdjacentFreeTileFinder = {
+  Find = function(sq, p) if __adjacent then return __adjacent(sq, p) end return firstFreeNeighbour(sq) end,
+  FindWindowOrDoor = function(sq, obj, p) if __adjacent then return __adjacent(sq, p) end return firstFreeNeighbour(sq) end,
   isTileOrAdjacent = function(a, b)
     if not a or not b then return false end
     return math.abs(a:getX() - b:getX()) <= 1 and math.abs(a:getY() - b:getY()) <= 1 and a:getZ() == b:getZ()
@@ -249,7 +268,13 @@ function __makePlayer(opts)
   end
   function p:setSneaking(v) self.sneaking = v end
   function p:isOutside() return true end
-  function p:getSquare() return opts.square end
+  -- opts.live: the square under the player follows x, y, z through __squares.
+  function p:getSquare()
+    if opts.square then return opts.square end
+    if opts.live then return __squares[math.floor(self.x) .. "," .. math.floor(self.y) .. "," .. math.floor(self.z)] end
+    return nil
+  end
+  function p:getCurrentSquare() return self:getSquare() end
   function p:getStats()
     return {
       get = function(_, stat) return (opts.stats or {})[stat] or 0 end,
@@ -269,9 +294,9 @@ function __makePlayer(opts)
   end
   function p:getZombieKills() return opts.kills or 0 end
   function p:getHoursSurvived() return opts.hours or 0 end
-  function p:getInventoryWeight() return opts.weight or 0 end
+  function p:getInventoryWeight() return self.weight or opts.weight or 0 end
   function p:getMaxWeight() return opts.maxWeight or 8 end
-  function p:getClothingItem_Back() return opts.back end
+  function p:getClothingItem_Back() return self.back or opts.back end
   function p:getPlayerNum() return 0 end
   function p:isKnownPoison() return false end
   function p:getPrimaryHandItem() return nil end
@@ -299,7 +324,19 @@ function __makeItem(opts)
   function it:IsFood() return opts.food or false end
   function it:getCategory() return opts.food and "Food" or "Item" end
   function it:getHungChange() return opts.hung or 0 end
-  function it:getScriptItem() return { isCantEat = function() return opts.cantEat or false end } end
+  function it:getScriptItem()
+    return {
+      isCantEat = function() return opts.cantEat or false end,
+      containsWeaponCategory = function(_, c)
+        for _, name in ipairs(opts.cls or {}) do if name == c then return true end end
+        return false
+      end,
+    }
+  end
+  function it:getActualWeight() return opts.weight or 0 end
+  function it:isBroken() return opts.broken or false end
+  function it:IsClothing() return opts.clothing or false end
+  function it:isTwoHandWeapon() return opts.twoHand or false end
   function it:getOpeningRecipe() return opts.opening end
   function it:isRotten() return opts.rotten or false end
   function it:isBurnt() return opts.burnt or false end
@@ -324,7 +361,7 @@ function __makeItem(opts)
   function it:getID() return opts.id or 0 end
   function it:getBandagePower() return opts.power or 0 end
   function it:isWorn() return opts.worn or false end
-  function it:getCapacity() return opts.cap or 0 end
+  function it:getCapacity() return opts.capacity or opts.cap or 0 end
   function it:getWeightReduction() return opts.red or 0 end
   function it:canBeEquipped() return opts.back and ItemBodyLocation.BACK or nil end
   function it:getOffAgeMax() return opts.offMax or 1000000000 end
@@ -347,6 +384,7 @@ function __makeItem(opts)
       isPoisonous = function() return false end,
       getSpecificFluidAmount = function(_, fluid) return fluid == "Water" and (f.water or 0) or 0 end,
       getAmount = function() return amount end,
+      getCapacity = function() return f.capacity or 1 end,
       getProperties = function() return { getAlcohol = function() return f.alcohol or 0 end } end,
     }
   end
@@ -384,7 +422,7 @@ function __makeBodyPart(opts)
   return b
 end
 
--- A world object on a square. opts: bed, water (fluid amount), tainted.
+-- A world object on a square. opts: bed, water (fluid amount), tainted, container.
 function __makeObject(opts)
   opts = opts or {}
   local o = {}
@@ -393,6 +431,9 @@ function __makeObject(opts)
   function o:getFluidAmount() return opts.water or 0 end
   function o:isTaintedWater() return opts.tainted or false end
   function o:getSquare() return o.square end
+  function o:getContainer() return opts.container end
+  function o:getContainerCount() return opts.container and 1 or 0 end
+  function o:getContainerByIndex(i) return i == 0 and opts.container or nil end
   return o
 end
 
@@ -408,8 +449,19 @@ function __makeSquare(opts)
   function sq:getRoom() return opts.room end
   function sq:getObjects() return __javaList(self.objects) end
   function sq:getLightLevel() return opts.light or 1 end
+  function sq:isFree() return not opts.blocked end
+  function sq:canStand() return not opts.blocked end
+  function sq:canReachTo() return true end
+  -- opts.walls: set of "x,y" neighbours a wall separates this square from.
+  function sq:isBlockedTo(other)
+    local w = opts.walls or {}
+    local o = other.opts or {}
+    return w[other:getX() .. "," .. other:getY()] or (o.walls or {})[opts.x .. "," .. opts.y] or false
+  end
+  function sq:getWindow() return opts.window end
   function sq:getIsoDoor()
     if not opts.door then return nil end
+    if type(opts.door) == "table" then return opts.door end
     return { isExterior = function() return opts.door == "exterior" end }
   end
   __squares[opts.x .. "," .. opts.y .. "," .. (opts.z or 0)] = sq
@@ -432,7 +484,7 @@ function __makeBuilding(opts)
   function def:getRooms()
     local defs = {}
     for _, r in ipairs(opts.rooms or {}) do
-      table.insert(defs, { getIsoRoom = function() return r end, getZ = function() return 0 end })
+      table.insert(defs, r.def or { getIsoRoom = function() return r end, getZ = function() return 0 end })
     end
     return __javaList(defs)
   end
@@ -449,5 +501,47 @@ function __makeRoom(opts)
   function r:getName() return opts.name or "room" end
   function r:getSquares() return __javaList(opts.squares or {}) end
   function r:getWaterSources() return __javaList(opts.waters or {}) end
+  function r:getContainer() return __javaList(opts.containers or {}) end
+  r.def = {
+    getIsoRoom = function() return r end,
+    getName = function() return opts.name or "room" end,
+    getX = function() return opts.x or 0 end, getY = function() return opts.y or 0 end,
+    getX2 = function() return opts.x2 or 0 end, getY2 = function() return opts.y2 or 0 end,
+    getZ = function() return opts.z or 0 end,
+  }
+  function r:getRoomDef() return r.def end
   return r
+end
+
+-- A container on a square. opts: items (item stubs), square. Tests move items out to fake a
+-- finished transfer with __take(container).
+function __makeContainer(opts)
+  local c = { items = opts.items or {} }
+  local parent = { getSquare = function() return opts.square end }
+  function c:getItems() return __javaList(self.items) end
+  function c:contains(it)
+    for _, x in ipairs(self.items) do if x == it then return true end end
+    return false
+  end
+  function c:getParent() return parent end
+  function c:getType() return opts.type or "crate" end
+  return c
+end
+
+-- Finish every queued transfer out of container c: the item leaves c, the queue empties.
+function __take(p, c)
+  local q = ISTimedActionQueue.getTimedActionQueue(p).queue
+  for _, a in ipairs(q) do
+    if a.Type == "ISInventoryTransferAction" and a.args[3] == c then
+      for i, x in ipairs(c.items) do if x == a.args[2] then table.remove(c.items, i); break end end
+    end
+  end
+  ISTimedActionQueue.clear(p)
+end
+
+-- Types of the queued actions, in order.
+function __queueTypes(p)
+  local out = {}
+  for i, a in ipairs(ISTimedActionQueue.getTimedActionQueue(p).queue) do out[i] = a.Type end
+  return out
 end

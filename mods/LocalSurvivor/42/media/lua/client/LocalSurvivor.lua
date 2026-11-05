@@ -66,6 +66,8 @@ function LS.onTick()
   -- (it froze the game). The flee reflex handles dire moments instead; pause manually if you want.
   local acted = false
   if tick % 5 == 0 then pcall(function() acted = LS.Reflex.survive(p) end) end
+  -- Long orders (GOTO, ENTER, SEARCH, LOOT) step every tick and stand aside while the reflex acts.
+  pcall(function() LS.Act.update(p, acted) end)
   -- A long need (drink at a sink, sleep, bandage) steps here and pauses while the reflex acts.
   if tick % 5 == 0 then pcall(function() LS.Needs.update(p, acted) end) end
 

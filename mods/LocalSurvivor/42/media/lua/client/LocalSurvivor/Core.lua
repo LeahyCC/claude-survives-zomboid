@@ -178,6 +178,37 @@ function Core.isMeleeWeapon(it)
   end)
   return ok
 end
+-- The weapon's class from its script Categories (base:axe, base:blunt, ...), checked the way
+-- XpUpdate.lua does. A spear or axe wins over blunt when a script lists both. improvised is
+-- separate because it rides along with a real class (a plank is improvised and blunt).
+local WEAPON_CLASSES = {
+  { "spear", "SPEAR" }, { "axe", "AXE" }, { "longblade", "LONG_BLADE" },
+  { "blunt", "BLUNT" }, { "smallblunt", "SMALL_BLUNT" }, { "smallblade", "SMALL_BLADE" },
+}
+function Core.weaponClass(it)
+  local cls, improvised = "other", false
+  pcall(function()
+    local script = it:getScriptItem()
+    for _, c in ipairs(WEAPON_CLASSES) do
+      local yes = false
+      pcall(function() yes = script:containsWeaponCategory(WeaponCategory[c[2]]) == true end)
+      if yes then cls = c[1]; break end
+    end
+    pcall(function() improvised = script:containsWeaponCategory(WeaponCategory.IMPROVISED) == true end)
+  end)
+  return cls, improvised
+end
+-- A bag worn on the back (CanBeEquipped = base:back). A fanny pack is a bag too, but not this.
+function Core.isBackBag(it)
+  local back = false
+  pcall(function()
+    if not it:IsInventoryContainer() then return end
+    local loc = it:canBeEquipped()
+    if loc == nil then return end
+    back = loc == ItemBodyLocation.BACK or string.find(string.lower(tostring(loc)), "back", 1, true) ~= nil
+  end)
+  return back
+end
 function Core.holdingMelee(p)
   local armed = false
   -- The method is on the Java character. A Lua field check never sees it, so call it.
