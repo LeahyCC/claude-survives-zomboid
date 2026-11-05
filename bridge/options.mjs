@@ -19,7 +19,9 @@ const SEARCH_ZOMBIE_R = 8;
 const SLEEP_ZOMBIE_R = 15;
 const AWAY_R = 12;
 const AVOID_R = 20;
-const INTERRUPTS = new Set(['bandage', 'drink', 'eat', 'away']);
+// Under this much hp no drop is offered, however heavy she is: the passes cost more than they save.
+export const DROP_MIN_HP = 30;
+const INTERRUPTS =new Set(['bandage', 'drink', 'eat', 'away']);
 const BAG_WORDS =/\b(bag|backpack|duffel|satchel|rucksack|hiking bag)\b/i;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -177,7 +179,12 @@ function needOptions(p, mem, now) {
   const wound = worstWound(p);
   if (wound && canTreat(p)) {
     const tail = num(inv.bandages) > 0 ? '' : ' (no bandage: rip cloth)';
-    add(1, { id: 'bandage', verb: 'BANDAGE', key: 'BANDAGE', label: `bandage the ${woundText(wound)}${tail}` });
+    // A "no bandage" failure keeps the order off for minutes, but a bandage picked up since then
+    // lifts it. In the 2026-11-05 soak she bled with bandages in the bag and BANDAGE off the menu.
+    const held = blockedWhy(mem, 'BANDAGE', now);
+    if (!held || (num(inv.bandages) > 0 && /^no bandage/.test(held))) {
+      out.push({ prio: 1, a: 0, b: 0, target: '', id: 'bandage', verb: 'BANDAGE', key: 'BANDAGE', label: `bandage the ${woundText(wound)}${tail}` });
+    }
   }
   const thirsty = num(p.thirst) >= 0.25 || num(moodle.thirsty) >= 1;
   if (thirsty && num(inv.waterL) > 0) {
@@ -207,7 +214,7 @@ function needOptions(p, mem, now) {
     add(5, { id: 'sleep', verb: 'SLEEP', key: 'SLEEP', label: `sleep ${where}` });
   }
   // A drop takes a few passes, so not with a zombie after her or close enough to hear it.
-  if (heavy(p) && !chased && !threat(SEARCH_ZOMBIE_R)) {
+  if (heavy(p) && !chased && !threat(SEARCH_ZOMBIE_R) && num(p.hp, 100) >= DROP_MIN_HP) {
     const load = num(p.maxWeight) > 0 ? ` (carrying ${num(p.weight).toFixed(1)} of ${num(p.maxWeight)})` : '';
     add(5.5, { id: 'drop', verb: 'DROP', key: 'DROP', label: `drop the junk you carry to lighten the load${load}` });
   }

@@ -156,14 +156,15 @@ export function guessDeath(samples) {
     else if (fought > 0) cause = 'bitten in a fight';
     else if (job && BUSY.has(job)) cause = 'bitten while busy';
     else cause = 'bitten';
-  } else if (final.infected && !bleedingEnd) {
-    // The infected flag is set by the first bite and stays set for the rest of her life, so it
-    // says nothing about what killed her: the infection takes days, and a bleeding wound or a
-    // chase takes minutes. It only counts when nothing else was draining her.
+  } else if (bleedingEnd) {
+    // Before infection, thirst and hunger. A wound that bleeds takes her in minutes (hp 63 to 0 in
+    // 4, hp 78 to 0 in 2 on 2026-11-05); the infected flag stays set for life after any bite, and
+    // thirst or hunger drain too slowly to be what killed someone who was bleeding.
+    cause = 'bled out';
+  } else if (final.infected) {
     cause = 'infection';
   } else if (num(final.thirst) >= CRITICAL) cause = 'thirst';
   else if (num(final.hunger) >= CRITICAL) cause = 'starved';
-  else if (bleedingEnd) cause = 'bled out';
   return { cause, facts };
 }
 
