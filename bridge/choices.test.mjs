@@ -129,6 +129,9 @@ test('SEARCH and DROP ignore a zombie behind a wall that is not after her', () =
   // Same wall but it is after her, or it is in her building: SEARCH stays off.
   assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, wall: true, chase: true }] }, INSIDE_MEM)), 'search'), undefined);
   assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, d: 20, dx: 20, wall: true, inside: true }] }, INSIDE_MEM)), 'search'), undefined);
+  // A chaser far off (zList runs to 25 tiles) does not hold the search off; one inside 15 does.
+  assert.ok(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, d: 20, dx: 20, chase: true }] }, INSIDE_MEM)), 'search'));
+  assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, d: 14, dx: 14, wall: true, chase: true }] }, INSIDE_MEM)), 'search'), undefined);
   // In the open and close: off. Far and in the open: on.
   assert.equal(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, wall: false }] }, INSIDE_MEM)), 'search'), undefined);
   assert.ok(byId(menu(moment({ ...rooms, zList: [{ ...NEAR_Z, d: 12, dx: 12 }] }, INSIDE_MEM)), 'search'));
