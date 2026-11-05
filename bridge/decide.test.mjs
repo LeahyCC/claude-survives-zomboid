@@ -66,9 +66,8 @@ const planted = steerJob(
   { type: 'STOP', thought: 'Safely inside.' },
   { zClose: 0, weapon: 'Scalpel', foods: 0, bldgDir: 'HERE', bldgDist: 3, zDir: 'SE', qlen: 0 },
 );
-assert.equal(planted.type, 'MOVE');
-assert.equal(planted.dx, -16);
-assert.equal(planted.dy, -16);
+// The walk-away from a cleared room is gone: it walked into walls and looped the unstick helper.
+assert.equal(planted.type, 'STOP');
 
 const bitten = steerJob(
   { type: 'MOVE', dx: -20, dy: 0 },
@@ -96,7 +95,7 @@ assert.notEqual(steerJob({ type: 'STOP' }, { ...clothes, err: '' }).type, 'EQUIP
 // A v2 percept must give the same prompt as the same senses without the v2 fields.
 const fixtureDir = new URL('./fixtures/', import.meta.url);
 const fixtures = fs.readdirSync(fixtureDir).filter((f) => f.startsWith('v2-') && f.endsWith('.json'));
-assert.equal(fixtures.length, 3);
+assert.ok(fixtures.length >= 3);
 for (const name of fixtures) {
   const v2 = JSON.parse(fs.readFileSync(new URL(name, fixtureDir), 'utf8'));
   assert.equal(v2.v, 2, name);

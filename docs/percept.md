@@ -3,11 +3,11 @@
 One JSON line in `Zomboid/Lua/local_percept.txt`, written about once a second by `Sense.writePercept`. Code is the truth: `mods/LocalSurvivor/42/media/lua/client/LocalSurvivor/Sense.lua`. Samples are in `bridge/fixtures/v2-*.json`.
 
 ```
-v1 fields   what the current bridge reads, unchanged
-v2 fields   added after err, for the next brain
+v1 fields   what the v1 brain (old mods) reads, unchanged
+v2 fields   added after err, read by the v2 brain
 ```
 
-The current brain sends only the v1 fields to the model (`V1_FIELDS` in `bridge/decide.mjs`). The v2 fields reach the bridge but not the prompt.
+The v2 brain (`docs/brain.md`) reads every field and gives the model a short digest, not the JSON. A percept without `v` gets the v1 brain, which sends only the v1 fields (`V1_FIELDS` in `bridge/decide.mjs`).
 
 ## v1 fields
 
@@ -21,7 +21,7 @@ The current brain sends only the v1 fields to the model (`V1_FIELDS` in `bridge/
 | `room` | string | Room name, or `outside`. | `p:getSquare():getRoom():getName()` |
 | `hp` | number | Overall health, 0 to 100. | `getBodyDamage():getOverallBodyHealth()` |
 | `hunger` `thirst` `fatigue` `endurance` | number | 0 to 1. 1 is the worst, except endurance where 1 is fresh. | `getStats():get(CharacterStat.X)` |
-| `panic` | number | **0 to 100**, not 0 to 1. Kept raw because the current bridge reads it. Use `panic01`. | `CharacterStat.PANIC` |
+| `panic` | number | **0 to 100**, not 0 to 1. Kept raw because the v1 brain reads it. Use `panic01`. | `CharacterStat.PANIC` |
 | `zTotal` | int | Living zombies in the loaded cell. | `getCell():getZombieList()` |
 | `zNear` | int | Living zombies within 30 tiles. | same |
 | `zClose` | int | Living zombies within 10 tiles. | same |

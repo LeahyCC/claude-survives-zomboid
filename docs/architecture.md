@@ -71,7 +71,7 @@ Dead: only a percept every 300 ticks.
 
 One JSON line in `Zomboid/Lua/local_percept.txt`, about once a second. Every field, its type and the game call behind it are in `docs/percept.md`.
 
-The v1 fields, which the current bridge reads, in order:
+The v1 fields, which the v1 brain for old mods reads, in order:
 
 `dead x y z hour day outside room hp hunger thirst fatigue endurance panic zTotal zNear zClose zDist zDir zdx zdy foods waters bldgDir bldgDist weapon items qlen reflexed lastSeq err`
 
@@ -79,7 +79,7 @@ v2 puts `v` first and `panic01` after `panic`, and adds after `err`:
 
 `kills hoursAlive moodle weight maxWeight bag weapons inv wounds bleeding zChasing zVisible zDowned zList inBldg water bed buildings dark res`
 
-`panic` is 0 to 100, the other stats 0 to 1. The bridge prompt sends only the v1 fields (`V1_FIELDS` in `bridge/decide.mjs`).
+`panic` is 0 to 100, the other stats 0 to 1. The v2 brain turns the percept into a few plain lines (`bridge/digest.mjs`). The v1 brain sends only the v1 fields (`V1_FIELDS` in `bridge/decide.mjs`).
 
 ## Intent
 
@@ -95,7 +95,7 @@ SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
 
 `LocalSurvivor.verbs[VERB] = function(p, args) ... end`. `args` is a table of strings: `seq`, `action`, `a`, `b`, `say`, `thought`, `goal`, `target`. A verb fails by setting `LocalSurvivor.lastError`.
 
-Today's verbs: `MOVE GOTO ENTER SEARCH LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT` in `Act.lua`, and `DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST` in `Needs.lua`. An unknown verb runs as `WAIT`. `GOTO ENTER SEARCH LOOT` are skills that run over many ticks (`docs/skills.md`). The needs verbs start a job that runs over many ticks and reports `done` or `failed` itself (`docs/needs.md`). The bridge's `ACTIONS` list sends only `MOVE LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT EAT DRINK` so far. A new verb is one assignment from its own file. `Act.execIntent` does not change.
+Today's verbs: `MOVE GOTO ENTER SEARCH LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT` in `Act.lua`, and `DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST` in `Needs.lua`. An unknown verb runs as `WAIT`. `GOTO ENTER SEARCH LOOT` are skills that run over many ticks (`docs/skills.md`). The needs verbs start a job that runs over many ticks and reports `done` or `failed` itself (`docs/needs.md`). The v2 brain sends `GOTO ENTER SEARCH EQUIP WAIT` and every needs verb, from its menu (`docs/brain.md`). The v1 brain for old mods sends only its `ACTIONS` list. A new verb is one assignment from its own file. `Act.execIntent` does not change.
 
 ## Result record
 
@@ -126,7 +126,7 @@ npm test
 `npm test` runs, in order:
 
 1. `tools/lua-check.mjs` parses every `.lua` under `mods/` as Lua 5.1 with luaparse. It prints `file:line: message` and exits 1 on any error.
-2. `bridge/decide.test.mjs` and every `test/*.test.mjs` under `node --test`. That includes `test/lua-load.test.mjs`, which loads the mod in fengari with the game stubbed and checks that every file loads, runs once, and that the events and namespace are right.
+2. Every `bridge/*.test.mjs` and `test/*.test.mjs` under `node --test`. That includes `test/lua-load.test.mjs`, which loads the mod in fengari with the game stubbed and checks that every file loads, runs once, and that the events and namespace are right. `bridge/brain.test.mjs` checks the v2 brain on the fixtures in `bridge/fixtures/` (`docs/brain.md`).
 
 `test/lua-harness.mjs` lets a test call Lua from JavaScript. See `test/README.md`.
 

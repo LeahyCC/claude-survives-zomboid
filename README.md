@@ -5,16 +5,16 @@ A local model plays Project Zomboid. The body and the fight-or-flee reflex come 
 ```
 Project Zomboid (LocalSurvivor mod)
     writes  Zomboid/Lua/local_percept.txt     about once a second
-    reads   Zomboid/Lua/local_intent.txt      MOVE, LOOT, EAT, ...
+    reads   Zomboid/Lua/local_intent.txt      ENTER, SEARCH, DRINK, SLEEP, ...
             |
             bridge/pz-bridge.mjs
-            asks Ollama, checks the action, writes the intent
+            builds a menu, asks Ollama to pick one, writes the intent
             http://localhost:8799/mind
 ```
 
-The model never swings. A zombie is faster than a local model. The Lua reflex fights one living zombie with a melee weapon, and runs from a pack. The model decides where to go, what to loot, and when to hide. It answers with one action and one short thought. A longer reply was getting cut off at subtask, so that turn never landed.
+The model never swings. A zombie is faster than a local model. The Lua reflex fights one living zombie with a melee weapon, and runs from a pack. The model never steers either. Each turn the bridge builds a short menu of jobs that are legal right now ("walk into house 14 tiles E, not visited", "drink at the tap", "search this building") and the model picks one id. The JSON schema only allows this turn's ids. The body runs the job to the end and reports done or failed.
 
-The brain writes no order while a zombie is inside 10 tiles, and it drops a thought that finishes after one walks in. The flee is already the right move. With a clear patch of ground, no weapon, and a building nearby, the bridge walks her there and loots. That job replaces the model's action. It does not ask the model to invent the walk.
+Needs that cannot wait skip the model: bleeding means bandage, thirst with water here means drink, night outside means the nearest house, then shut it, then sleep. While a job runs the model is not asked unless something changes. The brain writes no order while a zombie is chasing within 10 tiles or any zombie is within 3, and it drops a thought that finishes after one walks in. With idle zombies further off, it keeps going and walks around them. A map memory of buildings (visited, searched, water, beds) steers her to new houses. How a turn works, and the live results, are in `docs/brain.md`.
 
 The body will ignore a few bad orders. A move toward a zombie inside 12 tiles is turned around. A step shorter than 8 tiles is stretched. A light stays off when something is close at night. Rotten food is not eaten. A corpse is not a threat.
 
@@ -41,7 +41,9 @@ node pz-bridge.mjs
 
 `gemma4:12b` also fits. The 27B and 35B names on this machine only keep a few layers on the GPU, so a thought takes long enough that the reflex is doing all the surviving. Use those when you want a smarter plan and can stand the wait (`$env:PZ_TIMEOUT = "120000"`).
 
-`bridge/pz-state.json` is the memory. Delete it for a fresh mind.
+`bridge/pz-state.json` is the memory, the map memory included. Delete it for a fresh mind.
+
+`node bridge/tools/try-brain.mjs` runs the test percepts through the real model and prints each choice and its time.
 
 ## Check
 
