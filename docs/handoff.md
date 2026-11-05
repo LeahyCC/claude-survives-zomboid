@@ -70,6 +70,9 @@ From the cards' "New tasks" and live play, roughly by value:
 - **Reflex:** sprint probably never holds (the game resets it from the keyboard every frame); check the `sprint` field in BREAK outcomes. The posture field (`avoid`, `clear`) exists end to end but no menu option sets it. HIDE's line of sight and the fence side rule are unverified live.
 - **Guns:** the reflex cannot fire. The calls it needs are listed in `docs/combat.md`. Shots draw zombies, so it needs a noise rule.
 - **Loot:** corpses are not searched. Floor pickups and the freezer and container walk are unverified live.
+- **Bare hands (card "weapon in hand"):** in the first soak she had no weapon in 275 of 482 decisions (57%). Fixed in code, not yet seen live: she holds a carried weapon on her own (`Act.autoEquip`), a bare pack takes a worn pan or knife (`WEAPON_MIN_BARE`), SEARCH looks in kitchens, garages and sheds first, and the `find-weapon` policy rule searches when she is inside with bare hands. Check the next soak: share of decisions with `weapon` none, and how long into each life the first weapon shows up.
+- **Outdoor stall:** one character spent about 18 minutes of wall clock (game 11:47 to 12:01 UTC log time, 100+ turns) on WAIT outside with 13 zombies near and a menu of only `WAIT` and `EAT`. Nothing offers a way out when every building and walk is blocked by idle zombies.
+- **Weapon lost overnight:** the Umbrella (Closed) she held at game hour 18 was gone by hour 27. No decision rows cover the sleep, so the cause (broke in a fight, or something else) is unknown. A closed umbrella has 7 condition and scores 14.6.
 - **Brain misses** in the eval: `panicked-outside`, `winded-no-chase` (rest), `can-with-opener` (eat). Jev gets the last two right.
 - **Death causes:** sickness, poison and cold are recorded but not used to guess a cause.
 - **Inner voice:** a moment seen just before its order speaks alone; it can drift to the third person.

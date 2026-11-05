@@ -81,6 +81,7 @@ nearest door  ->  locked?  ->  next door or window (quiet, up to 4 tries)
 No arguments. Searches the building the survivor stands in.
 
 - Rooms nearest first, then containers in the room nearest first. Rooms on another floor count 4 tiles per floor.
+- **With no good weapon the room order changes.** While the best weapon carried scores under 20 (`Act.HUNT_BELOW`, the same line as `WEAK_WEAPON` in `bridge/senses.mjs`), kitchens, garages, sheds and storage rooms come first, then closets, then everything else, and nearest first inside each group (`Act.weaponRoomRank`). The 42.21 loot tables are why: a kitchen rolls pans, saucepans, rolling pins and knives; a garage, shed or storage room rolls hammers, crowbars, planks and wrenches; a closet rolls bats and golf clubs; a bedroom or bathroom almost never rolls one. It is read again after every container, so the order goes back to the walk once a weapon scoring 20 or more is in the pack.
 - Every container in the room is opened (`Act.roomContainers`). Three sources, each container kept once:
   - `IsoRoom:getContainer()`, the room's own list. It holds the first container of an object only, so a fridge's freezer or a stove's oven is missing from it.
   - Every container of every object on every square of the room (`getContainerCount`, `getContainerByIndex`), as the loot window reads them (`ISInventoryPage`). Counters, fridges, wardrobes, cupboards and crates all come in this way.
@@ -114,6 +115,8 @@ A gun is gear, not a melee weapon, and EQUIP treats it so:
 
 - A gun is never a candidate. `Core.isMeleeWeapon` leaves it out, so EQUIP never wields one, and a gun in the pack does not count as a weapon for `equip: no weapon`.
 - A gun in her hand counts as armed. She does not swap it for a saucepan, a crowbar or an axe. The order is `done` with `holding the one you picked`. (Before this, a held pistol scored 0, she counted as unarmed, and the rule swapped it for a saucepan.)
+
+Her hands are filled without a brain turn (`Act.autoEquip`, from `Act.update`). Once a second, when her hands are empty or hold a pen, nothing is queued, no skill or need job is running, the reflex did not act this tick and she is awake, the best weapon she carries is queued, exactly as EQUIP would. It only fills empty hands: a swap for a better weapon stays with EQUIP and its 25% rule. A try is not repeated for 600 ticks (10 seconds), so an equip that never lands is not retried every second. A gun in hand and a weapon Colin picked are left alone for the same reasons as below, and a pick that is out of her hand (she ate) is put back.
 
 The weapon Colin put there himself is never swapped away (`Act.watchHand`, every tick and whenever the percept is built):
 
@@ -197,7 +200,7 @@ Clothes (`IsClothing`), broken items and anything that matches no kind are left.
 
 How long food keeps is read from the item: `getOffAgeMax` (the days until it is totally rotten) minus `getAge`. A figure in the millions means it does not spoil. Frozen food counts as spoiling soon, since it melts when it leaves the freezer.
 
-**Weapons.** A pen, pencil, fork or spoon is never taken. A weapon must score at least 8 (`Core.LOOT.WEAPON_MIN`) to be worth carrying, a little over the score floor of 5 that makes it a weapon for the reflex. A kitchen knife (9) and a saucepan (9 to 12) pass. A plunger (6) does not. A better weapon than the best carried is always taken ahead of everything else the room holds, if it fits. The weapon kind sorts by score, so an axe beats a crowbar when both are in the box. A second weapon that is no clear gain is left behind.
+**Weapons.** A pen, pencil, fork or spoon is never taken. A weapon must score at least 8 (`Core.LOOT.WEAPON_MIN`) to be worth carrying, a little over the score floor of 5 that makes it a weapon for the reflex. A kitchen knife (9) and a saucepan (9 to 12) pass. A plunger (6) does not. With no real weapon in the pack (best carried under 5) the bar drops to 6.5 (`Core.LOOT.WEAPON_MIN_BARE`): a pan, rolling pin or kitchen knife scores about 9 new and falls under 8 at about 90% condition, so the normal bar left worn ones behind while she had bare hands. A plunger (6.3) and a screwdriver (6.1) are still left. A better weapon than the best carried is always taken ahead of everything else the room holds, if it fits. The weapon kind sorts by score, so an axe beats a crowbar when both are in the box. A second weapon that is no clear gain is left behind.
 
 **Guns.** A pistol is taken whether or not ammo is known, since ammo is often in another room. With ammo it ranks above medicine, without it just under food that keeps. When a gun and its rounds lie in one container, the gun makes the rounds worth taking in the same stop. Rounds for a gun she does not have are left.
 
