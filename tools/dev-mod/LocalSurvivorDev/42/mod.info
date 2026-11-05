@@ -1,0 +1,3 @@
+name=Local Survivor Dev
+id=LocalSurvivorDev
+description=Test helper. Continues the latest save from the main menu when Zomboid/Lua/ls_autoload.txt starts with 1. Does nothing otherwise.
