@@ -282,14 +282,14 @@ What it notices: a kill, losing 8 or more HP at once, starting to bleed, HP fall
 
 How it stays out of the way:
 
-- CPU only (`num_gpu` 0), the shared `num_ctx`, `num_predict` 80, thinking off. It takes no VRAM and does not make Ollama reload the menu model.
+- CPU only (`num_gpu` 0), the shared `num_ctx`, `num_predict` 120, thinking off. A reply cut by the budget is trimmed back to its last full sentence. It takes no VRAM and does not make Ollama reload the menu model.
 - It does not start while a menu turn, a plan, the death review or a menu turn's whole think-and-send is running.
 - A menu turn or a plan that starts while it is writing cancels it at once. The moment goes back in the queue and does not use up the 30 seconds.
 - One comment at a time. A moment that arrives during one waits for the next slot.
 
 The only changes to what the model says are a length cap (240 characters) and control characters turned into spaces. The log is capped at 1 MB and rolls to `pepe.log.1`.
 
-Switches: `PZ_PEPE=0` turns it off. `PZ_PEPE_MODEL` picks another model. `PZ_PEPE_GPU_LAYERS` (default 0), `PZ_PEPE_PREDICT` (80), `PZ_PEPE_TIMEOUT`, `PZ_PEPE_KEEP_ALIVE` (10m), `PZ_PEPE_FILE` and `PZ_PEPE_LOG_MAX` (bytes) tune it. It is on by default when Ollama lists the model. If the model is not installed, or a call gets a 404, it logs one line and turns itself off for the session.
+Switches: `PZ_PEPE=0` turns it off. `PZ_PEPE_MODEL` picks another model. `PZ_PEPE_GPU_LAYERS` (default 0), `PZ_PEPE_PREDICT` (120), `PZ_PEPE_TIMEOUT`, `PZ_PEPE_KEEP_ALIVE` (10m), `PZ_PEPE_FILE` and `PZ_PEPE_LOG_MAX` (bytes) tune it. It is on by default when Ollama lists the model. If the model is not installed, or a call gets a 404, it logs one line and turns itself off for the session.
 
 Measured on this PC on 2026-11-05 with the game running (`node bridge/tools/try-pepe.mjs`, `gemma4:12b` as the menu model, 5 runs):
 

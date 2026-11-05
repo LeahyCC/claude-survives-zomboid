@@ -340,7 +340,7 @@ test('a comment request runs on the CPU with the shared context, no thinking and
   assert.equal(b.options.num_gpu, 0);
   assert.equal(PEPE_GPU_LAYERS, 0);
   assert.equal(b.think, false);
-  assert.ok(b.options.num_predict <= 100);
+  assert.ok(b.options.num_predict <= 150);
   assert.equal(b.options.num_ctx, pepeOptions().num_ctx);
   const menu = mockFetch(() => okReply('{"thought":"t","choice":"a"}'));
   try {
@@ -431,4 +431,10 @@ test('only the bridge entry point imports the commentator, and it feeds nothing 
   for (const l of uses) assert.match(l, /pepe\.(observe|death|disable|maybeRun|view)\(/, l);
   assert.ok(!/planTurn\([^)]*pepe/s.test(bridge));
   assert.ok(!/state\.log\.push\([^)]*pepe/.test(bridge));
+});
+
+test('a reply cut mid-sentence is trimmed back to the last full sentence', () => {
+  assert.equal(cleanLine('Still bleeding tho. Just took a hit with that bat and now she'), 'Still bleeding tho.');
+  assert.equal(cleanLine('What a legend.'), 'What a legend.');
+  assert.equal(cleanLine('no full stop anywhere here'), 'no full stop anywhere here');
 });

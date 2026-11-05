@@ -39,7 +39,12 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 export function cleanLine(text, max = LINE_MAX) {
   if (typeof text !== 'string') return '';
   // eslint-disable-next-line no-control-regex
-  return text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  const flat = text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  // A reply cut by the token budget ends mid-sentence. Keep it up to the last full sentence, if
+  // one exists, so the panel never shows a line trailing off into nothing.
+  if (/[.!?"')\]]$/.test(flat)) return flat;
+  const end = Math.max(flat.lastIndexOf('. '), flat.lastIndexOf('! '), flat.lastIndexOf('? '));
+  return end > 0 ? flat.slice(0, end + 1) : flat;
 }
 
 // pepe.log lines back into panel rows, so the panel is full again after a restart.

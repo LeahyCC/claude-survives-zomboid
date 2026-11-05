@@ -344,7 +344,7 @@ export const DEFAULT_PEPE_MODEL = 'pepe-8b_abliterated_pc:latest';
 export const PEPE_ENABLED = env.PZ_PEPE !== '0';
 export const PEPE_MODEL = env.PZ_PEPE_MODEL || DEFAULT_PEPE_MODEL;
 const PEPE_TIMEOUT = Number(env.PZ_PEPE_TIMEOUT || 60000);
-const PEPE_PREDICT = Number(env.PZ_PEPE_PREDICT || 80);
+const PEPE_PREDICT = Number(env.PZ_PEPE_PREDICT || 120);
 const PEPE_KEEP_ALIVE = env.PZ_PEPE_KEEP_ALIVE || '10m';
 // 0 is a real value (all CPU), so only a number that parses overrides it.
 export const PEPE_GPU_LAYERS = parseGpuLayers(env.PZ_PEPE_GPU_LAYERS) ?? 0;
