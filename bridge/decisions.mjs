@@ -96,7 +96,8 @@ export function createTracker({ write }) {
 
   return {
     // d: { percept, run, menu (the full options), by, rule, choice, thought, rules (ids), ms,
-    //      option (what was sent, or null for "keep"), seq }
+    //      option (what was sent, or null for "keep"), seq, handback ({ why, ms }, a turn the
+    //      reflex handed back) }
     decide(d, now = Date.now()) {
       const p = d.percept;
       const id = idFor(now);
@@ -111,6 +112,8 @@ export function createTracker({ write }) {
         choice: String(d.choice || ''), verb: d.option ? d.option.verb : null, key: d.option ? d.option.key || null : null,
         thought: String(d.thought || '').slice(0, 200), sent, seq: sent ? num(d.seq) : null,
         rules: (d.rules || []).map(String).slice(0, 8), ms: num(d.ms),
+        // Only on a turn the reflex handed back (chase.mjs), so review.mjs can count them.
+        ...(d.handback ? { handback: { why: String(d.handback.why || '').slice(0, 120), ms: num(d.handback.ms) } } : {}),
       });
       if (!sent) return id;
       // The record the prompt reads: name and key to say what it was, result and the rest filled in when it ends.

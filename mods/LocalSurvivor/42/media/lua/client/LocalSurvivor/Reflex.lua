@@ -50,6 +50,9 @@ Reflex.CLIMB_ANIM = 120      -- the climb happens in the animation after its act
 Reflex.CLIMB_GIVEUP = 300    -- a climb not started by then (the walk failed, the game refused) is dropped
 Reflex.CLIMB_AGAIN = 600     -- the same fence or window is not tried again for this long
 Reflex.WEAPON_TICKS = 300    -- the weapon score is read again this often
+Reflex.HANDBACK_TICKS = 1200 -- a new walking order with a chaser in range is the brain's way out: let it run this long
+-- The orders that walk her somewhere. A WAIT or a posture change leaves the reflex in charge.
+Reflex.HANDBACK_VERBS = { GOTO = true, ENTER = true, SECURE = true, MOVE = true }
 
 -- nearest zombie + how many are within a radius
 function Reflex.nearestZombie(px, py, r)
@@ -368,6 +371,9 @@ function Reflex.snapshot(p)
   pcall(function() snap.kills = p:getZombieKills() end)
   snap.posture = LS.posture or "normal"
   snap.prev = R.stance
+  -- How many escape tries in a row ended with the chaser still there (ReflexLog.tally).
+  snap.escapeFails = tonumber(LS.reflexLog and LS.reflexLog.fails) or 0
+  snap.lastDir = R.lastDir
   -- A climb's action leaves the queue at once and the body goes over in the animation after.
   local climbing = LS.tick < (R.climbUntil or 0)
   pcall(function()
@@ -472,6 +478,7 @@ local THOUGHTS = {
   hold = "Holding inside. Let it come through and fall.",
   holdFence = "Fence between us. Let it climb over and fall.",
   short = "Knife is short. Letting it come to me.",
+  stand = "Running is not shaking it. Standing to shove it down.",
   down = "One's down. Moving in to finish it.",
   breakContact = "Running to get out of their sight.",
   flee = "Too close, breaking away to open the gap.",
@@ -547,6 +554,8 @@ function Reflex.runAlong(p, a, n)
     .. " at " .. math.floor(px) .. "," .. math.floor(py))
   if ok then
     R.running = { dx = dx, dy = dy, x = px, y = py, tick = LS.tick, dir = dir, n = n }
+    -- The heading a loop breaker must not pick again (Stance.choose, escape).
+    R.lastDir = dir
   else
     R.running = nil
     if dir then R.badLine[dir] = LS.tick end
@@ -676,7 +685,8 @@ function Reflex.perform(p, a, snap, objs)
     if not quiet then R.holdSince = LS.tick end
     Reflex.holdAt(p, a, z)
     hud.action = "HOLD (reflex)"
-    hud.thought = (a.why == "fence" and THOUGHTS.holdFence) or (a.why == "short" and THOUGHTS.short) or THOUGHTS.hold
+    hud.thought = (a.why == "fence" and THOUGHTS.holdFence) or (a.why == "short" and THOUGHTS.short)
+      or (a.stuck and THOUGHTS.stand) or THOUGHTS.hold
   elseif kind == "close" then
     if z then Reflex.closeIn(p, z, snap.zombies[a.index].d, a.why == "down" and THOUGHTS.down or nil) end
   elseif kind == "break" or kind == "flee" then
@@ -721,6 +731,23 @@ function Reflex.survive(p)
   for _, e in ipairs(snap.zombies) do if e.d < nd then nd = e.d end end
   -- The door escape must not hold the fight off while a zombie is already on him.
   if LS.tick < R.unstickUntil and nd > 2 then return false end
+  -- A new order with a chaser in range can only be the brain's way out of a chase (the bridge
+  -- holds orders back otherwise, or hands the turn back after a loop). Let the walk run: the
+  -- flee would cancel it within a second. Anything on her still gets the reflex.
+  local seq = LS.lastSeq
+  if R.seenSeq == nil then
+    R.seenSeq = seq
+  elseif seq ~= R.seenSeq then
+    R.seenSeq = seq
+    local verb = LS.result and LS.result.verb or ""
+    for _, e in ipairs(snap.zombies) do
+      if Reflex.HANDBACK_VERBS[verb] and e.chase ~= false and not e.down and not e.crawl and e.d <= Reflex.N.RANGE then
+        R.handBackUntil = LS.tick + Reflex.HANDBACK_TICKS
+        break
+      end
+    end
+  end
+  if LS.tick < (R.handBackUntil or 0) and nd > 2 then return false end
   -- Did the sprint set last time survive the game's own input update?
   local sprintTook = nil
   if R.sprintSet then pcall(function() sprintTook = p:isSprinting() == true end) end

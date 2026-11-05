@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildReport, groupMissing, failures, harmful, deathsByCause, reflexByStance, criticReview, main } from './review.mjs';
+import { buildReport, groupMissing, failures, harmful, deathsByCause, reflexByStance, criticReview, stuckInChase, main } from './review.mjs';
 import { joinRecords } from '../decisions.mjs';
 
 const REVIEW = fileURLToPath(new URL('./review.mjs', import.meta.url));
@@ -167,6 +167,47 @@ test('the report prints the reflex by stance, and says so when there is none', (
   assert.ok(text.includes('  FIGHT: 1 calls (- 1); escaped 0 of 1 (0%), 1 hits, 3 hp lost, 1 kills'), text);
   assert.match(buildReport({}), /No reflex lines logged/);
   assert.match(buildReport({ decisions: REFLEX, nudges: [], from: new Date('2026-11-06') }), /No reflex lines logged/);
+});
+
+// A loop that hit its limit: the call line says "stuck" in its why and its act says what she did.
+const STUCK = [
+  reflex('call', 'CLIMB', { id: 'k-1', act: 'climb', why: 'stuck:unarmed', stuck: 3 }), reflex('out', 'CLIMB', { id: 'k-1', escaped: true, chased: false }),
+  reflex('call', 'HOLD', { id: 'k-2', act: 'hold', why: 'stuck:unarmed', stuck: 3 }), reflex('out', 'HOLD', { id: 'k-2', escaped: false, chased: true }),
+  reflex('call', 'HOLD', { id: 'k-3', act: 'hold', why: 'stuck:heavy', stuck: 4 }), reflex('out', 'HOLD', { id: 'k-3', escaped: true, chased: false }),
+  reflex('call', 'FLEE', { id: 'k-4', act: 'flee', why: 'stuck:unarmed', stuck: 3 }), reflex('out', 'FLEE', { id: 'k-4', escaped: false, chased: true }),
+  reflex('call', 'FLEE', { id: 'k-5', act: 'flee', why: 'unarmed' }),
+];
+const BACKED = { why: 'the reflex has had this chase for 60 seconds', ms: 60_000 };
+const HANDED = [
+  decision('h1', '2026-11-05T09:11:00Z', { handback: BACKED, verb: 'ENTER' }), outcome('h1', 'done', 'in by a door', 1), after('h1', { lostAfter: 2 }),
+  decision('h2', '2026-11-05T09:12:00Z', { handback: BACKED, verb: 'GOTO' }), outcome('h2', 'failed', 'no path'), after('h2'),
+  decision('h3', '2026-11-05T09:13:00Z', { handback: BACKED, verb: 'ENTER' }),
+  decision('h4', '2026-11-05T09:14:00Z', { handback: BACKED, sent: false, verb: null, choice: 'b1' }),
+  decision('h5', '2026-11-05T09:15:00Z', { verb: 'ENTER' }), outcome('h5', 'done'),
+];
+
+test('stuck in a chase: loop limits by what she did next, and the turns handed back', () => {
+  const s = stuckInChase([...REFLEX, ...STUCK], joinRecords(HANDED));
+  assert.equal(s.limit, 4);
+  const row = (what) => s.next.find((r) => r.what === what);
+  assert.deepEqual(row('climbed'), { what: 'climbed', n: 1, outs: 1, escaped: 1 });
+  assert.deepEqual(row('stood and shoved'), { what: 'stood and shoved', n: 2, outs: 2, escaped: 1 });
+  assert.deepEqual(row('walked on and asked the brain'), { what: 'walked on and asked the brain', n: 1, outs: 1, escaped: 0 });
+  assert.equal(s.back.n, 4, 'h5 was not handed back');
+  assert.deepEqual([...s.back.verbs], [['ENTER', 2], ['GOTO', 1], ['nothing sent', 1]]);
+  assert.deepEqual(s.back.result, { done: 1, failed: 1, other: 1 });
+  assert.equal(s.back.lost, 3, 'one hp during the first order and two in the minute after');
+});
+
+test('the report has a stuck in a chase part, with the numbers and with nothing', () => {
+  const text = buildReport({ decisions: [...REFLEX, ...STUCK, ...HANDED], nudges: [] });
+  assert.ok(text.includes('Stuck in a chase (an escape loop hit its limit, or the reflex held the brain off for a minute)'), text);
+  assert.ok(text.includes('  Loop limit hit 4 times. Then: stood and shoved 2 (escaped 1 of 2), climbed 1 (escaped 1 of 1), walked on and asked the brain 1 (escaped 0 of 1).'), text);
+  assert.ok(text.includes('  Turns handed back to the brain 4: ENTER 2, GOTO 1, nothing sent 1. Orders done 1, failed 1, replaced or unfinished 1; 3 hp lost during and after.'), text);
+  const none = buildReport({ decisions: REFLEX, nudges: [] });
+  assert.ok(none.includes('  No escape loop hit its limit.\n  The brain was never handed a turn back.'), none);
+  const early = buildReport({ decisions: [...STUCK, ...HANDED], nudges: [], from: new Date('2026-11-06') });
+  assert.match(early, /No escape loop hit its limit/);
 });
 
 // A critic line for a decision. p is the probability Jev gave the brain's pick.

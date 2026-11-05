@@ -88,6 +88,8 @@ A summary of the reflex log (`docs/combat.md`). The full calls and outcomes are 
 | `hits60` | int | Hits taken in the last minute: body health drops over 0.2 in one tick. |
 | `level` | int | The threat level of the last decision, 0 to 4. |
 | `posture` | string | The fight posture from the last order: `normal`, `avoid` or `clear`. |
+| `fails` | int | Escape tries in a row that ended with a chaser still there. Cleared after 3 seconds with nothing chasing. |
+| `stuck` | bool | An escape loop hit its limit and the reflex has no way out of its own. The bridge hands the brain a turn while this is true (`docs/brain.md`, "When the hold ends"). |
 
 ### inv
 
@@ -215,7 +217,7 @@ A sample is about 230 bytes, so the record is near 3 KB. It is only in the dead 
 
 ## Size
 
-About 1.2 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.5 KB. The `reflex` summary adds about 140 bytes and the gun fields under 100 bytes with one gun.
+About 1.2 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.5 KB. The `reflex` summary adds about 165 bytes and the gun fields under 100 bytes with one gun.
 
 ## The HUD weapon line
 

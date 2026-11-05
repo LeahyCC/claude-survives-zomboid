@@ -18,6 +18,7 @@ import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside
 import { isV2, holdReason } from './senses.mjs';
 import { loadMemory, updateMemory, recordOrder, memoryStats, memorySlice } from './memory.mjs';
 import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
+import { createChaseClock } from './chase.mjs';
 import { createPlanner } from './planner.mjs';
 import { loadLessons, addLessons, recordRun, deleteLesson, lessonStats, reviewDeath } from './lessons.mjs';
 import { digest } from './digest.mjs';
@@ -217,6 +218,9 @@ function readDeath() {
   } catch { /* no file yet, or a partial write: try again next second */ }
 }
 setInterval(readDeath, 1000);
+
+// How long the reflex has had a chase to itself, and when the brain gets a turn anyway.
+const chase = createChaseClock();
 
 // The reflex's calls and outcomes go into decisions.jsonl as reflex lines. Never stops her.
 const pollReflex = createReflexFollower({ file: REFLEX_FILE, write: appendDecisionLine });
@@ -431,10 +435,17 @@ async function decideV2() {
   // What the plan was built from. The model reply can arrive after a newer percept has.
   const seen = percept;
   updateMemory(map, percept, now);
+  // The reflex owns a chase, but not forever: after a minute of it, or when the reflex says it
+  // has no way out left, the brain gets a turn with the escape menu (chase.mjs).
+  chase.observe(percept, now);
   const plan = planTurn(percept, map, {
     now, last: lastLook, pending, voice: godQueue, history: tracker.history(), run: runId(), plan: planner.plan, lessons: store.lessons,
-    nudges: nudgeIndex,
+    nudges: nudgeIndex, handBack: chase.due(percept, now),
   });
+  if (plan.handBack) {
+    chase.handedBack(now);
+    log('decide', `Reflex hands the turn back: ${plan.handBack.why}.`);
+  }
   if (plan.kind !== 'pending') pending = null;
   if (['hold', 'asleep', 'pending', 'skill', 'none'].includes(plan.kind)) {
     const notes = { hold: 'reflex owns it', asleep: 'asleep, no orders', pending: 'waiting on the body', skill: 'waiting on a skill', none: 'no senses' };
@@ -476,7 +487,8 @@ async function decideV2() {
       picked = parseChoice(reply.raw, ids);
     }
     readPercept();
-    const late = holdReason(percept);
+    // A handed-back turn is meant to be sent while the hold is on.
+    const late = plan.handBack ? '' : holdReason(percept);
     if (late) {
       if (god.length) godQueue.unshift(...god);
       brainNote = `reflex owns it: ${late}`;
@@ -491,10 +503,10 @@ async function decideV2() {
       return;
     }
     lastLook = snapshot(percept, Date.now());
-    const decidedBy = plan.policy ? `policy (${plan.policy.rule}), voice answered by ${MODEL}` : `model ${MODEL}`;
+    const decidedBy = plan.policy ? `policy (${plan.policy.rule}), voice answered by ${MODEL}` : `model ${MODEL}${plan.handBack ? ' (hand-back)' : ''}`;
     showTurn(plan, { decidedBy, choice: picked.choice, ms: reply.ms, thought: picked.thought });
     const spoken = sayBack(god, picked.thought);
-    const option = resolveChoice(percept, map, plan.options, picked.choice);
+    const option = resolveChoice(percept, map, plan.options, picked.choice, !!plan.force);
     if (!option) {
       lastThought = picked.thought;
       brainNote = `model: keep (${picked.choice})`;
@@ -502,7 +514,10 @@ async function decideV2() {
     } else {
       send(option, picked.thought, spoken, 'model');
     }
-    logDecision(plan, seen, option, { by: plan.policy ? 'policy' : 'model', rule: plan.policy ? plan.policy.rule : null, choice: picked.choice, thought: picked.thought, ms: reply.ms });
+    logDecision(plan, seen, option, {
+      by: plan.policy ? 'policy' : 'model', rule: plan.policy ? plan.policy.rule : null, choice: picked.choice, thought: picked.thought,
+      ms: reply.ms, handback: plan.handBack || null,
+    });
     saveState();
   } catch (err) {
     // A failed call must not eat what was said on the page.

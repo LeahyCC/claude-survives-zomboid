@@ -30,7 +30,7 @@ ReflexLog.note(...)    logs a new stance, and the outcome of one taken 5 seconds
 | CLIMB | getting away, and a low fence or a climbable window within 4 tiles leads away from them | `climb`: walk to the square in front, the game's climb action, then `wait` out the animation |
 | FLEE | getting away, and nothing better fits (winded, overloaded) | `flee`: one 10 tile walk along the best open line, no sprint |
 
-"Getting away" is one function (`escape` in `Stance.choose`). It tries CLIMB, then HIDE, then BREAK, then FLEE.
+"Getting away" is one function (`escape` in `Stance.choose`). It tries CLIMB, then HIDE, then BREAK, then FLEE. When that has failed three times in a row against a small chase, it stops repeating itself (see "Stuck in a chase").
 
 ## The rules, in order
 
@@ -103,7 +103,7 @@ The brain may send a fight posture as a ninth field on the order line (`docs/arc
 | `avoid` | looting, travelling | walks at most 2 tiles to a fight, leaves unaware zombies alone unless within 1.2, never fights one in the way of the walk, takes on one chaser whatever the weapon, holds a fence against one, and gets away from a chaser 6 to 8 tiles off |
 | `clear` | clearing a house | walks up to 8 tiles to a fight, goes for unaware zombies within 4 (6 in the way), takes on two chasers, a pack is 4, holds a fence against three |
 
-`Act.execIntent` reads it into `LocalSurvivor.posture`. The bridge writes it only when an option carries `posture` (`orderLine` in `bridge/brain.mjs`). No option does yet: choosing a posture for each job is a later card.
+`Act.execIntent` reads it into `LocalSurvivor.posture`. The bridge writes it only when an option carries `posture` (`orderLine` in `bridge/brain.mjs`). Only the escape menu sets one (`avoid` on its walks, `clear` on "stand and fight it here", see "Stuck in a chase"). The usual menu does not: choosing a posture for each job is a later card.
 
 ## Sneak and sprint
 
@@ -116,7 +116,7 @@ Sprint is a different story. Read from the 42.21 bytecode:
 - `OnTick` fires after `IsoWorld.update`, and `OnPlayerUpdate` fires before the reset. So a `setSprinting(true)` from the mod is wiped before her next move.
 - `setPathfindRunning` exists but nothing in the jar or the vanilla Lua reads it.
 
-So BREAK asks for a sprint (`setSprinting(true)` each time it acts, false when the stance changes), but it most likely does nothing and she walks. `survive` reads `isSprinting()` back and the log's `sprint` field says whether it ever held. If the first soak test shows `sprint: false` every time, BREAK and FLEE are the same walk and only the follow-up (HIDE) differs. `LocalSurvivor.combat.sprint = false` turns the call off.
+So BREAK asks for a sprint (`setSprinting(true)` each time it acts, false when the stance changes), but it most likely does nothing and she walks. `survive` reads `isSprinting()` back and the log's `sprint` field says whether it ever held. The first soak (2026-11-05) settled it: of 143 BREAK outcomes that read the flag, the sprint held in 2. So BREAK and FLEE are the same walk and only the follow-up (HIDE) differs. 49 of the 53 FLEE calls came with endurance under 0.5, where she never asks for a sprint at all. `LocalSurvivor.combat.sprint = false` turns the call off.
 
 ## The snapshot
 
@@ -140,6 +140,8 @@ So BREAK asks for a sprint (`setSprinting(true)` each time it acts, false when t
 | `climbing` | a climb animation is running |
 | `posture` | `normal`, `avoid` or `clear` |
 | `prev` | the last stance taken |
+| `escapeFails` | escape tries in a row that ended with a chaser still there (`ReflexLog.tally`) |
+| `lastDir` | the compass index of the last run, so a loop breaker takes another heading |
 | `kills` | `getZombieKills`, for the log only |
 
 `down` is on the floor, knocked down or playing dead. `chase` is "this zombie's target is her". If the target cannot be read, `chase` is true, which is how the reflex treated every zombie before. `sees` is `isTargetVisible()` for a chaser. Unknown counts as seeing her. Lines and barriers are read at most every 30 ticks, or after she moves 2 tiles.
@@ -181,11 +183,17 @@ All in `Stance.N` (`Reflex.N` is the same table). Distances are in tiles.
 | `HOLD_SCAN` | 6 | look this far for a door or window |
 | `HOLD_MAX` | 1800 ticks | give a hold spot up after 30 s with nothing within 3; stop taking the tick after 30 s of hiding |
 | `END_LOW` | 0.3 | endurance gate |
+| `ESCAPE_TRIES` | 3 | failed escape tries in a row before she stops repeating them |
+| `STUCK_MAX` | 2 | the loop rule is for this many chasers at most |
+| `STUCK_AWAY` | -0.2 | in a loop a fence may lead sideways (cosine to the way away) |
+| `END_SHOVE` | 0.3 | endurance to stand and shove instead of walking on |
 | `PANIC_MAX` | 3 | panic gate (moodle level) |
 | `HEAVY_MAX` | 2 | heavy load gate (moodle level) |
 | `TIRED_MAX` | 3 | tired gate (moodle level) |
 
-In `Reflex`: `LINE_LEN` 6, `TERRAIN_TICKS` 30, `BAD_LINE_TICKS` 300, `RUN_STUCK` 60, `CLIMB_ANIM` 120, `CLIMB_GIVEUP` 300, `CLIMB_AGAIN` 600, `WEAPON_TICKS` 300.
+In `Reflex`: `LINE_LEN` 6, `TERRAIN_TICKS` 30, `BAD_LINE_TICKS` 300, `RUN_STUCK` 60, `CLIMB_ANIM` 120, `CLIMB_GIVEUP` 300, `CLIMB_AGAIN` 600, `WEAPON_TICKS` 300, `HANDBACK_TICKS` 1200.
+
+In `ReflexLog`: `OUTCOME_TICKS` 300 (also the length of one escape try), `CLEAR_TICKS` 180.
 
 ## The reflex log
 
@@ -198,7 +206,7 @@ bridge/reflexlog.mjs                 follows the file, appends each line to brid
 node bridge/tools/review.mjs         "Reflex by stance": calls, escapes, hits, hp lost, kills
 ```
 
-A call is written when the stance changes, or when the same stance comes back after 120 quiet ticks. The file starts again on the first write of a game session and past 256 KB. The bridge reads it from the end when it starts, and from 0 when the file gets shorter.
+A call is written when the stance changes, or when the same stance comes back after 120 quiet ticks. A flee that goes on for minutes is one call, not one per decision, which is why the soak's loop shows as a call about a minute apart. The first decision after an escape loop hit its limit is always a call. The file starts again on the first write of a game session and past 256 KB. The bridge reads it from the end when it starts, and from 0 when the file gets shorter.
 
 `call` line:
 
@@ -206,7 +214,8 @@ A call is written when the stance changes, or when the same stance comes back af
 | --- | --- |
 | `id` | session start (ms) and a counter, shared with its `out` line |
 | `tick` | the mod's tick |
-| `stance`, `act`, `why` | the decision |
+| `stance`, `act`, `why` | the decision. A `why` starting `stuck` is an escape loop that hit its limit (see "Stuck in a chase"); `act` says what came next: `climb`, `hold` (stand and shove) or `flee` or `break` (walk on, brain asked) |
+| `stuck` | only on such a call: the number of failed tries when the limit was hit |
 | `threat`, `level` | the assessment |
 | `f` | facts: `near`, `chasers` (within 10), `seen` (of those, the ones that see her), `standing` (within 7), `within3`, `downed`, `unaware`, `armed`, `score`, `endurance`, `hp`, `panic`, `bleeding`, `load`, `inside`, `door` (a hold spot), `barriers`, `lines`, `open`, `posture` |
 
@@ -283,6 +292,31 @@ not started       after CLIMB_GIVEUP ticks the queue is cleared and the climb dr
 ```
 
 The direction over a fence is left to `ISClimbOverFence:getFacingDirection`, which reads `HoppableN` on the fence's square the way vanilla does. A tall fence (`isTallHoppable`) is never picked: vanilla climbs those with `climbOverWall`, which is slower and can fail.
+
+## Stuck in a chase
+
+The first soak (2026-11-05) ended on 33 minutes of one loop. One zombie chased her, she was unarmed, outdoors, endurance 0, hp 100, load 70 to 80 percent. 35 FLEE calls (`unarmed`), one about every minute, none of them escaped: the zombie was 5 tiles off at the call and 8 tiles off five seconds later, still chasing. The bridge holds orders back while a chaser is inside 10, so the brain never had a turn. Over the whole soak FLEE escaped 6 of 53 and HIDE 4 of 39, while SNEAK escaped 82 percent and CLIMB 59 percent. A flee at walking speed does not gain ground on a walker, and sprint most likely never holds (see Sneak and sprint).
+
+**The count.** `ReflexLog.tally` runs every reflex tick. A try is a window of FLEE, HIDE or BREAK. When the next try starts 300 ticks or more after the last began, with a chaser inside 10 the whole time, the earlier one failed: one fail. Nothing chasing within 10 and nothing within 3 for 180 ticks ends the chase and clears the count. Standing, fighting and doing nothing are not tries, and neither clears the count. `snap.escapeFails` carries it to `Stance.choose`.
+
+**The limit.** With `escapeFails` at 3 or more, one or two chasers and no pack, `escape` stops repeating itself. It tries these in order, and the `why` of the decision is `stuck:` and the old reason:
+
+```
+a fence or window within 4 that leads sideways or away (not back toward them) ..... CLIMB
+one chaser, nothing else within 7, endurance 0.3+, hp 50+, not bleeding, not panicking
+                                                                                  HOLD where she stands. It comes, the rule for one on her shoves it, then stomp
+else (no breath, hurt, two chasers) ............................................... the same walk, along another heading than the last run, and ask the brain
+```
+
+A door between them is the brain's job, since it knows the buildings. The last case marks the decision `handoff` and the log's `reflex.stuck` goes true in the percept. A pack, a zombie on her, and every fight she takes are untouched by the count.
+
+**The log.** The first decision of a loop that hit its limit is always a call line, with `why` starting `stuck` and a `stuck` field (the fail count), so the review can count them and the out line five seconds on says whether it worked. The count and the flag clear with the chase.
+
+**The bridge side** (`bridge/chase.mjs`, `docs/brain.md`): the hold is a loan. The brain gets a turn when `reflex.stuck` is true, or when the reflex has had a small chase to itself for 60 seconds, nothing has hit her in the last minute and it is not fighting. The turn has a short escape menu (the nearest two houses to enter, shutting this building's doors, a walk away, standing to fight when she has a weapon and the health). The walks set the posture `avoid` and the stand sets `clear`. Hand-back decisions are logged with a `handback` field.
+
+**Letting the brain's walk run.** `Reflex.survive` remembers `LS.lastSeq`. A new GOTO, ENTER, SECURE or MOVE order that arrives with a chaser inside 11 can only be the brain's way out, so for `HANDBACK_TICKS` (20 seconds) the reflex returns false while nothing is within 2 tiles. Without that the flee cancels the walk within a second. A WAIT or a posture change does not start the window.
+
+Numbers to watch live: the review's "Stuck in a chase" lines.
 
 ## Getting off a stuck door
 
@@ -430,6 +464,7 @@ Every method was checked with `node tools/pz-api.mjs` against the 42.21 jar, and
 - Standing at the head end of a downed zombie. The snapshot cannot tell which end is the head, so she stomps from where she stands.
 - Closing the door behind her when she disengages.
 - Holding a window against a pack of 3 or more. That still gets away (CLIMB, BREAK or FLEE).
-- Choosing a posture for each job in the bridge. The field and the Lua side are in.
+- Choosing a posture for each job in the bridge. The field and the Lua side are in, and only the escape menu sets one.
+- Going inside and shutting a door from the reflex. In a loop that is left to the brain's escape menu (ENTER, SECURE).
 - Real line of sight. HIDE trusts the zombie's own `isTargetVisible`. BREAK runs along open lines, not toward corners or doors that would break sight.
 - A sprint that works. See Sneak and sprint.

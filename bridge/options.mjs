@@ -65,7 +65,9 @@ function rankBuildings(cands, wantsHome, homeId, poor) {
 // homeId is the planner's home building, or '' when it is not time to go there. plannedId
 // is the same building at any hour, only to tag it for the model. poor is true when she has
 // no real weapon.
-function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor) {
+// The buildings she could walk into now: not the one she is in, not failed lately, and a walk
+// that keeps clear of the zombies in avoid.
+function buildingCandidates(p, mem, now, avoid) {
   const here = inside(p) ? String(p.inBldg.id) : null;
   const cands = [];
   for (const seen of Array.isArray(p.buildings) ? p.buildings : []) {
@@ -79,6 +81,11 @@ function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor)
     if (!pathClear(tx, ty, avoid)) continue;
     cands.push({ seen, key, tx, ty, d: Math.max(num(seen.d), 0), mem: building(mem, seen.id) });
   }
+  return cands;
+}
+
+function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor) {
+  const cands = buildingCandidates(p, mem, now, avoid);
   return rankBuildings(cands, wantsHome, homeId, poor).slice(0, MAX_BUILDINGS).map((c, i) => {
     const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
     const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId);
@@ -269,6 +276,56 @@ export function buildOptions(p, mem, ctx = {}) {
     ? { id: 'keep', verb: null, a: 0, b: 0, target: '', key: 'KEEP', label: `keep going with ${busy.verb} (still running)` }
     : { id: 'wait', verb: 'WAIT', a: 0, b: 0, target: '', key: 'WAIT', label: 'wait here and watch' };
   return [...fresh.slice(0, MAX_OPTIONS - 1), last].map(({ prio, d, ...o }) => o);
+}
+
+// The short menu for a turn handed back by the reflex (chase.mjs): running away is not working,
+// so each option is a way to end the chase. A door between her and it (the nearest building, or
+// shutting this one), a walk away that also tells the reflex to avoid fights, or standing to
+// fight when she has a weapon and the health for it. Never "keep": the running job is what
+// stalled, and sending it again restarts the walk. Never more than MAX_ESCAPE options.
+// The posture field of an option is how the order sets the reflex's fight posture.
+export const MAX_ESCAPE = 5;
+const ESCAPE_BUILDINGS = 2;
+
+export function escapeOptions(p, mem, ctx = {}) {
+  const now = ctx.now ?? Date.now();
+  if (!p || p.dead) return [];
+  const avoid = zombies(p).filter((z) => !z.down && !z.crawl && z.d <= AVOID_R);
+  const chasers = avoid.filter((z) => z.chase);
+  const out = [];
+  const here = inside(p) ? String(p.inBldg.id) : null;
+  if (here && !securedThisVisit(mem, here)) {
+    out.push({ id: 'secure', verb: 'SECURE', a: 0, b: 0, target: '', key: `SECURE:${here}`,
+      label: 'close the doors and windows of this building, a door between you and it' });
+  }
+  const near = buildingCandidates(p, mem, now, avoid).sort((x, y) => x.d - y.d).slice(0, ESCAPE_BUILDINGS);
+  near.forEach((c, i) => {
+    const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
+    out.push({
+      id: `b${i + 1}`, verb: 'ENTER', a: 0, b: 0, target: String(c.seen.id), key: c.key, posture: 'avoid',
+      label: `walk into ${kindOf(c.mem, c.seen)} ${where} and shut the door behind you`,
+    });
+  });
+  const close = [...unaware(p).filter((z) => z.d <= AWAY_R), ...chasers];
+  if (close.length && !blockedWhy(mem, 'AWAY', now)) {
+    const w = walkOption(p, avoid, awayFrom(close, 15), 15);
+    if (w) {
+      const n = close.length === 1 ? 'the zombie' : `${close.length} zombies`;
+      out.push({ id: 'away', verb: 'GOTO', a: w.a, b: w.b, target: '', key: 'AWAY', posture: 'avoid',
+        label: `walk ${tiles(15)} ${compass(w.dx, w.dy)}, out of sight of ${n} that will not give up` });
+    }
+  }
+  // Fighting back is only offered to someone who could win: a weapon, health, breath, steady hands.
+  const armed = String(p.weapon || 'none') !== 'none';
+  const fit = num(p.hp, 100) >= 50 && num(p.endurance, 1) >= 0.3 && !heavy(p) && panic01(p) < 0.3 && num(p.bleeding) === 0;
+  if (armed && fit && chasers.length <= 2 && chasers.length > 0) {
+    out.push({ id: 'fight', verb: 'WAIT', a: 0, b: 0, target: '', key: 'STAND', posture: 'clear',
+      label: `stand and fight it here with your ${String(p.weapon)}` });
+  }
+  if (!out.length) {
+    out.push({ id: 'wait', verb: 'WAIT', a: 0, b: 0, target: '', key: 'WAIT', label: 'wait here and watch' });
+  }
+  return out.slice(0, MAX_ESCAPE);
 }
 
 // The option key of the job now running. "keep" stands for it. The bridge's own record of the
