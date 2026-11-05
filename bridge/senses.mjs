@@ -5,7 +5,11 @@ export const HOLD_CHASE_R = 10;
 export const HOLD_ANY_R = 3;
 // The skills and needs verbs report done or failed themselves. MOVE and the older one-shot
 // verbs stay "running" forever, so they never count as busy.
-export const LONG_VERBS = new Set(['GOTO', 'ENTER', 'SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST']);
+export const LONG_VERBS = new Set(['GOTO', 'ENTER', 'SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP']);
+// Weapon scores come from Core.weaponScore (docs/combat.md): a kitchen knife is 9 and a hammer
+// 19, a crowbar 30. Under 20 is a weapon only in name. SWAP_GAIN is the mod's own swap rule.
+export const WEAK_WEAPON = 20;
+export const SWAP_GAIN = 1.25;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -107,8 +111,60 @@ export function running(p) {
   return { seq: num(r.seq), verb: String(r.verb) };
 }
 
-// The percept has no asleep flag yet. A SLEEP that reported "asleep" with fatigue still up
-// is taken as asleep. The memory caps it so a missed wake does not freeze the brain.
+// The game's own flag when the percept carries one. Only an older mod sends none, and then
+// the memory's guess stands in (memory.mjs, updateSleep).
+export function isAsleep(p, mem) {
+  if (p && typeof p.asleep === 'boolean') return p.asleep;
+  return !!(mem && mem.sleep);
+}
+
+// Bandaging works when a bandage is carried or the mod says it could rip one. A percept from
+// before inv.canRip existed gets the old rule: anyone bleeding may try.
+export function canTreat(p) {
+  const inv = (p && p.inv) || {};
+  if (num(inv.bandages) > 0) return true;
+  if (typeof inv.canRip === 'boolean') return inv.canRip;
+  return num(p && p.bleeding) > 0;
+}
+
+const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+// The carried weapon with the best score, or null when the mod sent no scores.
+function bestCarried(p) {
+  const list = Array.isArray(p && p.weapons) ? p.weapons : [];
+  let best = null;
+  for (const w of list) {
+    const s = finite(w && w.score);
+    if (s !== null && (!best || s > best.score)) best = { n: String(w.n || 'weapon'), score: s };
+  }
+  return best;
+}
+
+// A carried weapon worth holding: any real one when the hands are empty, else one that scores
+// SWAP_GAIN times the weapon in hand. { n, swap } or null. An older mod sends no scores, and
+// then only empty hands count.
+export function betterWeapon(p) {
+  const list = Array.isArray(p && p.weapons) ? p.weapons : [];
+  if (!list.length) return null;
+  const unarmed = String((p && p.weapon) || 'none') === 'none';
+  const best = bestCarried(p);
+  if (unarmed) return { n: String((best && best.n) || (list[0] && list[0].n) || 'weapon'), swap: false };
+  const hand = finite(p.weaponScore);
+  if (!best || hand === null || best.score <= hand || best.score < SWAP_GAIN * hand) return null;
+  return { n: best.n, swap: true };
+}
+
+// True when nothing in hand or in the bag is a real weapon yet, so houses are worth looking in.
+export function weaponPoor(p) {
+  if (!p) return false;
+  const list = Array.isArray(p.weapons) ? p.weapons : [];
+  if (String(p.weapon || 'none') === 'none' && !list.length) return true;
+  const known = [finite(p.weaponScore), (bestCarried(p) || {}).score].filter((s) => s !== undefined && s !== null);
+  return known.length > 0 && Math.max(...known) < WEAK_WEAPON;
+}
+
+// Used only when the percept has no asleep flag. A SLEEP that reported "asleep" with fatigue
+// still up is taken as asleep. The memory caps it so a missed wake does not freeze the brain.
 export function sleptJustNow(p) {
   const r = p && p.res;
   return !!r && r.verb === 'SLEEP' && r.status === 'done' && /^asleep/.test(String(r.why || ''));

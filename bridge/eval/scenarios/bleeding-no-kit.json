@@ -1,0 +1,26 @@
+{
+ "name": "bleeding-no-kit",
+ "note": "Bleeding with no bandage and nothing she could rip. BANDAGE would fail, so it is not offered. Find supplies in the house.",
+ "patch": {
+  "bleeding": 1,
+  "hp": 62,
+  "wounds": [
+   {
+    "part": "Leg_L",
+    "bleed": true,
+    "deep": true
+   }
+  ],
+  "inv": {
+   "bandages": 0,
+   "canRip": false
+  }
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "wait",
+  "explore"
+ ]
+}

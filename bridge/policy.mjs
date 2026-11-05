@@ -2,7 +2,7 @@
 // model is not asked. Each rule picks from the same option list the model would see, so the
 // policy can never send an order the options builder thinks is illegal.
 
-import { needs, isNight, inside, zombies } from './senses.mjs';
+import { needs, isNight, inside, zombies, heavy, chasing, betterWeapon } from './senses.mjs';
 import { securedThisVisit } from './memory.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -29,6 +29,23 @@ export const POLICY_RULES = [
     },
   },
   {
+    id: 'hunger',
+    pick(p, mem, opts) {
+      // Only food that is ready: opening a can takes longer and is the model's call.
+      if (!needs(p).has('hungry') || num(p.inv && p.inv.foodReady) <= 0) return null;
+      return [opts.find((o) => o.id === 'eat'), 'Hungry and I have food. Eating.'];
+    },
+  },
+  {
+    id: 'equip',
+    pick(p, mem, opts) {
+      const better = betterWeapon(p);
+      if (!better) return null;
+      const thought = better.swap ? `The ${better.n} in my bag is clearly better. Swapping.` : `Nothing in my hands and a ${better.n} in the bag. Holding it.`;
+      return [opts.find((o) => o.id === 'equip'), thought];
+    },
+  },
+  {
     id: 'night-outside',
     pick(p, mem, opts) {
       if (!isNight(p) || inside(p)) return null;
@@ -50,6 +67,14 @@ export const POLICY_RULES = [
       if (!n.has('exhausted') && !safeNight) return null;
       if (zombies(p).some((z) => z.chase)) return null;
       return [opts.find((o) => o.id === 'sleep'), 'Worn out and safe inside. Sleeping.'];
+    },
+  },
+  {
+    id: 'overloaded',
+    pick(p, mem, opts) {
+      // A drop takes a few passes. Not with something after her; the reflex has the fight.
+      if (!heavy(p) || chasing(p) > 0) return null;
+      return [opts.find((o) => o.id === 'drop'), 'Too heavy. Dropping the junk.'];
     },
   },
 ];

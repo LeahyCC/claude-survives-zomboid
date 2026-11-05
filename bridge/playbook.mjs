@@ -1,7 +1,7 @@
 // Pro rules from docs/research.md. Only the ones whose condition holds go into this turn's
 // message, so the prompt stays short and every line is about now.
 
-import { needs, isNight, inside, unaware, untreated, zombies, heavy } from './senses.mjs';
+import { needs, isNight, inside, unaware, untreated, zombies, heavy, canTreat, weaponPoor } from './senses.mjs';
 import { safehouseScore, building } from './memory.mjs';
 
 export const MAX_RULES = 5;
@@ -11,7 +11,8 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 export const PLAYBOOK = [
   {
     id: 'wounded',
-    when: (p) => untreated(p).length > 0,
+    // With nothing to bandage with, "treat it first" is an order she cannot follow.
+    when: (p) => untreated(p).length > 0 && canTreat(p),
     text: 'Wounded: treat it before the next door.',
   },
   {
@@ -27,7 +28,7 @@ export const PLAYBOOK = [
   {
     id: 'overloaded',
     when: (p) => heavy(p),
-    text: 'Overloaded: stop looting. Carrying more slows you and tires you.',
+    text: 'Overloaded: stop looting and drop the junk. Carrying more slows you and tires you.',
   },
   {
     id: 'one-at-a-time',
@@ -38,6 +39,12 @@ export const PLAYBOOK = [
     id: 'no-weapon',
     when: (p) => String(p.weapon || 'none') === 'none' && !(Array.isArray(p.weapons) && p.weapons.length),
     text: 'No weapon: search houses for one first and keep away from every zombie.',
+  },
+  {
+    id: 'weak-weapon',
+    // A knife or a hammer: better than bare hands, no match for a pack. The no-weapon rule covers empty hands.
+    when: (p) => weaponPoor(p) && (String(p.weapon || 'none') !== 'none' || (Array.isArray(p.weapons) && p.weapons.length > 0)),
+    text: 'Your weapon is weak: look for a better one in houses you have not searched.',
   },
   {
     id: 'water',

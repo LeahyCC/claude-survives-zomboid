@@ -1,6 +1,6 @@
 {
  "name": "overloaded-in-house",
- "note": "Heavy load inside an unsearched house. More looting is the wrong move.",
+ "note": "Heavy load inside an unsearched house. More looting is the wrong move. Drop the junk.",
  "patch": {
   "weight": 8.5,
   "moodle": {
@@ -58,7 +58,7 @@
   }
  },
  "accept": [
-  "wait"
+  "drop"
  ],
  "wrong": [
   "search",

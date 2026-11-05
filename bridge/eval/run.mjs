@@ -36,8 +36,8 @@ function grade(s, id) {
 
 // One scenario, n times. A policy turn is deterministic, so it runs once and counts n times.
 async function runScenario(s) {
-  const { percept, memory } = buildScenario(s);
-  const plan = planTurn(percept, memory, { now: 1_000_000 });
+  const { percept, memory, plan: dayPlan } = buildScenario(s);
+  const plan = planTurn(percept, memory, { now: 1_000_000, plan: dayPlan });
   const row = { name: s.name, kind: plan.kind, rule: plan.rule || (plan.policy && plan.policy.rule) || '',
     accepted: 0, wrong: 0, other: 0, bad: 0, ms: [], picks: [] };
   if (plan.kind === 'policy') {

@@ -11,6 +11,7 @@ const RETRY_MS = {
   'too soon': 5 * 60_000, 'not tired': 3 * 60_000, full: 5 * 60_000, 'cannot reach water': 3 * 60_000,
   'no water': 3 * 60_000, 'no food': 3 * 60_000, 'need can opener': 10 * 60_000, 'too full': 5 * 60_000,
   'no bandage': 3 * 60_000, 'no bag': 5 * 60_000, 'could not wear it': 10 * 60_000, 'no empty bottle': 3 * 60_000,
+  'not heavy': 3 * 60_000, 'nothing to drop': 10 * 60_000, 'equip: no weapon': 10 * 60_000,
 };
 const DEFAULT_RETRY_MS = 45_000;
 
@@ -56,9 +57,13 @@ function prune(mem) {
   for (const id of ids.slice(0, ids.length - MAX_BUILDINGS)) delete mem.buildings[id];
 }
 
-export function recordOrder(mem, seq, option, p) {
-  mem.orders.push({ seq, verb: option.verb, key: option.key || option.verb, bldg: p && p.inBldg ? String(p.inBldg.id) : null });
+export function recordOrder(mem, seq, option, p, now = Date.now()) {
+  const key = option.key || option.verb;
+  mem.orders.push({ seq, verb: option.verb, key, bldg: p && p.inBldg ? String(p.inBldg.id) : null });
   mem.orders = mem.orders.slice(-MAX_ORDERS);
+  // EQUIP never reports done while the weapon is still being raised, so the policy would send
+  // it again every look. Keep it off the menu for the default retry time, a done result lifts it.
+  if (option.verb === 'EQUIP') mem.fails[key] = { why: 'just sent', at: now };
 }
 
 function applyResult(mem, p, now, hours) {
@@ -94,8 +99,13 @@ function applyResult(mem, p, now, hours) {
   if (order) mem.fails[order.key] = { why, at: now };
 }
 
-// Wake is a guess until the percept carries one: low fatigue, a long sleep, or he moved.
+// With the game's asleep flag there is nothing to guess, so a guess left from a SLEEP result
+// is dropped. Without it (an older mod), wake is a guess: low fatigue, a long sleep, or he moved.
 function updateSleep(mem, p, hours) {
+  if (typeof p.asleep === 'boolean') {
+    mem.sleep = null;
+    return;
+  }
   const s = mem.sleep;
   if (!s) return;
   const r = p.res || {};
@@ -114,7 +124,8 @@ export function updateMemory(mem, p, now = Date.now()) {
     b.res = !!seen.res;
     b.shop = !!seen.shop;
     if (seen.visited) b.visited = true;
-    if (seen.door) b.door = { x: num(seen.door.x), y: num(seen.door.y) };
+    // Kept after the building drops out of the 6 nearest, so she can walk back to it.
+    if (seen.door && Number.isFinite(seen.door.x) && Number.isFinite(seen.door.y)) b.door = { x: seen.door.x, y: seen.door.y };
     b.x = num(p.x) + num(seen.dx);
     b.y = num(p.y) + num(seen.dy);
   }
@@ -132,6 +143,12 @@ export function updateMemory(mem, p, now = Date.now()) {
   }
   mem.current = here;
   applyResult(mem, p, now, hours);
+  // Every room done is the body's own word that the place is searched, even when this bridge
+  // missed the SEARCH result (a restart). After applyResult, which reads "(full)" as not done.
+  if (here && mem.buildings[here].rooms > 0 && p.inBldg.roomsLeft === 0) {
+    mem.buildings[here].partly = true;
+    mem.buildings[here].searched = true;
+  }
   updateSleep(mem, p, hours);
   prune(mem);
   return mem;

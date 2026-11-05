@@ -1,0 +1,64 @@
+{
+ "name": "rooms-left-zero",
+ "note": "Inside a house whose every room the body has searched (roomsLeft 0), with an unvisited house 14 tiles off. Move on.",
+ "patch": {
+  "outside": false,
+  "room": "kitchen",
+  "bldgDir": "HERE",
+  "bldgDist": 0,
+  "inBldg": {
+   "explored": true,
+   "id": "4021",
+   "room": "kitchen",
+   "rooms": 6,
+   "roomsLeft": 0,
+   "water": false
+  },
+  "buildings": [
+   {
+    "d": 0,
+    "door": {
+     "x": 10650,
+     "y": 9826
+    },
+    "dx": 0,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   },
+   {
+    "d": 14,
+    "door": {
+     "x": 10664,
+     "y": 9830
+    },
+    "dx": 14,
+    "dy": 0,
+    "id": "4022",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "memory": {
+  "current": "4021",
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "res": true,
+    "enteredAt": 38,
+    "securedAt": 39
+   }
+  }
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "search",
+  "wait"
+ ]
+}

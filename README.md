@@ -14,7 +14,7 @@ Project Zomboid (LocalSurvivor mod)
 
 The model never swings. A zombie is faster than a local model. The Lua reflex fights one living zombie with a melee weapon, and runs from a pack. The model never steers either. Each turn the bridge builds a short menu of jobs that are legal right now ("walk into house 14 tiles E, not visited", "drink at the tap", "search this building") and the model picks one id. The JSON schema only allows this turn's ids. The body runs the job to the end and reports done or failed.
 
-Needs that cannot wait skip the model: bleeding means bandage, thirst with water here means drink, night outside means the nearest house, then shut it, then sleep. While a job runs the model is not asked unless something changes. The brain writes no order while a zombie is chasing within 10 tiles or any zombie is within 3, and it drops a thought that finishes after one walks in. With idle zombies further off, it keeps going and walks around them. A map memory of buildings (visited, searched, water, beds) steers her to new houses. How a turn works, and the live results, are in `docs/brain.md`.
+Needs that cannot wait skip the model: bleeding means bandage (when there is something to bandage with), thirst with water here means drink, hunger with food ready means eat, a clearly better weapon in the bag means hold it, night outside means the nearest house, then shut it, then sleep, and too heavy means drop the junk. While a job runs the model is not asked unless something changes. The brain writes no order while a zombie is chasing within 10 tiles or any zombie is within 3, and it drops a thought that finishes after one walks in. With idle zombies further off, it keeps going and walks around them. A map memory of buildings (visited, searched, water, beds, doors) steers her to new houses, to houses first when she has no real weapon, and back to the planned home when it is out of sight. How a turn works, and the live results, are in `docs/brain.md`.
 
 The body will ignore a few bad orders. A move toward a zombie inside 12 tiles is turned around. A step shorter than 8 tiles is stretched. A light stays off when something is close at night. Rotten food is not eaten. A corpse is not a threat.
 
@@ -49,7 +49,7 @@ A slower planner writes a short day plan and a death review writes lessons (`doc
 
 `node bridge/tools/try-brain.mjs` runs the test percepts through the real model and prints each choice and its time.
 
-`node bridge/eval/run.mjs --model gemma4:12b --n 3` scores the brain on 26 scenarios against Ollama and prints a table. See `docs/eval.md`.
+`node bridge/eval/run.mjs --model gemma4:12b --n 3` scores the brain on 34 scenarios against Ollama and prints a table. See `docs/eval.md`.
 
 ## Check
 

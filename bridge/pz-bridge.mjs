@@ -244,7 +244,7 @@ function send(option, thought, say, decidedBy) {
   state.seq += 1;
   intent = orderLine(state.seq, option, thought, say);
   writeIntentFile(intent);
-  recordOrder(map, state.seq, option, percept);
+  recordOrder(map, state.seq, option, percept, Date.now());
   pending = { seq: state.seq, at: Date.now() };
   lastThought = thought || say || '';
   const where = option.verb === 'GOTO' ? ` ${option.a},${option.b}` : option.target ? ` ${option.target}` : '';

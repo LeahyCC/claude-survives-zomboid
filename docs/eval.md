@@ -19,7 +19,8 @@ One JSON file in `bridge/eval/scenarios/`. It is a patch over `bridge/eval/base.
 ```
 name, note   what the moment is
 patch        v2 percept fields that differ from the base
-memory       map memory to seed: current building, buildings by id
+memory       map memory to seed: current building, buildings by id (door, searched, water, bed)
+plan         the planner's day plan {goal, steps, home}, only where the moment depends on it
 accept       option ids a good player would take
 wrong        option ids that are clearly bad
 ```
@@ -50,9 +51,62 @@ The summary line counts model turns only. Policy turns are listed separately bec
 
 Two runs per scenario is a small sample. A single scenario flipping between runs is noise. A model that never picks the right id on a scenario is a finding.
 
-## Results, 2026-11-05
+## Latest run: gemma4:12b, 34 scenarios
 
-All on Ollama with the default prompt, `--n 2`, 26 scenarios. Eight are policy turns (all eight accepted, for every model).
+After the brain began to read `asleep`, `res.target`, `inBldg.roomsLeft`, `inv.canRip` and the weapon scores, and gained the hunger, equip and overloaded policy rules, the DROP verb and the walk home. `--n 3`, default prompt, RTX 5080 with Ollama on the same PC.
+
+```
+Model turns: 52/57 accepted, 0 wrong, 5 other, 0 bad replies. Mean 269 ms, p90 311 ms.
+Policy turns (no model): 15 scenarios, 15 accepted, 0 wrong.
+```
+
+| scenario | by | accepted | wrong | other | bad reply | mean ms | p90 ms | picks |
+|---|---|---|---|---|---|---|---|---|
+| bag-not-worn | model | 3 | 0 | 0 | 0 | 275 | 305 | wearbag wearbag wearbag |
+| better-weapon-in-bag | policy (equip) | 3 | 0 | 0 | 0 | - | - | equip |
+| bitten-no-bleed | model | 3 | 0 | 0 | 0 | 269 | 296 | bandage bandage bandage |
+| bleeding-no-bandage | policy (bleeding) | 3 | 0 | 0 | 0 | - | - | bandage |
+| bleeding-no-kit | model | 3 | 0 | 0 | 0 | 270 | 313 | b1 b1 b1 |
+| bleeding | policy (bleeding) | 3 | 0 | 0 | 0 | - | - | bandage |
+| can-no-opener | model | 3 | 0 | 0 | 0 | 248 | 280 | b1 b1 b1 |
+| can-with-opener | model | 1 | 0 | 2 | 0 | 260 | 292 | b1 eat b1 |
+| carrying-a-weapon-not-held | policy (equip) | 3 | 0 | 0 | 0 | - | - | equip |
+| empty-bottles-at-sink | model | 3 | 0 | 0 | 0 | 277 | 311 | fill fill fill |
+| hungry-ready-food | policy (hunger) | 3 | 0 | 0 | 0 | - | - | eat |
+| idle-zombie-near-door | model | 3 | 0 | 0 | 0 | 269 | 293 | away away away |
+| night-inside-unsecured | policy (night-secure) | 3 | 0 | 0 | 0 | - | - | secure |
+| night-outside-sleepy | policy (night-outside) | 3 | 0 | 0 | 0 | - | - | b1 |
+| night-outside | policy (night-outside) | 3 | 0 | 0 | 0 | - | - | b1 |
+| nothing-new-around | model | 3 | 0 | 0 | 0 | 249 | 281 | explore explore explore |
+| overloaded-in-house | policy (overloaded) | 3 | 0 | 0 | 0 | - | - | drop |
+| overloaded-outside-junk | policy (overloaded) | 3 | 0 | 0 | 0 | - | - | drop |
+| panicked-outside | model | 3 | 0 | 0 | 0 | 309 | 338 | b1 b1 b1 |
+| rooms-left-zero | model | 3 | 0 | 0 | 0 | 263 | 297 | b1 b1 b1 |
+| searched-house-new-nearby | model | 3 | 0 | 0 | 0 | 277 | 310 | b1 b1 b1 |
+| starving-ready-food-inside | policy (hunger) | 3 | 0 | 0 | 0 | - | - | eat |
+| thirsty-bottle | policy (thirst) | 3 | 0 | 0 | 0 | - | - | drink |
+| thirsty-sink-here | policy (thirst) | 3 | 0 | 0 | 0 | - | - | drink |
+| tired-day-bed | model | 3 | 0 | 0 | 0 | 271 | 300 | sleep sleep sleep |
+| tired-outside-safehouse-known | model | 3 | 0 | 0 | 0 | 246 | 278 | b1 b1 b1 |
+| tired-safe-house-bed | policy (sleep) | 3 | 0 | 0 | 0 | - | - | sleep |
+| two-chasers-house-close | model | 3 | 0 | 0 | 0 | 262 | 296 | away away away |
+| unarmed-house-over-shop | model | 3 | 0 | 0 | 0 | 290 | 324 | b1 b1 b1 |
+| unsearched-house-here | model | 3 | 0 | 0 | 0 | 275 | 310 | search search search |
+| unsearched-house-no-weapon | model | 3 | 0 | 0 | 0 | 243 | 266 | b1 b1 b1 |
+| walk-home-at-dusk | model | 3 | 0 | 0 | 0 | 276 | 306 | home home home |
+| walk-home-night-closer-shelter | policy (night-outside) | 3 | 0 | 0 | 0 | - | - | b1 |
+| winded-no-chase | model | 0 | 0 | 3 | 0 | 281 | 311 | b1 b1 b1 |
+
+What it shows:
+
+- Three scenarios that were model turns before are policy turns now, and all pass: `hungry-ready-food` (the hunger rule), `carrying-a-weapon-not-held` (the equip rule) and `overloaded-in-house` (the overloaded rule, DROP). The eight new scenarios cover hunger, a better weapon, empty hands, overload, the walk home (by day and at night with a closer shelter), a searched house, and bleeding with nothing to bandage with.
+- `unarmed-house-over-shop` took work. With "no real weapon yet" on both buildings the model chose the nearer shop 3 times in 3. With the tag on the house only it chose the house once in 3. With "look here" added it chose the house 6 of 6, and 3 of 3 in the run above. The label is part of the prompt, so this is a prompt change, not a rule change.
+- `winded-no-chase` (`b1` instead of `rest`) and `can-with-opener` (`b1` instead of `eat`) are the same small chores the model skips in the earlier tables. Neither has a policy rule.
+- Run to run, a single scenario can flip. In an earlier run of the same code `panicked-outside` scored 2 accepted and 1 wrong, and here 3 accepted. Read the totals, not one row.
+
+## Earlier results, 2026-11-05
+
+Before the brain read the newer percept fields, 26 scenarios. All on Ollama with the default prompt, `--n 2`. Eight are policy turns (all eight accepted, for every model). Three of these scenarios have changed since (`hungry-ready-food`, `carrying-a-weapon-not-held` and `overloaded-in-house` are policy turns now; `bleeding-no-bandage` now sets `canRip`), so compare their rows with care.
 
 | model | accepted | wrong | other | bad reply | mean ms | p90 ms |
 |---|---|---|---|---|---|---|

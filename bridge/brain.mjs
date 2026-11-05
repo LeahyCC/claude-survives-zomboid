@@ -8,7 +8,7 @@
 //   policy   a need that cannot wait picks the option, no model call
 //   ask      the model picks one id from the menu
 
-import { holdReason, running, needs, chasing } from './senses.mjs';
+import { holdReason, running, needs, chasing, isAsleep } from './senses.mjs';
 import { memoryStats } from './memory.mjs';
 import { buildOptions, optionLines, runningKey } from './options.mjs';
 import { decidePolicy } from './policy.mjs';
@@ -70,7 +70,7 @@ export function planTurn(p, mem, ctx = {}) {
   if (p.dead) return { kind: 'dead', why: 'dead' };
   const hold = holdReason(p);
   if (hold) return { kind: 'hold', why: hold };
-  if (mem.sleep) return { kind: 'asleep', why: 'asleep' };
+  if (isAsleep(p, mem)) return { kind: 'asleep', why: 'asleep' };
   const pending = ctx.pending;
   if (pending && num(p.lastSeq) < pending.seq && now - pending.at < PENDING_MS) {
     return { kind: 'pending', why: `order ${pending.seq} not picked up yet` };
@@ -117,7 +117,7 @@ export function resolveChoice(p, mem, options, id) {
   if (!option || !option.verb) return null;
   const busy = running(p);
   if (!busy) return option;
-  const job = runningKey(p, mem);
+  const job = runningKey(p, mem, options);
   if (job ? option.key === job : option.verb === busy.verb) return null;
   return option;
 }

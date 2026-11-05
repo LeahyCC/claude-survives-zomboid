@@ -1,0 +1,38 @@
+{
+ "name": "walk-home-night-closer-shelter",
+ "note": "Night, outside. The planned home is far off and a house is 9 tiles away. The near house is the shelter, not the long walk.",
+ "patch": {
+  "hour": 22,
+  "dark": true
+ },
+ "memory": {
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "searched": true,
+    "res": true,
+    "water": true,
+    "bed": true,
+    "door": {
+     "x": 10600,
+     "y": 9800
+    }
+   }
+  }
+ },
+ "plan": {
+  "goal": "Be inside the safe house before dark",
+  "steps": [
+   "go home"
+  ],
+  "home": "4021"
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "home",
+  "explore",
+  "wait"
+ ]
+}

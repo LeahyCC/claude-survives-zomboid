@@ -1,0 +1,56 @@
+{
+ "name": "starving-ready-food-inside",
+ "note": "Very hungry inside an unsearched house, food in the bag. Eat before looting.",
+ "patch": {
+  "hunger": 0.8,
+  "moodle": {
+   "hungry": 3
+  },
+  "outside": false,
+  "room": "kitchen",
+  "bldgDir": "HERE",
+  "bldgDist": 0,
+  "inBldg": {
+   "explored": false,
+   "id": "4021",
+   "room": "kitchen",
+   "rooms": 6,
+   "roomsLeft": 6,
+   "water": false
+  },
+  "buildings": [
+   {
+    "d": 0,
+    "door": {
+     "x": 10650,
+     "y": 9826
+    },
+    "dx": 0,
+    "dy": 0,
+    "id": "4021",
+    "res": true,
+    "shop": false,
+    "visited": true
+   }
+  ]
+ },
+ "memory": {
+  "current": "4021",
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "res": true,
+    "enteredAt": 38,
+    "securedAt": 39
+   }
+  }
+ },
+ "accept": [
+  "eat"
+ ],
+ "wrong": [
+  "search",
+  "wait",
+  "b1"
+ ]
+}

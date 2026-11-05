@@ -1,0 +1,44 @@
+{
+ "name": "walk-home-at-dusk",
+ "note": "Dusk, tired, no building in sight. The planned home, a safe house, is 58 tiles away on the map. Walk back to it.",
+ "patch": {
+  "hour": 18,
+  "fatigue": 0.65,
+  "moodle": {
+   "tired": 2
+  },
+  "bldgDir": "none",
+  "bldgDist": -1,
+  "buildings": []
+ },
+ "memory": {
+  "buildings": {
+   "4021": {
+    "visited": true,
+    "searched": true,
+    "res": true,
+    "water": true,
+    "bed": true,
+    "door": {
+     "x": 10600,
+     "y": 9800
+    }
+   }
+  }
+ },
+ "plan": {
+  "goal": "Be inside the safe house before dark",
+  "steps": [
+   "go home",
+   "secure it"
+  ],
+  "home": "4021"
+ },
+ "accept": [
+  "home"
+ ],
+ "wrong": [
+  "explore",
+  "wait"
+ ]
+}

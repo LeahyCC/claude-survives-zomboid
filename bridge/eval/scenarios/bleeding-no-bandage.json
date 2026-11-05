@@ -12,7 +12,8 @@
    }
   ],
   "inv": {
-   "bandages": 0
+   "bandages": 0,
+  "canRip": true
   }
  },
  "accept": [
