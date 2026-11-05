@@ -23,6 +23,7 @@ test('a mod line becomes a reflex line with its kind, and other lines are droppe
   assert.equal(l.at, '2026-11-04T12:00:00.000Z');
   assert.deepEqual(l.f, { chasers: 3 });
   assert.equal(toLogLine({ t: 'other' }), null);
+  assert.equal(toLogLine({ t: 'count', from: 1, to: 3 }).kind, 'count', 'the crowd growing in a fight is kept');
   assert.equal(toLogLine(null), null);
 });
 

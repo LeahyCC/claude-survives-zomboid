@@ -5,7 +5,7 @@
 
 import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
-import { zombies, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
+import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
 
 export const MAX_OPTIONS = 8;
@@ -25,6 +25,15 @@ const INTERRUPTS =new Set(['bandage', 'drink', 'eat', 'away']);
 const BAG_WORDS =/\b(bag|backpack|duffel|satchel|rucksack|hiking bag)\b/i;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+
+// Where the "why is SEARCH missing" line goes. The bridge log is not reachable from here, so it
+// prints in the same shape as the log does. A test or a tool can swap it out. Under `node --test`
+// it stays quiet, or every test that builds a menu would fill the output.
+let searchLog = (text) => {
+  if (process.env.NODE_TEST_CONTEXT) return;
+  console.log(`[${new Date().toISOString().slice(11, 19)}] menu: ${text}`);
+};
+export function setSearchLog(fn) { searchLog = typeof fn === 'function' ? fn : () => {}; }
 
 // True when a walk from here to (tx, ty) keeps clear of every idle zombie in the list.
 export function pathClear(tx, ty, avoid) {
@@ -162,6 +171,8 @@ function needOptions(p, mem, now) {
   const here = inside(p) ? String(p.inBldg.id) : null;
   const zs = zombies(p);
   const near = (r) => zs.some((z) => z.d <= r);
+  // The zombies SEARCH and DROP wait for: those that can get to her soon (senses.mjs, reaches).
+  const threat = (r) => zs.some((z) => reaches(z, r));
   const chased = num(p.zChasing) > 0 || zs.some((z) => z.chase);
   const add = (prio, opt) => { if (!blockedWhy(mem, opt.key, now)) out.push({ prio, a: 0, b: 0, target: '', ...opt }); };
 
@@ -203,7 +214,7 @@ function needOptions(p, mem, now) {
     add(5, { id: 'sleep', verb: 'SLEEP', key: 'SLEEP', label: `sleep ${where}` });
   }
   // A drop takes a few passes, so not with a zombie after her or close enough to hear it.
-  if (heavy(p) && !chased && !near(SEARCH_ZOMBIE_R) && num(p.hp, 100) >= DROP_MIN_HP) {
+  if (heavy(p) && !chased && !threat(SEARCH_ZOMBIE_R) && num(p.hp, 100) >= DROP_MIN_HP) {
     const load = num(p.maxWeight) > 0 ? ` (carrying ${num(p.weight).toFixed(1)} of ${num(p.maxWeight)})` : '';
     add(5.5, { id: 'drop', verb: 'DROP', key: 'DROP', label: `drop the junk you carry to lighten the load${load}` });
   }
@@ -211,13 +222,23 @@ function needOptions(p, mem, now) {
   // roomsLeft is the body's count of rooms SEARCH has not finished. Only a real number counts:
   // an older mod sends none, and then the map memory alone decides.
   const left = here && typeof p.inBldg.roomsLeft === 'number' && Number.isFinite(p.inBldg.roomsLeft) ? Math.max(0, Math.floor(p.inBldg.roomsLeft)) : null;
-  if (here && left !== 0 && !(bInfo && bInfo.searched) && !heavy(p) && !near(SEARCH_ZOMBIE_R)) {
+  // Every reason SEARCH is off the menu, so a stuck run can be read from the log afterwards.
+  const noSearch = [];
+  if (here && left !== 0) {
+    if (bInfo && bInfo.searched) noSearch.push('already searched');
+    if (heavy(p)) noSearch.push('too heavy');
+    const blocker = zs.filter((z) => reaches(z, SEARCH_ZOMBIE_R)).sort((x, y) => x.d - y.d)[0];
+    if (blocker) noSearch.push(`zombie ${blocker.chase ? 'chasing' : blocker.inside ? 'in the building' : 'close, no wall'} ${tiles(blocker.d)}`);
+    if (!noSearch.length && blockedWhy(mem, `SEARCH:${here}`, now)) noSearch.push('retry timer after a fail');
+  }
+  if (here && left !== 0 && !noSearch.length) {
     const rooms = num(p.inBldg.rooms);
     const started = (bInfo && bInfo.partly) || (left !== null && rooms > left);
     const state = started ? 'partly searched' : 'not searched yet';
     const roomText = left !== null ? `${count(left, 'room')} left, ` : rooms > 0 ? `${count(rooms, 'room')}, ` : '';
     add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})${weaponPoor(p) ? ', no real weapon yet: kitchen and garage first' : ''}` });
   }
+  if (noSearch.length) searchLog(`no SEARCH, ${noSearch.join(', ')} (${left === null ? 'rooms left unknown' : `${count(left, 'room')} left`})`);
   const bag = carriedBag(p);
   if (bag) add(7, { id: 'wearbag', verb: 'WEARBAG', key: 'WEARBAG', label: `put on the ${bag}` });
   if (here && p.water && num(inv.emptyBottles) > 0) {

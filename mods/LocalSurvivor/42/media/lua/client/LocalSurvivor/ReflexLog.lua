@@ -24,6 +24,10 @@ Log.FLUSH_TICKS = 60
 Log.MAX_OPEN = 12
 Log.MAX_BUF = 40
 Log.CLEAR_TICKS = 180       -- nothing chasing for this long ends an escape loop's tally
+Log.FIGHT_GAP = 300         -- a fight or shove this recent still counts as a fight for the count line
+Log.COUNT_GAP = 60          -- at most one count line a second
+-- The stances that trade blows. The standing count rising in these is the line worth having.
+Log.FIGHTING = { FIGHT = true, SHOVE = true }
 -- The stances that try to get away. Only these count toward a loop.
 Log.ESCAPE = { FLEE = true, HIDE = true, BREAK = true }
 
@@ -75,6 +79,8 @@ end
 function Log.facts(snap)
   snap = snap or {}
   local nearest, chasers, standing7, within3, downed, unaware, seen = 9999, 0, 0, 0, 0, 0, 0
+  local reachR = (LS.Stance and LS.Stance.N and LS.Stance.N.REACH_R) or 2.5
+  local reach = 0
   for _, z in ipairs(snap.zombies or {}) do
     local d = tonumber(z.d) or 9999
     if d < nearest then nearest = d end
@@ -83,6 +89,7 @@ function Log.facts(snap)
       if d <= 3 then downed = downed + 1 end
     else
       if d <= 7 then standing7 = standing7 + 1 end
+      if d <= reachR then reach = reach + 1 end
       if d <= 3 then within3 = within3 + 1 end
       if z.chase ~= false and d <= 10 then
         chasers = chasers + 1
@@ -96,13 +103,34 @@ function Log.facts(snap)
   for _, l in ipairs(snap.lines or {}) do if not l.blocked then open = open + 1 end end
   return {
     near = r1(nearest < 9999 and nearest or -1), chasers = chasers, seen = seen, standing = standing7,
-    within3 = within3, downed = downed, unaware = unaware,
+    within3 = within3, reach = reach, downed = downed, unaware = unaware,
     armed = snap.armed and true or false, score = r1(snap.weaponScore), endurance = r1(snap.endurance),
     hp = r1(snap.hp), panic = tonumber(snap.panic) or 0, bleeding = tonumber(snap.bleeding) or 0,
     load = r1(snap.load), inside = snap.inside and true or false,
     door = snap.hold ~= nil, barriers = #(snap.barriers or {}), open = open, lines = #(snap.lines or {}),
     posture = snap.posture or "normal",
   }
+end
+
+-- Pure. A count line when more zombies are standing within 7 tiles than a moment ago while she
+-- is fighting or has just fought. The 2026-11-05 death swung at 2 standing and the next line,
+-- 35 seconds later, found 3 and hp 26: the call line only comes when the stance changes, so
+-- nothing said the crowd had grown. st keeps the last count (seenStanding) and when a fight
+-- last ran (fightTick). Returns the line or nil.
+function Log.countRise(st, facts, stance, tick)
+  if Log.FIGHTING[stance] then st.fightTick = tick end
+  local n = tonumber(facts.standing) or 0
+  local was = st.seenStanding
+  local fighting = tick - (st.fightTick or -99999) <= Log.FIGHT_GAP
+  if was ~= nil and n > was and fighting then
+    -- Too soon after the last line: leave the old count, so a rise that holds is logged next.
+    if tick - (st.countTick or -99999) < Log.COUNT_GAP then return nil end
+    st.countTick = tick
+    st.seenStanding = n
+    return { t = "count", tick = tick, stance = stance, from = was, to = n, f = facts }
+  end
+  st.seenStanding = n
+  return nil
 end
 
 -- Pure. Got away: nothing chasing within 10 tiles and nothing standing within 3. The same
@@ -165,6 +193,8 @@ function Log.note(a, snap, tick, kills, sprintTook)
   local stance = a.stance or "NONE"
   st.level = a.level or 0
   local facts = Log.facts(snap)
+  local rise = Log.countRise(st, facts, stance, tick)
+  if rise then table.insert(st.buf, rise) end
   if Log.isNewCall(st, stance, tick, a.why) then
     st.serial = st.serial + 1
     st.session = st.session or stamp()

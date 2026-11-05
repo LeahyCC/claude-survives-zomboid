@@ -60,6 +60,8 @@ Reflex.HANDBACK_R = 10
 Reflex.HANDBACK_NEAR = 3
 -- Ticks. A hit this recent keeps the stand-aside from starting (3 seconds).
 Reflex.HANDBACK_HIT_TICKS = 180
+-- Ticks. A crowd shove this recent means the next look leaves (4 seconds, a few decisions).
+Reflex.CROWD_TICKS = 240
 
 -- nearest zombie + how many are within a radius
 function Reflex.nearestZombie(px, py, r)
@@ -381,6 +383,7 @@ function Reflex.snapshot(p)
   -- How many escape tries in a row ended with the chaser still there (ReflexLog.tally).
   snap.escapeFails = tonumber(LS.reflexLog and LS.reflexLog.fails) or 0
   snap.lastDir = R.lastDir
+  snap.crowdShoved = R.crowdShoveTick ~= nil and LS.tick - R.crowdShoveTick < Reflex.CROWD_TICKS
   -- A climb's action leaves the queue at once and the body goes over in the animation after.
   local climbing = LS.tick < (R.climbUntil or 0)
   pcall(function()
@@ -475,6 +478,7 @@ local THOUGHTS = {
   stomp = "It's down. Boot to the head before it gets up.",
   shove = "Too close. Shove it off me.",
   shoveUnarmed = "No weapon. Shove it down and stomp.",
+  crowd = "Too many on me. Shove one down and get out.",
   backoff = "Two on me. Stepping back to take them one at a time.",
   winded = "Out of breath. Backing off before the swings go slow.",
   panic = "Hands are shaking. Backing off, I'll miss like this.",
@@ -673,8 +677,10 @@ function Reflex.perform(p, a, snap, objs)
     hud.thought = stomped and THOUGHTS.stomp or "It's down. Hitting it before it gets up."
   elseif kind == "shove" then
     Reflex.attack(p, z, true)
+    -- The next look reads this: after a crowd shove she leaves instead of trading blows.
+    if a.why == "crowd" then R.crowdShoveTick = LS.tick end
     hud.action = "SHOVE (reflex)"
-    hud.thought = a.why == "unarmed" and THOUGHTS.shoveUnarmed or THOUGHTS.shove
+    hud.thought = (a.why == "crowd" and THOUGHTS.crowd) or (a.why == "unarmed" and THOUGHTS.shoveUnarmed) or THOUGHTS.shove
   elseif kind == "backoff" then
     Reflex.backOff(p, a)
     hud.action = "BACK OFF (reflex)"

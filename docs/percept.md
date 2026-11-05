@@ -62,7 +62,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `zChasing` | int | Living zombies within 40 tiles whose target is the survivor. | `IsoZombie:getTarget() == p` |
 | `zVisible` | int | Zombies the survivor can see. The game's own count. | `getStats():getNumVisibleZombies()` |
 | `zDowned` | int | Living zombies within 3 tiles that are on the floor or knocked down. A free stomp. | `isOnFloor()` `isKnockedDown()` |
-| `zList` | list | The 6 nearest living zombies within 25 tiles: `{dx, dy, d, chase, down, crawl}`. | `getTarget()` `isOnFloor()` `isKnockedDown()` `isCrawling()` |
+| `zList` | list | The 6 nearest living zombies within 25 tiles: `{dx, dy, d, chase, down, crawl, wall, inside}`. `wall` is true when a wall or a closed door is between her and it. `inside` is true when it is in the building she is in (always false when she is outside). Both read false if the game call fails, so a zombie is never ignored on a guess. A window is not a wall. A tree or a tall fence may read as a wall. The checks run only for these 6. | `getTarget()` `isOnFloor()` `isKnockedDown()` `isCrawling()` `LosUtil.lineClear()` (`Blocked` or `ClearThroughClosedDoor` is a wall) `getSquare():getBuilding()` |
 | `inBldg` | object or null | The building the survivor stands in: `{id, rooms, roomsLeft, explored, water, room}`. | see below |
 | `water` | object or null | Nearest clean water source in this building: `{x, y, z, d}`. | see below |
 | `bed` | object or null | Nearest bed in this building: `{x, y, z, d}`. | see below |
@@ -217,7 +217,7 @@ A sample is about 230 bytes, so the record is near 3 KB. It is only in the dead 
 
 ## Size
 
-About 1.2 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.5 KB. The `reflex` summary adds about 165 bytes and the gun fields under 100 bytes with one gun.
+About 1.2 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.7 KB. The `reflex` summary adds about 165 bytes and the gun fields under 100 bytes with one gun.
 
 ## The HUD weapon line
 

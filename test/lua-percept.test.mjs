@@ -70,9 +70,76 @@ test('summarizeZombies counts chasers and downed, lists the nearest six within 2
   assert.equal(out.zChasing, 2);
   assert.equal(out.zDowned, 1);
   assert.equal(out.zList.length, 6);
-  assert.deepEqual(out.zList[0], { dx: 2, dy: 0, d: 2, chase: false, down: true, crawl: true });
+  assert.deepEqual(out.zList[0], { dx: 2, dy: 0, d: 2, chase: false, down: true, crawl: true, wall: false, inside: false });
   assert.deepEqual(out.zList.map((z) => z.d), [2, 5, 8, 10, 12, 12.7]);
   assert.deepEqual(lua.call('LocalSurvivor.Sense.summarizeZombies', []), { zChasing: 0, zDowned: 0, zList: [] });
+});
+
+test('summarizeZombies keeps the wall and inside flags of the zombies it lists', () => {
+  const lua = body();
+  const out = lua.call('LocalSurvivor.Sense.summarizeZombies', [
+    { dx: 3, dy: 0, wall: true },
+    { dx: 6, dy: 0, inside: true },
+  ]);
+  assert.deepEqual(out.zList.map((z) => [z.wall, z.inside]), [[true, false], [false, true]]);
+});
+
+// The player stands in house H at (10, 10). Zombies: a stub for each case. __los says what the sight check finds.
+function house() {
+  const lua = body();
+  lua.run(`
+    local H = { name = "H" }
+    local other = { name = "other" }
+    local p = __makePlayer({ x = 10, y = 10, square = { getBuilding = function() return H end } })
+    __players[0] = p
+    __los["13,10"] = "Blocked"
+    __los["10,14"] = "ClearThroughClosedDoor"
+    __los["16,10"] = "ClearThroughWindow"
+    local z = function(o) table.insert(__zombies, __makeZombie(o)) end
+    z({ x = 13, y = 10, building = other })    -- 3 east, behind a wall, outside
+    z({ x = 10, y = 14, building = H })        -- 4 south, in the house, behind a closed door
+    z({ x = 16, y = 10 })                      -- 6 east, outside, seen through a window
+    z({ x = 10, y = 5, building = other })     -- 5 north, nothing between
+  `);
+  return lua;
+}
+
+test('zList says which zombies have a wall or closed door between and which are in her building', () => {
+  const lua = house();
+  const list = percept(lua).zList;
+  const at = (dx, dy) => list.find((z) => z.dx === dx && z.dy === dy);
+  assert.deepEqual([at(3, 0).wall, at(3, 0).inside], [true, false], 'wall, outside');
+  assert.deepEqual([at(0, 4).wall, at(0, 4).inside], [true, true], 'closed door, same building');
+  assert.deepEqual([at(6, 0).wall, at(6, 0).inside], [false, false], 'a window is not a wall');
+  assert.deepEqual([at(0, -5).wall, at(0, -5).inside], [false, false], 'in the open');
+});
+
+test('outdoors nothing is in her building, even a zombie inside one', () => {
+  const lua = house();
+  lua.run('__players[0].sq = { getBuilding = function() return nil end }');
+  const list = percept(lua).zList;
+  assert.ok(list.length === 4 && list.every((z) => z.inside === false));
+});
+
+test('a failed sight check or building read reads as no wall and not inside', () => {
+  const lua = house();
+  lua.run('LosUtil.lineClear = function() error("boom") end');
+  lua.run('for _, z in ipairs(__zombies) do z.getSquare = function() error("boom") end end');
+  const list = percept(lua).zList;
+  assert.equal(list.length, 4);
+  assert.ok(list.every((z) => z.wall === false && z.inside === false));
+});
+
+test('only the nearest six zombies pay for the wall check', () => {
+  const lua = body();
+  lua.run(`
+    __players[0] = __makePlayer({ x = 10, y = 10 })
+    __count = 0
+    LosUtil.lineClear = function() __count = __count + 1; return "Clear" end
+    for i = 1, 14 do table.insert(__zombies, __makeZombie({ x = 10 + i, y = 10 })) end
+  `);
+  percept(lua);
+  assert.equal(lua.run('return __count'), 6);
 });
 
 test('summarizeBuildings sorts by distance to the walls and picks the nearest door', () => {
@@ -191,7 +258,7 @@ test('a rich player fills every v2 field from the game calls', () => {
   assert.equal(p.zVisible, 2);
   assert.equal(p.zDowned, 1);
   assert.equal(p.zList.length, 3);
-  assert.deepEqual(p.zList[0], { dx: 2, dy: 0, d: 2, chase: false, down: true, crawl: false });
+  assert.deepEqual(p.zList[0], { dx: 2, dy: 0, d: 2, chase: false, down: true, crawl: false, wall: false, inside: false });
 });
 
 // A house the player stands in, with a kitchen sink, a bed and two doors, and a shop nearby.
@@ -362,7 +429,7 @@ test('night makes it dark', () => {
 });
 
 // The reflex summary added about 140 bytes (docs/percept.md, Size).
-test('a busy worst case stays under about 3.5 KB', () => {
+test('a busy worst case stays under about 3.7 KB', () => {
   const lua = body();
   lua.run(`
     local items, parts = {}, {}
@@ -388,7 +455,7 @@ test('a busy worst case stays under about 3.5 KB', () => {
   assert.equal(p.wounds.length, 8);
   assert.equal(p.buildings.length, 6);
   assert.equal(p.weapons.length, 4);
-  assert.ok(line.length < 3500, `percept is ${line.length} bytes`);
+  assert.ok(line.length < 3700, `percept is ${line.length} bytes`);
 });
 
 test('the weapon in hand carries its score, and a pen in hand reads as none', () => {
