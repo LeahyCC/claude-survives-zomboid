@@ -1263,6 +1263,9 @@ local function tryNext(p, s, why)
   chooseWay(p, s)
 end
 
+-- How long an open, smash or climb animation may run after its action has left the queue.
+Act.ANIM_TICKS = 180
+
 Act.SKILL.ENTER = {
   start = function(p, s)
     local id = s.args.target or ""
@@ -1337,21 +1340,60 @@ Act.SKILL.ENTER = {
           end
           ISTimedActionQueue.add(ISOpenCloseWindow:new(p, obj))
           s.how = "window"
+          s.opening = true
         else
           s.how = "window"
         end
+        -- Opening, smashing and clearing glass each finish their action at once and do the work
+        -- in the animation after it, so a climb queued behind them finds the window still shut
+        -- and the game drops it. The climb waits in "prep" until the window can be climbed.
+        if Core.queueLength(p) > 0 then
+          s.phase, s.prepTick, s.idleSince = "prep", LS.tick, nil
+          Core.trace("enter-use", w.kind .. " " .. tostring(s.how) .. " head=" .. tostring(Move.headType(p))
+            .. " at " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
+          return
+        end
         ISTimedActionQueue.add(ISClimbThroughWindow:new(p, obj, 0))
       end
-      s.throughTick = LS.tick
+      s.throughTick, s.idleSince = LS.tick, nil
       s.phase = "through"
       Core.trace("enter-use", w.kind .. " " .. tostring(s.how) .. " head=" .. tostring(Move.headType(p))
         .. " at " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
       return
     end
+    if s.phase == "prep" then
+      local obj = Act.wayObject(w)
+      if not obj then return tryNext(p, s, "gone") end
+      local climbable = false
+      pcall(function() climbable = obj:canClimbThrough(p) == true end)
+      if climbable and Core.queueLength(p) == 0 then
+        ISTimedActionQueue.add(ISClimbThroughWindow:new(p, obj, 0))
+        s.throughTick, s.idleSince, s.opening = LS.tick, nil, false
+        s.phase = "through"
+        return
+      end
+      if Core.queueLength(p) > 0 and LS.tick - s.prepTick < 1200 then return end
+      s.idleSince = s.idleSince or LS.tick
+      if LS.tick - s.idleSince < Act.ANIM_TICKS then return end
+      Core.trace("enter-prep-fail", tostring(s.how) .. " climbable=" .. tostring(climbable))
+      if s.opening then
+        -- It would not open: stuck or locked in a way the flags did not show. Smash it later.
+        s.opening = false
+        w.smashable = true
+        return tryNext(p, s, "locked")
+      end
+      return tryNext(p, s, "failed")
+    end
     if s.phase == "through" then
       local busy = Core.queueLength(p) > 0
-      if busy and LS.tick - s.throughTick < 1200 then return end
-      if LS.tick - s.throughTick < 30 then return end
+      if busy then
+        s.idleSince = nil
+        if LS.tick - s.throughTick < 1200 then return end
+      else
+        -- The climb also moves him in the animation after its action ends. Give it time.
+        s.idleSince = s.idleSince or LS.tick
+        if LS.tick - s.idleSince < Act.ANIM_TICKS then return end
+      end
       -- The way did not take him in (the climb was refused, or the walk failed). Next one.
       if s.smashing == w and s.how == "smash" then
         -- Already broken now, so trying it again is the cheapest way in.

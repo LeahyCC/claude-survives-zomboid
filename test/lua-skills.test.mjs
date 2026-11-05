@@ -390,12 +390,14 @@ function enterWorld(door = {}, win = null, at = [25.5, 12.5], keys = []) {
     }
     __squares["30,12,0"].opts.door = DOOR
     ${win ? `
-    local w = ${luaTable(win)}
+    WINSTATE = ${luaTable(win)}
+    local w = WINSTATE
     WIN = {
       isExterior = function() return true end, getNorth = function() return true end,
       IsOpen = function() return w.open or false end, isLocked = function() return w.locked or false end,
       isPermaLocked = function() return false end, isSmashed = function() return w.smashed or false end,
       isGlassRemoved = function() return false end, isBarricaded = function() return w.barricaded or false end,
+      canClimbThrough = function() return (w.open or w.smashed or false) and not w.barricaded end,
     }
     __squares["32,10,0"].opts.window = WIN` : ''}
     __adjacent = function(sq)
@@ -433,7 +435,10 @@ test('ENTER tries a window that opens when the door is locked', () => {
   assert.equal(walkTarget(lua), '32,9');
   moveTo(lua, 32.5, 9.5);
   tick(lua, 2);
-  assert.deepEqual(queue(lua), ['ISOpenCloseWindow', 'ISClimbThroughWindow']);
+  assert.deepEqual(queue(lua), ['ISOpenCloseWindow'], 'the climb waits for the window to open');
+  lua.run('WINSTATE.open = true; ISTimedActionQueue.clear(P)');
+  tick(lua);
+  assert.deepEqual(queue(lua), ['ISClimbThroughWindow']);
   moveTo(lua, 32.5, 10.5);
   tick(lua);
   assert.deepEqual(result(lua), { seq: 1, verb: 'ENTER', status: 'done', why: 'in through a window' });
@@ -475,7 +480,10 @@ test('ENTER with no key, or the wrong one, leaves a locked door and falls back t
     assert.equal(lua.run('return LocalSurvivor.skill.way.kind'), 'window');
     moveTo(lua, 32.5, 9.5);
     tick(lua, 2);
-    assert.deepEqual(queue(lua), ['ISOpenCloseWindow', 'ISClimbThroughWindow']);
+    assert.deepEqual(queue(lua), ['ISOpenCloseWindow'], 'the climb waits for the window to open');
+  lua.run('WINSTATE.open = true; ISTimedActionQueue.clear(P)');
+  tick(lua);
+  assert.deepEqual(queue(lua), ['ISClimbThroughWindow']);
   }
 });
 
@@ -488,7 +496,10 @@ test('ENTER smashes a window only when every quiet way is locked, and says it wa
   moveTo(lua, 32.5, 9.5);
   tick(lua, 2); // arrive at the window: locked, nothing quiet left, smash it
   tick(lua, 2);
-  assert.deepEqual(queue(lua), ['ISSmashWindow', 'ISRemoveBrokenGlass', 'ISClimbThroughWindow']);
+  assert.deepEqual(queue(lua), ['ISSmashWindow', 'ISRemoveBrokenGlass'], 'the climb waits for the glass');
+  lua.run('WINSTATE.smashed = true; ISTimedActionQueue.clear(P)');
+  tick(lua);
+  assert.deepEqual(queue(lua), ['ISClimbThroughWindow']);
   moveTo(lua, 32.5, 10.5);
   tick(lua);
   assert.deepEqual(result(lua), { seq: 1, verb: 'ENTER', status: 'done', why: 'in through a smashed window (loud)' });
@@ -536,4 +547,38 @@ test('a walk to the square by a window only arrives on that square, not the diag
   assert.equal(lua.run('return LocalSurvivor.Act.walkToSquare(__players[0], S, __squares["11,11,0"])'), 'walking');
   lua.run('__players[0].x, __players[0].y = 11.5, 11.5');
   assert.equal(lua.run('return LocalSurvivor.Act.walkToSquare(__players[0], S, __squares["11,11,0"])'), 'arrived');
+});
+
+test('ENTER waits for the climb animation instead of calling a window failed', () => {
+  const lua = enterWorld({ locked: true }, {});
+  order(lua, '1|ENTER|0|0||||B2');
+  tick(lua);
+  moveTo(lua, 29.5, 12.5);
+  tick(lua, 3);
+  moveTo(lua, 32.5, 9.5);
+  tick(lua, 2);
+  lua.run('WINSTATE.open = true; ISTimedActionQueue.clear(P)');
+  tick(lua);
+  // The climb action is done, but he is still outside while the animation plays.
+  lua.run('ISTimedActionQueue.clear(P)');
+  tick(lua, 120);
+  assert.equal(result(lua).status, 'running', 'still climbing');
+  moveTo(lua, 32.5, 10.5);
+  tick(lua);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'ENTER', status: 'done', why: 'in through a window' });
+});
+
+test('ENTER marks a window that will not open for smashing and moves on', () => {
+  const lua = enterWorld({ locked: true }, {});
+  order(lua, '1|ENTER|0|0||||B2');
+  tick(lua);
+  moveTo(lua, 29.5, 12.5);
+  tick(lua, 3);
+  moveTo(lua, 32.5, 9.5);
+  tick(lua, 2);
+  assert.deepEqual(queue(lua), ['ISOpenCloseWindow']);
+  lua.run('ISTimedActionQueue.clear(P)'); // the open played, the window stayed shut
+  tick(lua, 200);
+  assert.notDeepEqual(queue(lua), ['ISClimbThroughWindow'], 'never climbs a shut window');
+  assert.equal(lua.get('LocalSurvivor.skill.way.smashable') ?? lua.run('for _, w in ipairs(LocalSurvivor.skill and LocalSurvivor.skill.ways or {}) do if w.kind == "window" then return w.smashable end end'), true);
 });
