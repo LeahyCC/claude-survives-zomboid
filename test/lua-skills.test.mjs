@@ -523,3 +523,17 @@ test('the tick loop drives a skill', () => {
   lua.fireEvent('OnTick');
   assert.deepEqual(result(lua), { seq: 1, verb: 'GOTO', status: 'done', why: 'arrived' });
 });
+
+test('a walk to the square by a window only arrives on that square, not the diagonal one', () => {
+  const lua = createHarness();
+  lua.autoload();
+  lua.run(`
+    for x = 8, 14 do for y = 8, 14 do __makeSquare({ x = x, y = y }) end end
+    -- On square 10,10, a hair from the corner it shares with 11,11.
+    __players[0] = __makePlayer({ x = 10.95, y = 10.95, live = true })
+    S = { prog = {} }
+  `);
+  assert.equal(lua.run('return LocalSurvivor.Act.walkToSquare(__players[0], S, __squares["11,11,0"])'), 'walking');
+  lua.run('__players[0].x, __players[0].y = 11.5, 11.5');
+  assert.equal(lua.run('return LocalSurvivor.Act.walkToSquare(__players[0], S, __squares["11,11,0"])'), 'arrived');
+});

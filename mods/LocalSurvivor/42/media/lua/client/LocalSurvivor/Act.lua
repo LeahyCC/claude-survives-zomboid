@@ -568,6 +568,17 @@ function Act.walkLeg(p, s, x, y, near, issue)
   return "walking"
 end
 
+-- A leg that has to end on one exact square: the one in front of a window or a container.
+-- Arrived means standing on it. Measured from the square's corner, "close enough" was also true
+-- on the diagonal neighbour, where opening a window works but climbing through it is refused, so
+-- ENTER opened windows it could not use and then smashed one.
+function Act.walkToSquare(p, s, sq)
+  local here = nil
+  pcall(function() here = p:getCurrentSquare() end)
+  if here and here == sq then return "arrived" end
+  return Act.walkLeg(p, s, sq:getX() + 0.5, sq:getY() + 0.5, 0.3, function() Move.walkTo(p, sq); return true end)
+end
+
 -- Start a fresh leg: the next walkLeg call issues the walk.
 function Act.newLeg(s)
   s.issued, s.ends = false, 0
@@ -926,7 +937,7 @@ searchStep = function(p, s)
     if near then s.phase = "take"; return end
     if not s.dest then s.dest = Move.adjacent(p, c.sq) end
     if not s.dest then c.done = true; s.phase = "next"; return end
-    local r = Act.walkLeg(p, s, s.dest:getX(), s.dest:getY(), 0.8, function() Move.walkTo(p, s.dest); return true end)
+    local r = Act.walkToSquare(p, s, s.dest)
     if r == "arrived" then s.phase = "take"
     elseif r ~= "walking" then c.done = true; s.phase = "next" end
     return
@@ -1279,7 +1290,7 @@ Act.SKILL.ENTER = {
       if not obj then return tryNext(p, s, "gone") end
       if not s.dest then pcall(function() s.dest = AdjacentFreeTileFinder.FindWindowOrDoor(sq, obj, p) end) end
       if not s.dest then return tryNext(p, s, "unreachable") end
-      local r = Act.walkLeg(p, s, s.dest:getX(), s.dest:getY(), 0.8, function() Move.walkTo(p, s.dest); return true end)
+      local r = Act.walkToSquare(p, s, s.dest)
       if r == "arrived" then s.phase = "use"
       elseif r ~= "walking" then tryNext(p, s, r) end
       return
@@ -1333,6 +1344,8 @@ Act.SKILL.ENTER = {
       end
       s.throughTick = LS.tick
       s.phase = "through"
+      Core.trace("enter-use", w.kind .. " " .. tostring(s.how) .. " head=" .. tostring(Move.headType(p))
+        .. " at " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
       return
     end
     if s.phase == "through" then
@@ -1352,6 +1365,11 @@ Act.SKILL.ENTER = {
         s.phase = "approach"
         return
       end
+      local obj = Act.wayObject(w)
+      local st = ""
+      pcall(function() st = "open=" .. tostring(obj:IsOpen()) .. " smashed=" .. tostring(obj:isSmashed()) end)
+      pcall(function() st = st .. " canClimb=" .. tostring(obj:canClimbThrough(p)) end)
+      Core.trace("enter-fail", w.kind .. " " .. st .. " busy=" .. tostring(busy) .. " at " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
       tryNext(p, s, "failed")
     end
   end,

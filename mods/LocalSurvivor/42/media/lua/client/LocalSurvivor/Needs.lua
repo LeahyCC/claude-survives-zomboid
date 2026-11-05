@@ -821,6 +821,10 @@ function Needs.secureStep(p, job, sec)
     if t.walks > 2 then return giveUp() end
     ISTimedActionQueue.clear(p)
     ISTimedActionQueue.add(ISWalkToTimedAction:new(p, stand))
+    pcall(function()
+      Core.trace("secure-walk", t.kind .. "/" .. need .. " to " .. stand:getX() .. "," .. stand:getY()
+        .. " exterior=" .. tostring(stand:has(IsoFlagType.exterior)) .. " from " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
+    end)
     if Needs.queued(p, job) then return "busy" end
     return giveUp()
   end

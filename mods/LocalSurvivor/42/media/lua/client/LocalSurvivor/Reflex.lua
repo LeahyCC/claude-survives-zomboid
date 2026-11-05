@@ -576,6 +576,7 @@ function Reflex.perform(p, a, snap, objs)
   elseif kind == "close" then
     if z then Reflex.closeIn(p, z, snap.zombies[a.index].d, a.why == "down" and THOUGHTS.down or nil) end
   elseif kind == "flee" then
+    Core.trace("flee", tostring(a.why) .. " at " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
     if a.why == "short" then
       Move.doMove(p, math.floor((a.dx or 0) * 16 + 0.5), math.floor((a.dy or 0) * 16 + 0.5))
       hud.action = "FLEE (reflex)"

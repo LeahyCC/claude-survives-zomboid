@@ -55,6 +55,19 @@ function LS.onTick()
   if LS.lastPX and (math.abs(px - LS.lastPX) + math.abs(py - LS.lastPY) > 0.3) then LS.lastMoveTick = tick end
   LS.lastPX, LS.lastPY = px, py
 
+  if tick % 30 == 0 then
+    local out = nil
+    pcall(function() out = p:getCurrentSquare():has(IsoFlagType.exterior) end)
+    if out ~= nil and out ~= LS.traceOutside then
+      if LS.traceOutside ~= nil then
+        local job = (LS.skill and LS.skill.verb) or (LS.needsJob and LS.needsJob.verb) or "-"
+        Core.trace(out and "went-out" or "went-in", "job=" .. tostring(job) .. " head=" .. tostring(LS.Move.headType(p))
+          .. " reflexTick=" .. tostring(tick - LS.reflexTick) .. " at " .. math.floor(px) .. "," .. math.floor(py))
+      end
+      LS.traceOutside = out
+    end
+  end
+
   -- A slice of the place scan every tick, in manual mode too, so the percept stays current.
   pcall(function() LS.Sense.step(p) end)
 

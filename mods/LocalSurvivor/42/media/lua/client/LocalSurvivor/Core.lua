@@ -11,6 +11,22 @@ local function default(key, value)
   if LS[key] == nil then LS[key] = value end
 end
 
+-- Debug lines for live runs, in console.txt. Off unless Zomboid/Lua/ls_trace.txt exists, which is
+-- looked for once a minute so a run can switch it on or off without a restart.
+function Core.trace(tag, msg)
+  local now = LS.tick or 0
+  if LS.traceCheckedAt == nil or now - LS.traceCheckedAt > 3600 or now < LS.traceCheckedAt then
+    LS.traceCheckedAt = now
+    local on = false
+    pcall(function()
+      local r = getFileReader("ls_trace.txt", false)
+      if r then on = true; r:close() end
+    end)
+    LS.traceOn = on
+  end
+  if LS.traceOn then print("LocalSurvivor trace " .. tostring(tag) .. " " .. tostring(msg)) end
+end
+
 -- Constants. Safe to overwrite on a second run.
 Core.PERCEPT_EVERY = 60      -- ticks between percept writes (~1s)
 Core.INTENT_EVERY  = 45      -- ticks between intent polls (~0.75s)

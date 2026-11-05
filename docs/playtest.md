@@ -17,6 +17,8 @@ What `playtest.ps1` does:
 5. The helper turns off the first-time survival guide for the session, since it pauses the game until closed.
 6. Stops once `local_percept.txt` is fresh, and deletes the flag file so the next normal launch is not affected.
 
+Tracing: create `Zomboid/Lua/ls_trace.txt` and the mod writes `LocalSurvivor trace` lines to `console.txt` (checked once a minute, no restart needed). It logs each reflex flee, each ENTER attempt and failure with the window's state, each SECURE walk, and every time she goes in or out of a building with the job that was running. Delete the file to stop.
+
 What to watch:
 
 - `Zomboid/console.txt`: Lua errors and `LocalSurvivor` lines.
