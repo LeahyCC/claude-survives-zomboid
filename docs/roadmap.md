@@ -31,6 +31,6 @@ This loop comes first. Features we guess at come after it.
 
 ## Not doing
 
-- A separate "thoughts" model that steers her. No room on the GPU, and the brain already writes a thought with each choice. The peanut gallery (pepe-8b) is different: commentary only, on the CPU, never in the prompt or the orders (`docs/brain.md`).
+- A separate "thoughts" model that steers her. No room on the GPU, and the brain already writes a thought with each choice. The inner voice (pepe-8b) is different: first person commentary only, on the CPU, never in the prompt or the orders (`docs/brain.md`).
 - Fine tuning. Too little data, and the menu still changes every week.
 - A bigger planner on this PC, unless the planner benchmark finds a setup that keeps menu turns fast.
