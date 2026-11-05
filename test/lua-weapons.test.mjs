@@ -369,3 +369,138 @@ test('the reflex counts a pen in hand as bare hands, and a crowbar as armed', ()
   lua.run('P.primary = nil');
   assert.equal(lua.run('return LocalSurvivor.Core.holdingMelee(P)'), false);
 });
+
+// ---------- guns are gear, not the melee weapon ----------
+const GUNS = `
+  PISTOL = __makeItem({ type = "Base.Pistol", name = "Pistol", weight = 1.5,
+    gun = { ammo = "Base.Bullets9mm", mag = "Base.9mmClip", box = "Base.Bullets9mmBox", loaded = 8, max = 15 } })
+  SAUCEPAN = __makeItem({ type = "Base.Saucepan", name = "Saucepan", melee = true, dmg = 0.7, crit = 30, range = 1,
+    swing = 2, cond = 7, condMax = 10, cls = { "SMALL_BLUNT", "IMPROVISED" }, weight = 0.7 })
+  APPLE = __makeItem({ type = "Base.Apple", name = "Apple", food = true, hung = -10, weight = 0.2 })
+`;
+const queuedName = (lua) => lua.run('local a = ISTimedActionQueue.getTimedActionQueue(P).queue[1]; return a and a.args[2]:getDisplayName() or nil');
+
+test('EQUIP never picks a gun as the melee weapon', () => {
+  const lua = world(GUNS + 'P.__items.items = { PISTOL, KNIFE }');
+  order(lua, '1|EQUIP|0|0|||');
+  assert.equal(queuedName(lua), 'Kitchen Knife');
+  const gunOnly = world(GUNS + 'P.__items.items = { PISTOL }');
+  order(gunOnly, '1|EQUIP|0|0|||');
+  assert.deepEqual(queue(gunOnly), []);
+  assert.deepEqual(result(gunOnly), { seq: 1, verb: 'EQUIP', status: 'failed', why: 'equip: no weapon' });
+});
+
+test('EQUIP does not swap a gun in hand for a saucepan, a crowbar or an axe', () => {
+  for (const carried of ['SAUCEPAN', 'CROWBAR', 'AXE']) {
+    const lua = world(GUNS + `P.__items.items = { PISTOL, ${carried} }; P.primary = PISTOL`);
+    order(lua, '1|EQUIP|0|0|||');
+    assert.deepEqual(queue(lua), [], carried);
+    assert.deepEqual(result(lua), { seq: 1, verb: 'EQUIP', status: 'done', why: 'holding the one you picked' }, carried);
+  }
+});
+
+test('a gun in hand counts as picked by hand even before anyone has looked', () => {
+  const lua = world(GUNS + 'P.__items.items = { PISTOL, SAUCEPAN }; P.primary = PISTOL');
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true);
+  assert.equal(lua.run('return LocalSurvivor.Act.equipPlan(P)'), undefined);
+});
+
+// ---------- the weapon Colin picked by hand ----------
+test('a weapon put in her hand while the mod queued nothing is Colin\'s, and is never swapped away', () => {
+  const lua = world('P.__items.items = { CROWBAR, BAT, AXE }; P.primary = CROWBAR');
+  tick(lua); // the first look sets the baseline
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), false);
+  lua.run('P.primary = BAT'); // Colin equips it
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true);
+  order(lua, '1|EQUIP|0|0|||');
+  assert.deepEqual(queue(lua), [], 'the axe in the bag is better, and still not wielded');
+  assert.deepEqual(result(lua), { seq: 1, verb: 'EQUIP', status: 'done', why: 'holding the one you picked' });
+});
+
+test('a weapon the mod equipped itself is not Colin\'s pick', () => {
+  const lua = world('P.__items.items = { PEN, KNIFE, CROWBAR }; P.primary = PEN');
+  tick(lua);
+  order(lua, '1|EQUIP|0|0|||');
+  assert.deepEqual(queue(lua), ['ISEquipWeaponAction']);
+  lua.run('P.primary = CROWBAR; ISTimedActionQueue.clear(P)'); // the equip finishes
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), false);
+  // So a better weapon is still taken up later.
+  lua.run('table.insert(P.__items.items, AXE)');
+  order(lua, '2|EQUIP|0|0|||');
+  assert.equal(queuedName(lua), 'Axe');
+});
+
+test('the lock ends when the weapon breaks, is dropped, or Colin picks another', () => {
+  const lua = world('P.__items.items = { CROWBAR, BAT, AXE }; P.primary = CROWBAR');
+  tick(lua);
+  lua.run('P.primary = BAT');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true);
+  // Broken.
+  lua.run('BAT.opts.broken = true');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), false);
+  lua.run('BAT.opts.broken = false');
+  // Picked another by hand.
+  lua.run('P.primary = CROWBAR');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true);
+  lua.run('P.primary = AXE');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.hand.locked == AXE'), true, 'the new pick is the lock');
+  // Dropped: out of her hands and out of the pack. It is noticed on the next look.
+  lua.run('P.primary = nil; P.__items.items = { CROWBAR, BAT }');
+  tick(lua, 40);
+  assert.equal(lua.run('return LocalSurvivor.hand.locked'), undefined);
+  order(lua, '1|EQUIP|0|0|||');
+  assert.equal(queue(lua)[0], 'ISEquipWeaponAction', 'free to wield the best again');
+});
+
+test('the lock ends with the character', () => {
+  const lua = world('P.__items.items = { CROWBAR, BAT }; P.primary = CROWBAR');
+  tick(lua);
+  lua.run('P.primary = BAT');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true);
+  // A new character is a new player object. Its first look is a baseline, not a pick.
+  lua.run('__players[0] = __makePlayer({ x = 10.5, y = 10.5, live = true }); P = __players[0]; P.__items.items = { CROWBAR }; P.primary = CROWBAR');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), false);
+});
+
+test('food in her hand while she eats is not a pick, and does not end one', () => {
+  const lua = world(GUNS + 'P.__items.items = { CROWBAR, BAT, APPLE }; P.primary = CROWBAR');
+  tick(lua);
+  lua.run('P.primary = BAT');
+  tick(lua);
+  lua.run('P.primary = APPLE'); // she eats
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.hand.locked == BAT'), true, 'his pick is remembered');
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), false, 'but it is not in her hand');
+  // Hands are free again: EQUIP puts back the one Colin chose, not the best.
+  lua.run('P.primary = nil; table.insert(P.__items.items, AXE)');
+  order(lua, '1|EQUIP|0|0|||');
+  assert.equal(queuedName(lua), 'Baseball Bat');
+  lua.run('P.primary = BAT; ISTimedActionQueue.clear(P)');
+  tick(lua);
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true, 'putting it back keeps it his');
+});
+
+test('a SEARCH that finds a better weapon leaves the one Colin chose in her hand', () => {
+  const lua = world(KITCHEN + `
+    P.__items.items = { CROWBAR }; P.primary = CROWBAR
+    COUNTER = __makeContainer({ items = { AXE }, square = __squares["12,10,0"] })
+    ROOM.getContainer = function() return __javaList({ COUNTER }) end
+  `);
+  tick(lua);
+  lua.run('P.__items.items = { CROWBAR, BAT }; P.primary = BAT');
+  tick(lua);
+  searchKitchen(lua);
+  lua.run('__take(P, COUNTER); table.insert(P.__items.items, AXE)');
+  tick(lua, 8);
+  assert.deepEqual(queue(lua), [], 'no equip is queued');
+  assert.equal(result(lua).status, 'done');
+  assert.equal(result(lua).why, 'took 1: Axe');
+});

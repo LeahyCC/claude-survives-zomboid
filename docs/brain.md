@@ -80,7 +80,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `bandage` | BANDAGE | a wound is bleeding, deep, bitten, has glass, or is an unbandaged cut or scratch; and `inv.bandages` is above 0 or `inv.canRip` is true (the job rips cloth). A percept with no `canRip` gets the old test: she is bleeding |
 | `drink` | DRINK | thirst 0.25 or more (or the moodle); water in a bottle, or a tap in this building |
 | `eat` | EAT | hunger 0.25 or more (or the moodle); food ready, or a can and a can opener |
-| `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count |
+| `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count. Never with a gun in hand (`heldGun`), and never when the weapon in hand is the player's own pick (`weaponByHand`) |
 | `drop` | DROP | heavy (moodle, or weight 85% of the maximum), no chaser, no zombie within 8 |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
@@ -99,7 +99,9 @@ While a skill or needs job runs, any new order cancels it. So the menu then has 
 
 Building labels come from map memory: `not visited`, `visited, not searched`, `partly searched`, `searched`, `safe house` or `has water`, `has a bed`, and `N zombies seen`.
 
-"No real weapon" means nothing in hand or in the bag scores 20 or more. A kitchen knife scores 9 and a hammer 19, a crowbar 30 (`docs/combat.md`). An older percept with no scores counts only empty hands and an empty bag.
+"No real weapon" means nothing in hand or in the bag scores 20 or more. A kitchen knife scores 9 and a hammer 19, a crowbar 30 (`docs/combat.md`). An older percept with no scores counts only empty hands and an empty bag. A gun in hand (`heldGun`) means she is armed: it is not "no real weapon", so no house is sold as the place to look for one and the playbook's `no-weapon` and `weak-weapon` rules stay quiet (`weaponPoor`).
+
+A gun is not a melee weapon. The percept names the one in her hand in `heldGun` and leaves `weapon` at `none`, and `guns` lists what she carries with its ammo. The bridge reads `heldGun` and `weaponByHand` through `heldGun(p)` and `weaponByHand(p)` in `senses.mjs`, so the policy, the menu, the playbook, the digest and the inner voice all agree that a held pistol is a weapon in hand. The digest says `Holding a Pistol (a gun, 8 loaded and 12 spare rounds).` and `Holding a Crowbar (100%), your own pick.`. The inner voice reads the hand the same way (`handName` in `commentator.mjs`), so picking up a pistol is a "better weapon" moment and a held gun is never "no weapon in hand". Before this, the old percept read a held pistol as empty hands and the equip rule swapped it for a saucepan.
 
 `res.target` says what the running job works on, so a restart of the bridge mid-job still knows. If the bridge has no record of the order, `ENTER`, `SEARCH` and `SECURE` use the building id in it as their option key, and a `GOTO` is matched by its `x,y` against this turn's walks. Otherwise the verb alone stands for the job, as before.
 
@@ -114,7 +116,7 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 | `bleeding` | `bleeding > 0`. Steps aside when `bandage` is not on the menu (no bandage, nothing to rip) | `bandage` |
 | `thirst` | thirst 0.6 or more, or the moodle at 2 | `drink` |
 | `hunger` | hunger 0.6 or more, or the moodle at 2, and `inv.foodReady` above 0. A can that needs opening is the model's call | `eat` |
-| `equip` | a carried weapon is clearly better than the one in hand, or the hands are empty | `equip` |
+| `equip` | a carried weapon is clearly better than the one in hand, or the hands are empty. Not with a gun in hand, and not when the weapon in hand is the player's own pick (`weaponByHand`): the mod would turn the order down, and the player's choice stands | `equip` |
 | `night-outside` | 21:00 to 06:00 and outside | the nearest house on the menu (`ENTER`) |
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
@@ -186,7 +188,7 @@ At most 5 rules whose condition holds go into the user message, in this order:
 | `night` | 21:00 to 06:00 |
 | `overloaded` | heavy moodle, or weight 85% of max |
 | `one-at-a-time` | an idle zombie within 20, or more than one in sight |
-| `no-weapon` | none in hand and none carried |
+| `no-weapon` | none in hand and none carried, and no gun in hand |
 | `weak-weapon` | a weapon in hand or bag, but nothing scores 20 or more |
 | `water` | no water carried |
 | `quiet-entry` | outside with buildings in sight |

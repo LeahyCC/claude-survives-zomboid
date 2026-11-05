@@ -31,7 +31,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `foods` | int | Edible food in the main inventory (not in bags). Sealed cans do not count. | `Core.isEdible` |
 | `waters` | int | Containers holding at least 0.05 L of clean water in the main inventory. | `Core.isWaterItem` |
 | `bldgDir` `bldgDist` | string, int | Direction and Manhattan distance to the nearest building square within 20 tiles. `none` and -1 if none. Refreshed every 120 ticks. | `Sense.scanBuildings` |
-| `weapon` | string | Melee weapon in the main hand, or `none`. A pen, fork or broken weapon reads `none`: it is not a weapon. | `p:getPrimaryHandItem()` |
+| `weapon` | string | Melee weapon in the main hand, or `none`. A pen, fork or broken weapon reads `none`: it is not a weapon. A gun reads `none` too, and is named in `heldGun`. | `p:getPrimaryHandItem()` |
 | `items` | string | Names of the first 12 inventory items. | `getDisplayName()` |
 | `qlen` | int | Timed actions queued. | `ISTimedActionQueue` |
 | `reflexed` | bool | The reflex acted in the last 600 ticks. | `LocalSurvivor.reflexTick` |
@@ -53,6 +53,9 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `bag` | string | Worn back item name, or `none`. | `p:getClothingItem_Back()` |
 | `weapons` | list | Up to 4 melee weapons carried, best score first: `{n, dmg, cond, reach, score}`. `cond` is 0 to 1. Anything that scores under 5 (a pen, a fork, a broken bat) is left out. | `Core.weaponFacts`: `getMaxDamage()` `getCondition()/getConditionMax()` `getMaxRange()` |
 | `weaponScore` | number | The score of the weapon in hand, 0 when `weapon` is `none`. Compare it with the `score` of the `weapons` entries: a carried weapon at 25% over it is worth swapping to. | `Core.weaponScore` |
+| `guns` | list | Up to 2 firearms carried, one level into bags, the held one first, then the best supplied: `{n, ammo, loaded, held}`. `ammo` is the rounds carried for it outside the gun (loose rounds of its calibre plus rounds in spare magazines), `loaded` the rounds in it (magazine plus one chambered), `held` is true for the one in hand. A broken gun is left out. An empty list when none. | `Core.gunFacts`, `Core.ammoFacts`: `getAmmoType():getItemKey()` `getMagazineType()` `getCurrentAmmoCount()` `isRoundChambered()` |
+| `heldGun` | string | The firearm in the main hand, or `none`. `weapon` reads `none` for a gun: it is not the melee weapon, the reflex cannot fire it. A bridge must read `heldGun` too before it decides she is unarmed. | `Core.isGun(p:getPrimaryHandItem())` |
+| `weaponByHand` | bool | The weapon in her main hand is one the player put there himself, or a gun. The mod does not swap it away (`docs/skills.md`, EQUIP), so the bridge must not offer to. False when the mod equipped it, and when the hands are empty. | `Act.handChosen` |
 | `inv` | object | Supplies, see below. | |
 | `wounds` | list | Injured body parts only, worst first, up to 8. | see below |
 | `bleeding` | int | Body parts bleeding now. | `BodyPart:bleeding()` |
@@ -194,7 +197,11 @@ A sample is about 230 bytes, so the record is near 3 KB. It is only in the dead 
 
 ## Size
 
-About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.3 KB.
+About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.3 KB. The gun fields add under 100 bytes with one gun.
+
+## The HUD weapon line
+
+`LS.hudData.weapon` feeds the bottom line of the panel, `Inv N food, N water | <weapon>`. It shows the melee weapon, or the gun when one is held. When the weapon is the player's own pick (`weaponByHand`) the line adds `(your pick)`, for example `Baseball Bat (your pick)`.
 
 ## Checked and unchecked
 

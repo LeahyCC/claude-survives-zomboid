@@ -52,26 +52,122 @@ function Act.heldScore(p)
   return held
 end
 
--- The weapon worth taking up now, or nil. Second value: every weapon carried.
+-- ---------- the weapon Colin put in her hand ----------
+-- If the item in her main hand changes and the mod did not queue the change, Colin did it by
+-- hand. That item is then his choice and the mod never swaps it away. The lock ends when the item
+-- breaks, leaves her pack, is replaced by another weapon Colin picks, or the character dies (a
+-- new player object starts a fresh watch). A gun is always his choice: the mod never equips one.
+-- Only a weapon can be chosen. Food, a bottle or a bandage in the hand while she eats or
+-- drinks is not a choice, and does not end one.
+Act.HAND_GRACE = 1800     -- ticks an equip the mod queued may take to show up in the hand
+Act.HAND_CHECK = 30       -- ticks between looks to see the chosen item is still carried
+
+-- The mod is about to equip c.it: do not take the change for Colin's.
+function Act.markModEquip(item)
+  LS.hand = LS.hand or {}
+  LS.hand.modItem, LS.hand.modUntil = item, (LS.tick or 0) + Act.HAND_GRACE
+end
+
+-- A gun, or a melee weapon that scores over the floor: something that can be chosen.
+local function isChoice(it)
+  if it == nil then return false end
+  if Core.isGun(it) then return true end
+  if not Core.isMeleeWeapon(it) then return false end
+  local ok, w = pcall(Core.weaponFacts, it, LS.Sense.itemType(it))
+  return ok and Core.isRealWeapon(w)
+end
+
+local function carries(p, item)
+  for _, it in ipairs(LS.Sense.carriedItems(p)) do
+    if it == item then return true end
+  end
+  return false
+end
+
+-- Looks at the hand. Call it every tick and when the percept is built. Returns the item Colin
+-- chose, or nil. It can be out of his hand for a moment (she is eating), and is still his.
+function Act.watchHand(p)
+  local h = LS.hand
+  if h == nil or h.player ~= p then
+    h = { player = p, seen = false }
+    LS.hand = h
+  end
+  local cur = nil
+  pcall(function() cur = p:getPrimaryHandItem() end)
+  if not h.seen then
+    -- The first look only sets the baseline. A gun already in hand is his: the mod never equips one.
+    h.seen, h.item = true, cur
+    if Core.isGun(cur) then h.locked = cur end
+    return h.locked
+  end
+  if cur ~= h.item then
+    h.item = cur
+    if isChoice(cur) and cur ~= h.locked then
+      local mine = h.modItem == cur and (LS.tick or 0) <= (h.modUntil or 0) and not Core.isGun(cur)
+      if mine then h.locked = nil else h.locked = cur end
+    end
+    if h.modItem == cur then h.modItem = nil end
+  end
+  if h.locked then
+    local gone = false
+    pcall(function() gone = h.locked:isBroken() == true end)
+    -- Out of his hand: look whether it is still carried, now and then.
+    if not gone and cur ~= h.locked and (LS.tick or 0) - (h.checked or -99999) >= Act.HAND_CHECK then
+      h.checked = LS.tick or 0
+      gone = not carries(p, h.locked)
+    end
+    if gone then h.locked = nil end
+  end
+  return h.locked
+end
+
+-- True when the chosen weapon is in her main hand right now.
+function Act.handChosen(p)
+  local lock = Act.watchHand(p)
+  if lock == nil then return false end
+  local inHand = false
+  pcall(function() inHand = p:getPrimaryHandItem() == lock end)
+  return inHand
+end
+
+-- The weapon worth taking up now, or nil. Second value: every melee weapon carried.
+-- What he chose by hand is never swapped away; if it is out of his hand (he ate, he drank) it is
+-- put back. A gun in hand counts as armed: no melee weapon replaces it.
 function Act.equipPlan(p)
   local cands = Act.weaponsCarried(p)
+  local lock = Act.watchHand(p)
+  if lock ~= nil then
+    local inHand = false
+    pcall(function() inHand = p:getPrimaryHandItem() == lock end)
+    if inHand then return nil, cands end
+    local two = false
+    pcall(function() two = lock:isTwoHandWeapon() == true end)
+    local name = "?"
+    pcall(function() name = lock:getDisplayName() end)
+    return { it = lock, score = 0, name = name, two = two }, cands
+  end
   local i = Act.chooseWeapon(cands, Act.heldScore(p))
   return i and cands[i] or nil, cands
 end
 
 -- A weapon in a bag has to come out to the main inventory first, as vanilla's equip does.
 function Act.queueEquip(p, c)
+  Act.markModEquip(c.it)
   pcall(function() ISInventoryPaneContextMenu.transferIfNeeded(p, c.it) end)
   ISTimedActionQueue.add(ISEquipWeaponAction:new(p, c.it, 50, true, c.two))
   LS.hudData.thought = "Taking up the " .. tostring(c.name) .. "."
 end
 
--- Returns "held" when nothing needed doing because the right weapon is already in hand.
+-- Returns "held" when nothing needed doing because the right weapon is already in hand, and why.
 function Act.doEquip(p)
   local c, cands = Act.equipPlan(p)
   if c then Act.queueEquip(p, c); return "queued" end
+  if Act.handChosen(p) then return "held", "holding the one you picked" end
+  local gun = false
+  pcall(function() gun = Core.isGun(p:getPrimaryHandItem()) end)
+  if gun then return "held", "holding a gun" end
   for _, x in ipairs(cands) do
-    if x.score >= Core.WEAPON.MIN_SCORE then return "held" end
+    if x.score >= Core.WEAPON.MIN_SCORE then return "held", "already holding the best" end
   end
   LS.lastError = "equip: no weapon"
 end
@@ -201,45 +297,69 @@ function Act.manageLight(p)
 end
 
 -- ---------- loot priorities ----------
--- What a search takes, best first. max caps how many a body carries, counting what it already
--- has. Anything that matches no row (clothes, junk) is left where it is.
+-- What a search takes, best first, and how many of each a body carries (max, counting what it
+-- already has). keep is how long DROP holds on to the kind, on its own scale. The value that
+-- orders a pick is Core.lootKinds; anything that matches no kind (clothes, junk, a plunger,
+-- perfume) is left where it is.
 Act.LOOT = {
-  { key = "weapon", score = 100 },
-  { key = "bag", score = 90, max = 1 },
-  { key = "water", score = 80, max = 4 },
-  { key = "bottle", score = 70, max = 2 },
-  { key = "food", score = 60, max = 12 },
-  { key = "can", score = 55, max = 12 },
-  { key = "opener", score = 50, max = 1 },
-  { key = "bandage", score = 45, max = 6 },
-  { key = "sheet", score = 40, max = 6 },
-  { key = "disinfectant", score = 35, max = 2 },
-  { key = "painkiller", score = 30, max = 2 },
-  { key = "hammer", score = 20, max = 1 },
-  { key = "saw", score = 19, max = 1 },
-  { key = "screwdriver", score = 18, max = 1 },
-  { key = "lighter", score = 17, max = 1 },
-  { key = "flashlight", score = 16, max = 1 },
+  { key = "bag", max = 2, keep = 90 },   -- the worn one counts, so a better one can still come
+  { key = "weapon", max = 99, keep = 0 },
+  { key = "gun", max = 2, keep = 80 },
+  { key = "ammo", max = 60, keep = 78 },
+  { key = "mag", max = 3, keep = 76 },
+  { key = "bandage", max = 6, keep = 45 },
+  { key = "disinfectant", max = 2, keep = 35 },
+  { key = "antibiotic", max = 2, keep = 38 },
+  { key = "painkiller", max = 2, keep = 30 },
+  { key = "splint", max = 2, keep = 28 },
+  { key = "sheet", max = 6, keep = 40 },
+  { key = "water", max = 4, keep = 80 },
+  { key = "bottle", max = 2, keep = 70 },
+  { key = "drink", max = 2, keep = 25 },
+  { key = "food", max = 12, keep = 60 },
+  { key = "box", max = 2, keep = 60 },
+  { key = "can", max = 12, keep = 55 },
+  { key = "opener", max = 1, keep = 50 },
+  { key = "fresh", max = 3, keep = 22 },
+  { key = "hammer", max = 1, keep = 20 },
+  { key = "saw", max = 1, keep = 19 },
+  { key = "screwdriver", max = 1, keep = 18 },
+  { key = "lighter", max = 1, keep = 17 },
+  { key = "flashlight", max = 1, keep = 16 },
+  { key = "battery", max = 2, keep = 15 },
 }
+Act.MAX = {}
+for _, row in ipairs(Act.LOOT) do Act.MAX[row.key] = row.max end
 
--- What kind of thing a described item is, ignoring what is carried.
+-- What kind of thing a described item is, ignoring what is carried. These count what she holds.
 Act.IS = {
   weapon = function(d) return Core.isRealWeapon(d.weapon) end,
   bag = function(d) return d.bag ~= nil end,
+  gun = function(d) return d.gun ~= nil end,
+  ammo = function(d) return d.ammo ~= nil end,
+  mag = function(d) return d.mag ~= nil end,
+  box = function(d) return d.box ~= nil end,
   water = function(d) return (tonumber(d.waterL) or 0) > 0 end,
-  bottle = function(d) return (d.emptyBottle or d.drink) and true or false end,
+  bottle = function(d) return d.emptyBottle == true end,
+  drink = function(d) return d.drink == true end,
   food = function(d) return d.edible == true end,
+  fresh = function(d)
+    return d.edible == true and (d.frozen == true or (d.shelf ~= nil and d.shelf < Core.LOOT.KEEP_DAYS))
+  end,
   can = function(d) return d.sealed == true end,
   opener = function(d) return d.opener == true end,
   bandage = function(d) return d.bandage == true and not d.sheet end,
   sheet = function(d) return d.sheet == true end,
   disinfectant = function(d) return d.disinfect == true end,
+  antibiotic = function(d) return d.antibiotic == true end,
   painkiller = function(d) return d.painkiller == true end,
+  splint = function(d) return d.splint == true end,
   hammer = function(d) return d.hammer == true end,
   saw = function(d) return d.saw == true end,
   screwdriver = function(d) return d.screwdriver == true end,
   lighter = function(d) return d.lighter == true end,
   flashlight = function(d) return d.flashlight == true end,
+  battery = function(d) return d.battery == true end,
 }
 
 -- Pure. The score of a described item's weapon facts, 0 when it has none.
@@ -248,50 +368,80 @@ local function weaponScoreOf(d)
   return tonumber(d.weapon.score) or Core.weaponScore(d.weapon)
 end
 
--- Pure. Add one described item to a have table (counts per key, best weapon score, bag worn).
+-- Pure. Add one described item to a have table: a count per kind (rounds for ammo), the best
+-- weapon score, the bag worn, and the ammo that fits each gun carried.
 function Act.countInto(have, d)
   for _, row in ipairs(Act.LOOT) do
-    if row.key ~= "weapon" and Act.IS[row.key](d) then have[row.key] = (have[row.key] or 0) + 1 end
+    if row.key ~= "weapon" and Act.IS[row.key](d) then
+      local n = 1
+      if row.key == "ammo" then n = math.max(1, tonumber(d.count) or 1) end
+      have[row.key] = (have[row.key] or 0) + n
+    end
   end
   have.weaponValue = math.max(tonumber(have.weaponValue) or 0, weaponScoreOf(d))
+  if type(d.gun) == "table" then
+    have.ammoOf, have.magOf, have.boxOf = have.ammoOf or {}, have.magOf or {}, have.boxOf or {}
+    if d.gun.ammoKey ~= "" then have.ammoOf[d.gun.ammoKey] = true end
+    if d.gun.magKey ~= "" then have.magOf[d.gun.magKey] = true end
+    if d.gun.boxKey ~= "" then have.boxOf[d.gun.boxKey] = true end
+  end
   return have
 end
 
--- Pure. Why to take d given what is carried: the first row it matches that is not full yet.
--- Returns the key and a score, or nil to leave it.
+-- The facts Core.lootKinds reads, taken from a have table.
+local function lootCtx(have)
+  return { weaponBest = have.weaponValue, bagWorn = have.bagWorn, bagCapacity = have.bagCapacity,
+    hunger = have.hunger, foodReady = have.food, ammoOf = have.ammoOf, magOf = have.magOf, boxOf = have.boxOf }
+end
+
+-- Pure. Why to take d given what is carried: the best kind it is worth that is not full yet.
+-- Returns the key and a score, or nil to leave it. The score is the loot value, lighter first
+-- among equals.
 function Act.lootPick(d, have)
-  if type(d) ~= "table" or d.broken then return nil end
-  if d.clothing and not d.bag then return nil end
+  if type(d) ~= "table" then return nil end
   have = have or {}
-  local best = tonumber(have.weaponValue) or 0
-  for _, row in ipairs(Act.LOOT) do
-    local key = row.key
-    if Act.IS[key](d) and (tonumber(have[key]) or 0) < (row.max or 99) then
-      local ok, bonus = true, -(tonumber(d.weight) or 0) / 100
-      if key == "weapon" then
-        -- A real weapon when he has none, or one clearly better than the best he carries. The
-        -- same swap margin as EQUIP, so he never picks up what he would not wield.
-        local v = weaponScoreOf(d)
-        ok = v >= Core.WEAPON.MIN_SCORE and (best <= 0 or v > best * Core.WEAPON.SWAP)
-        bonus = math.min(v, 100) / 200
-      elseif key == "bag" then
-        ok = not have.bagWorn
-        bonus = (tonumber(d.bag.capacity) or 0) / 100
-      end
-      if ok then return key, row.score + bonus end
+  for _, k in ipairs(Core.lootKinds(d, lootCtx(have))) do
+    if (tonumber(have[k.kind]) or 0) < (Act.MAX[k.kind] or 99) then
+      return k.kind, k.value - (tonumber(d.weight) or 0) / 100
     end
   end
   return nil
 end
 
+local function copyHave(have)
+  local out = {}
+  for k, v in pairs(have) do out[k] = v end
+  for _, set in ipairs({ "ammoOf", "magOf", "boxOf" }) do
+    if have[set] then
+      out[set] = {}
+      for k, v in pairs(have[set]) do out[set][k] = v end
+    end
+  end
+  return out
+end
+
 -- Pure. descs: described items in one container. Returns { {index, key} } best first, inside
 -- the weight budget, and the budget left. have is updated as if every pick was taken, so a
--- second crowbar or a second can opener is left behind.
-function Act.planTake(descs, have, budget)
+-- second crowbar or a second can opener is left behind. total is the budget at the start of the
+-- search: as it drains, a pick has to earn more per kilo (Core.lootWorth), so a full pack takes
+-- bandages and rounds and leaves a saw.
+function Act.planTake(descs, have, budget, total)
   budget = tonumber(budget) or 0
+  total = tonumber(total) or budget
+  have = have or {}
+  -- A gun in this container makes its ammo in the same container worth taking.
+  local work = copyHave(have)
+  for _, d in ipairs(descs or {}) do
+    if type(d) == "table" and d.gun and Act.lootPick(d, have) then
+      work.ammoOf, work.magOf, work.boxOf = work.ammoOf or {}, work.magOf or {}, work.boxOf or {}
+      if d.gun.ammoKey ~= "" then work.ammoOf[d.gun.ammoKey] = true end
+      if d.gun.magKey ~= "" then work.magOf[d.gun.magKey] = true end
+      if d.gun.boxKey ~= "" then work.boxOf[d.gun.boxKey] = true end
+    end
+  end
   local cands = {}
   for i, d in ipairs(descs or {}) do
-    local key, score = Act.lootPick(d, have)
+    local key, score = Act.lootPick(d, work)
     if key then table.insert(cands, { i = i, score = score }) end
   end
   table.sort(cands, function(a, b)
@@ -301,12 +451,18 @@ function Act.planTake(descs, have, budget)
   local picks = {}
   for _, c in ipairs(cands) do
     local d = descs[c.i]
-    local key = Act.lootPick(d, have)
+    local key, score = Act.lootPick(d, work)
     local w = tonumber(d.weight) or 0
-    if key and w <= budget then
+    local room = total > 0 and budget / total or 1
+    if key and w <= budget and Core.lootWorth(score, w, room) then
       table.insert(picks, { index = c.i, key = key })
       budget = budget - w
+      Act.countInto(work, d)
       Act.countInto(have, d)
+      -- A bag taken is a bag worn: the next one has to beat this one.
+      if key == "bag" then
+        for _, h in ipairs({ work, have }) do h.bagWorn, h.bagCapacity = true, tonumber(d.bag.capacity) or 0 end
+      end
     end
   end
   return picks, budget
@@ -351,6 +507,12 @@ function Act.describeLoot(it, p)
   pcall(function() d.broken = it:isBroken() == true end)
   pcall(function() d.clothing = it:IsClothing() == true end)
   if t.melee then d.weapon = Core.weaponFacts(it, t) end
+  -- A gun is gear, not a melee weapon: it has its own facts and no weapon score.
+  if t.gun then d.gun = Core.gunFacts(it) end
+  if t.ammoKind then
+    local a = Core.ammoFacts(it)
+    d.ammo, d.mag, d.box, d.count = a.ammo, a.mag, a.box, a.count
+  end
   if t.bag and lt.back then
     d.bag = { capacity = 0 }
     pcall(function() d.bag.capacity = it:getCapacity() end)
@@ -362,31 +524,54 @@ function Act.describeLoot(it, p)
       if fc:isEmpty() or amount <= 0 then
         local cap = 0
         pcall(function() cap = fc:getCapacity() end)
-        d.emptyBottle = (not fc:isInputLocked()) and cap > 0 and cap <= 2
+        -- A bottle that holds about a litre. A 0.1 L perfume flask is not something to fill at a tap.
+        d.emptyBottle = (not fc:isInputLocked()) and cap >= 0.5 and cap <= 2
       elseif not fc:contains(Fluid.TaintedWater) and not fc:isPoisonous() then
         local water = fc:getSpecificFluidAmount(Fluid.Water) or 0
         if water > 0 then d.waterL = water end
         -- Vanilla's health panel line for disinfectant: at least 40% alcohol and over 0.15 L.
         if amount > 0.15 and fc:getProperties():getAlcohol() / amount + 0.001 >= 0.4 then d.disinfect = true
-        elseif water <= 0 then d.drink = true end
+        elseif water <= 0 then
+          -- Only a beverage is a drink. Dye, perfume and fuel are fluids too, and she took them.
+          local beverage = false
+          pcall(function() beverage = fc:isCategory(FluidCategory.Beverage) == true end)
+          d.drink = beverage
+        end
       end
     end)
   end
   if t.food then
     d.edible = Core.isEdible(it, p)
     if not d.edible then d.sealed = Core.isSealedFood(it) end
+    if d.edible then
+      -- Days until it is totally rotten. A figure in the millions means it never spoils.
+      pcall(function()
+        local rotten = tonumber(it:getOffAgeMax())
+        if rotten and rotten > 0 and rotten < 100000 then d.shelf = rotten - (tonumber(it:getAge()) or 0) end
+      end)
+      pcall(function() d.frozen = it:isFrozen() == true end)
+    end
   end
   d.opener, d.hammer, d.saw, d.screwdriver, d.lighter = t.opener, t.hammer, t.saw, t.screwdriver, t.lighter
   d.painkiller, d.bandage, d.flashlight = t.painkiller, t.bandage, lt.flashlight
   d.sheet = t.bandage and d.type == "Base.RippedSheets" or false
+  d.antibiotic, d.splint, d.battery = d.type == "Base.Antibiotics", d.type == "Base.Splint", d.type == "Base.Battery"
   if t.wipe then d.disinfect = true end
   return d
 end
 
--- What the body carries, as a have table for lootPick.
+-- What the body carries, as a have table for lootPick: counts per kind, the best melee score,
+-- the bag she wears, how hungry she is, and which ammo fits the guns she has.
 function Act.carried(p)
-  local have = { weaponValue = 0, bagWorn = false }
-  pcall(function() have.bagWorn = p:getClothingItem_Back() ~= nil end)
+  local have = { weaponValue = 0, bagWorn = false, bagCapacity = 0, hunger = 0 }
+  pcall(function()
+    local back = p:getClothingItem_Back()
+    if back ~= nil then
+      have.bagWorn = true
+      have.bagCapacity = tonumber(back:getCapacity()) or 0
+    end
+  end)
+  pcall(function() have.hunger = p:getStats():get(CharacterStat.HUNGER) or 0 end)
   for _, it in ipairs(LS.Sense.carriedItems(p)) do
     local ok, d = pcall(Act.describeLoot, it, p)
     if ok and d then Act.countInto(have, d) end
@@ -406,7 +591,9 @@ Act.YIELD_TICKS = 30        -- quiet ticks after the reflex acted before a skill
 Act.PAUSE_MAX = 1800        -- a fight this long and the target is not worth it
 Act.UNSAFE_R = 4            -- a living zombie this close to the target on resume: give up
 Act.LOOT_ZOMBIE_R = 8
-Act.WEIGHT_CAP = 0.85
+Act.ROOM_TRIES = 2            -- a room with a container she could not reach is looked at this many times
+Act.WEIGHT_CAP = 0.85         -- DROP sheds down to this share of the carry limit
+Act.WEIGHT_CAP_NO_BAG = 0.6   -- SEARCH stops here with no bag: every kilo is on her back
 Act.LOOT_RADIUS = 10
 
 function Act.startSkill(p, verb, args, def)
@@ -503,6 +690,8 @@ end
 -- fought, backed off or fled. While it is busy the skill does nothing, and above all does not
 -- touch the queue the reflex just filled.
 function Act.update(p, acted)
+  -- A weapon Colin puts in her hand is noticed the tick it happens, not when the next order asks.
+  pcall(Act.watchHand, p)
   local fired = Move.watchUnstick(p)
   local s = LS.skill
   if not s then Act.watchMove(p, fired); return end
@@ -665,12 +854,64 @@ function Act.roomsLeft(m)
   return left
 end
 
--- Containers in a room as { c, sq }. IsoRoom:getContainer() is the room's own list. When it is
--- empty the room squares are read, the way the loot window finds them.
+-- Things she dropped herself (DROP). A search must not pick them up again, or DROP and SEARCH
+-- would trade the same spare weapon back and forth.
+if LS.dropped == nil then LS.dropped = {} end
+Act.DROPPED_MAX = 200
+
+function Act.noteDropped(it)
+  local n = 0
+  for _ in pairs(LS.dropped) do n = n + 1 end
+  if n >= Act.DROPPED_MAX then LS.dropped = {} end
+  LS.dropped[it] = true
+end
+
+-- The items lying on a square, as a floor container the transfer action accepts. The loot
+-- window builds the same thing (ISInventoryPage: ItemContainer.new("floor") filled from
+-- IsoGridSquare:getWorldObjects), and ISTransferAction takes an item from it by removing its
+-- world object. Items she dropped herself are left out. Returns nil when there is nothing.
+function Act.floorContainer(sq)
+  local floor, bags = nil, {}
+  pcall(function()
+    local wobs = sq:getWorldObjects()
+    for i = 0, wobs:size() - 1 do
+      local item = wobs:get(i):getItem()
+      if item ~= nil and not LS.dropped[item] then
+        if floor == nil then
+          floor = ItemContainer.new("floor", nil, nil)
+          floor:setExplored(true)
+        end
+        floor:AddItem(item)
+        if LS.Sense.itemType(item).bag then table.insert(bags, item) end
+      end
+    end
+  end)
+  return floor, bags
+end
+
+-- Fill a container's loot the way the loot window does when it comes into view. The game rolls
+-- a container's items the first time it is looked at, and only for squares next to the player,
+-- so a container read before that is empty. Single player only: online the server fills it.
+function Act.explore(c)
+  pcall(function()
+    if c:isExplored() then return end
+    ItemPicker.fillContainer(c, getSpecificPlayer(0))
+    c:setExplored(true)
+  end)
+end
+
+-- Every container in a room as { c, sq }, and the floor of each square as { c, sq, floor = true }.
+-- IsoRoom:getContainer() is only the room's own list and holds the first container of an
+-- object, so a fridge's freezer or a stove's oven is missing from it. The squares are read as
+-- well, every container of every object, the way the loot window does (ISInventoryPage), and a
+-- container found twice is kept once.
 function Act.roomContainers(room)
-  local out = {}
-  local function add(c, sq)
-    if c and sq then table.insert(out, { c = c, sq = sq }) end
+  local out, seen = {}, {}
+  local function add(c, sq, floor)
+    if c and sq and not seen[c] then
+      seen[c] = true
+      table.insert(out, { c = c, sq = sq, floor = floor })
+    end
   end
   pcall(function()
     local list = room:getContainer()
@@ -682,7 +923,6 @@ function Act.roomContainers(room)
       add(c, sq)
     end
   end)
-  if #out > 0 then return out end
   pcall(function()
     local squares = room:getSquares()
     for i = 0, squares:size() - 1 do
@@ -695,6 +935,12 @@ function Act.roomContainers(room)
         for k = 0, n - 1 do
           pcall(function() add(o:getContainerByIndex(k), sq) end)
         end
+      end
+      -- Items on the floor, and the contents of a bag lying there.
+      local floor, bags = Act.floorContainer(sq)
+      if floor then
+        add(floor, sq, true)
+        for _, bag in ipairs(bags) do pcall(function() add(bag:getInventory(), sq) end) end
       end
     end
   end)
@@ -725,11 +971,18 @@ function Act.nearestContainer(p)
   return best
 end
 
-function Act.weightLeft(p)
+function Act.weightLeft(p, share)
   local cap, now = 0, 0
-  pcall(function() cap = p:getMaxWeight() * Act.WEIGHT_CAP end)
+  pcall(function() cap = p:getMaxWeight() * (share or Act.WEIGHT_CAP) end)
   pcall(function() now = p:getInventoryWeight() end)
   return cap - now
+end
+
+-- The weight SEARCH and LOOT may still pick up. With no bag it stops well short of overloaded.
+function Act.searchLeft(p)
+  local bag = false
+  pcall(function() bag = p:getClothingItem_Back() ~= nil end)
+  return Act.weightLeft(p, bag and Act.WEIGHT_CAP or Act.WEIGHT_CAP_NO_BAG)
 end
 
 -- Into the worn bag while it has room, otherwise the main inventory.
@@ -766,7 +1019,8 @@ local function startSearch(p, s, rooms, bid)
   s.rooms = rooms
   s.names = {}
   s.have = Act.carried(p)
-  s.phase = "room"
+  -- The weight there was to fill at the start: the bar a pick has to clear rises as it drains.
+  s.total = math.max(Act.searchLeft(p), 0.1)
   s.skipRoom = {}
 end
 
@@ -774,7 +1028,7 @@ Act.SKILL.SEARCH = {
   start = function(p, s)
     local _, _, _, nd = LS.Sense.zombieScan(p:getX(), p:getY())
     if nd >= 0 and nd < Act.LOOT_ZOMBIE_R then return Act.finish(s, "failed", "zombie") end
-    if Act.weightLeft(p) <= 0 then return Act.finish(s, "failed", "full") end
+    if Act.searchLeft(p) <= 0 then return Act.finish(s, "failed", "full") end
     local _, m = LS.Sense.currentBuilding(p)
     if not m then return Act.finish(s, "failed", "not inside") end
     local rooms = Act.buildingRooms(m)
@@ -792,7 +1046,7 @@ Act.SKILL.LOOT = {
   start = function(p, s)
     local _, _, _, nd = LS.Sense.zombieScan(p:getX(), p:getY())
     if nd >= 0 and nd < Act.LOOT_ZOMBIE_R then return Act.finish(s, "failed", "zombie") end
-    if Act.weightLeft(p) <= 0 then return Act.finish(s, "failed", "full") end
+    if Act.searchLeft(p) <= 0 then return Act.finish(s, "failed", "full") end
     LS.hudData.action = "LOOT"
     -- LOOT always looks again, even in a room a SEARCH finished.
     s.ignoreDone = true
@@ -880,7 +1134,7 @@ searchStep = function(p, s)
   end
 
   if s.phase == "room" then
-    if Act.weightLeft(p) <= 0 then return finishSearch(p, s, true) end
+    if Act.searchLeft(p) <= 0 then return finishSearch(p, s, true) end
     local best, bestD = nil, 99999
     for _, r in ipairs(s.rooms) do
       if not done[r.key] and not s.skipRoom[r.key] then
@@ -915,13 +1169,22 @@ searchStep = function(p, s)
     if not best then
       s.skipRoom[s.room.key] = true
       if s.bid and s.room.def then
-        LS.searched[s.bid] = LS.searched[s.bid] or {}
-        LS.searched[s.bid][s.room.key] = true
+        -- A container she could not reach is a container not searched. The room is only
+        -- finished for good when every container was opened, or on the second try.
+        local skipped = false
+        for _, c in ipairs(s.cons) do if c.skipped then skipped = true end end
+        LS.searchTries = LS.searchTries or {}
+        local tries = (LS.searchTries[s.bid .. "/" .. s.room.key] or 0) + 1
+        LS.searchTries[s.bid .. "/" .. s.room.key] = tries
+        if not skipped or tries >= Act.ROOM_TRIES then
+          LS.searched[s.bid] = LS.searched[s.bid] or {}
+          LS.searched[s.bid][s.room.key] = true
+        end
       end
       s.phase = "room"
       return
     end
-    if Act.weightLeft(p) <= 0 then return finishSearch(p, s, true) end
+    if Act.searchLeft(p) <= 0 then return finishSearch(p, s, true) end
     s.cur = best
     pcall(function() s.tx, s.ty = best.sq:getX() + 0.5, best.sq:getY() + 0.5 end)
     s.dest = nil
@@ -936,15 +1199,20 @@ searchStep = function(p, s)
     pcall(function() near = Move.distTo(p, c.sq:getX(), c.sq:getY()) <= 1.6 and c.sq:getZ() == math.floor(p:getZ()) and Act.canReach(p, c.sq) end)
     if near then s.phase = "take"; return end
     if not s.dest then s.dest = Move.adjacent(p, c.sq) end
-    if not s.dest then c.done = true; s.phase = "next"; return end
+    if not s.dest then c.done, c.skipped = true, true; s.phase = "next"; return end
     local r = Act.walkToSquare(p, s, s.dest)
     if r == "arrived" then s.phase = "take"
-    elseif r ~= "walking" then c.done = true; s.phase = "next" end
+    elseif r ~= "walking" then c.done, c.skipped = true, true; s.phase = "next" end
     return
   end
 
   if s.phase == "take" then
     local c = s.cur
+    -- The floor changes as things are taken, so it is read again. Anything else is filled the
+    -- first time it is opened (Act.explore), which is why an empty-looking cupboard is not skipped.
+    if c.floor then c.c = Act.floorContainer(c.sq)
+    else Act.explore(c.c) end
+    if not c.c then c.done = true; s.phase = "next"; return end
     local items, descs = {}, {}
     pcall(function()
       local list = c.c:getItems()
@@ -959,16 +1227,17 @@ searchStep = function(p, s)
     end)
     local have = {}
     for k, v in pairs(s.have) do have[k] = v end
-    local picks = Act.planTake(descs, have, Act.weightLeft(p))
+    local picks = Act.planTake(descs, have, Act.searchLeft(p), s.total)
     s.pending = {}
     ISTimedActionQueue.clear(p)
     for _, pick in ipairs(picks) do
       local it = items[pick.index]
       local dest = pick.key == "bag" and p:getInventory() or Act.destFor(p, it)
       ISTimedActionQueue.add(ISInventoryTransferAction:new(p, it, c.c, dest, 10))
-      if pick.key == "bag" and not s.have.bagWorn then
+      -- A bag taken is worn, in place of a smaller one: only taken when none is worn or this is bigger.
+      if pick.key == "bag" then
         pcall(function() ISTimedActionQueue.add(ISWearClothing:new(p, it)) end)
-        s.have.bagWorn = true
+        s.have.bagWorn, s.have.bagCapacity = true, tonumber(descs[pick.index].bag.capacity) or 0
       end
       table.insert(s.pending, { it = it, name = descs[pick.index].name, weapon = pick.key == "weapon" })
     end
@@ -1022,7 +1291,7 @@ function Act.keepValue(d)
   -- A spare weapon outranks the tools but not the food and medicine, and a better one outranks a worse.
   if Core.isRealWeapon(d.weapon) then return 25 + math.min(weaponScoreOf(d), 100) / 10 end
   for _, row in ipairs(Act.LOOT) do
-    if row.key ~= "weapon" and row.key ~= "bag" and Act.IS[row.key](d) then return row.score end
+    if row.key ~= "weapon" and row.key ~= "bag" and Act.IS[row.key](d) then return row.keep end
   end
   return 0
 end
@@ -1094,6 +1363,7 @@ local function dropPass(p, s)
   pcall(function() num = p:getPlayerNum() end)
   for _, i in ipairs(picks) do
     ISInventoryPaneContextMenu.dropItem(items[i], num)
+    Act.noteDropped(items[i])
     table.insert(s.pending, { it = items[i], name = descs[i].name })
   end
   s.waitTick = LS.tick
@@ -1452,7 +1722,8 @@ end
 verbs.EQUIP = function(p, args)
   LS.travel.active = false
   -- Nothing to do is a finished order, not a running one, so the brain can move on.
-  if Act.doEquip(p) == "held" then LS.setResult(args.seq, "EQUIP", "done", "already holding the best") end
+  local state, why = Act.doEquip(p)
+  if state == "held" then LS.setResult(args.seq, "EQUIP", "done", why or "already holding the best") end
 end
 verbs.CLOSEDOOR = function(p) LS.travel.active = false; Act.doCloseDoor(p) end
 verbs.CONCEAL = function(p) LS.travel.active = false; Act.doConceal(p) end

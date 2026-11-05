@@ -409,3 +409,76 @@ test('the weapon in hand carries its score, and a pen in hand reads as none', ()
   assert.equal(p.weaponScore, 30.2);
   assert.equal(p.weapons[0].score, 30.2);
 });
+
+const ARMS = `
+  PISTOL = __makeItem({ type = "Base.Pistol", name = "Pistol", weight = 1.5,
+    gun = { ammo = "Base.Bullets9mm", mag = "Base.9mmClip", box = "Base.Bullets9mmBox", loaded = 3, max = 15, chambered = true } })
+  ROUNDS = __makeItem({ type = "Base.Bullets9mm", name = "9mm Bullets", tags = { AMMO = true }, count = 5 })
+  CLIP = __makeItem({ type = "Base.9mmClip", name = "9mm Magazine", ammoKey = "Base.Bullets9mm", maxAmmo = 15, rounds = 9 })
+  SAUCEPAN = __makeItem({ type = "Base.Saucepan", name = "Saucepan", melee = true, dmg = 0.7, crit = 30, range = 1,
+    swing = 2, cond = 7, condMax = 10, cls = { "SMALL_BLUNT", "IMPROVISED" }, weight = 0.7 })
+  CROWBAR = __makeItem({ type = "Base.Crowbar", name = "Crowbar", melee = true, dmg = 1.15, crit = 20, range = 1.25,
+    swing = 3, twoHand = true, cls = { "BLUNT" }, weight = 2 })
+  BAT = __makeItem({ type = "Base.BaseballBat", name = "Baseball Bat", melee = true, dmg = 1.1, crit = 40, range = 1.25,
+    swing = 3, twoHand = true, cls = { "BLUNT" }, weight = 2 })
+`;
+
+test('a pistol is listed with the ammo for it, and a held one is named in heldGun, not weapon', () => {
+  const lua = body();
+  lua.run(ARMS + '__players[0] = __makePlayer({ x = 10, y = 10, items = { PISTOL, ROUNDS, CLIP, SAUCEPAN }, primary = PISTOL })');
+  const p = percept(lua);
+  assert.equal(p.weapon, 'none', 'a gun is not the melee weapon');
+  assert.equal(p.heldGun, 'Pistol');
+  assert.equal(p.weaponScore, 0);
+  // Rounds loaded: 3 in the magazine and one chambered. Rounds carried: 5 loose and 9 in a spare magazine.
+  assert.deepEqual(p.guns, [{ n: 'Pistol', ammo: 14, loaded: 4, held: true }]);
+  assert.deepEqual(p.weapons.map((w) => w.n), ['Saucepan'], 'the melee weapons carried are listed as before');
+  assert.equal(p.weaponByHand, true, 'a gun in hand is always the survivor\'s pick');
+});
+
+test('with nothing held, guns still lists what is in the pack and heldGun is none', () => {
+  const lua = body();
+  lua.run(ARMS + '__players[0] = __makePlayer({ x = 10, y = 10, items = { PISTOL, SAUCEPAN } })');
+  const p = percept(lua);
+  assert.equal(p.heldGun, 'none');
+  assert.deepEqual(p.guns, [{ n: 'Pistol', ammo: 0, loaded: 4, held: false }]);
+  assert.equal(p.weaponByHand, false);
+  lua.run('__players[0] = __makePlayer({ x = 10, y = 10 })');
+  assert.deepEqual(percept(lua).guns, [], 'a bare player carries no guns');
+});
+
+test('weaponByHand is true after Colin equips a weapon, false for one the mod equipped', () => {
+  const lua = body();
+  lua.run(ARMS + '__players[0] = __makePlayer({ x = 10, y = 10, items = { CROWBAR, BAT }, primary = CROWBAR })');
+  assert.equal(percept(lua).weaponByHand, false, 'what she started with is not a pick');
+  lua.run('__players[0].primary = BAT'); // Colin equips it
+  let p = percept(lua);
+  assert.equal(p.weapon, 'Baseball Bat');
+  assert.equal(p.weaponByHand, true);
+  assert.equal(lua.get('LocalSurvivor.hudData.weapon'), 'Baseball Bat (your pick)', 'the HUD line says so');
+  // The mod swaps back (it is allowed to once his pick is gone): that change is its own.
+  lua.run('LocalSurvivor.hand.locked = nil; LocalSurvivor.Act.markModEquip(CROWBAR); __players[0].primary = CROWBAR');
+  p = percept(lua);
+  assert.equal(p.weaponByHand, false);
+  assert.equal(lua.get('LocalSurvivor.hudData.weapon'), 'Crowbar');
+});
+
+test('the HUD names a held gun', () => {
+  const lua = body();
+  lua.run(ARMS + '__players[0] = __makePlayer({ x = 10, y = 10, items = { PISTOL }, primary = PISTOL })');
+  percept(lua);
+  assert.equal(lua.get('LocalSurvivor.hudData.weapon'), 'Pistol (your pick)');
+});
+
+test('summarizeGuns puts the held gun first, then the best supplied, and keeps two', () => {
+  const lua = body();
+  const out = lua.call('LocalSurvivor.Sense.summarizeGuns', [
+    { n: 'Revolver', ammoKey: 'Base.Bullets38', magKey: '', loaded: 2 },
+    { n: 'Pistol', ammoKey: 'Base.Bullets9mm', magKey: 'Base.9mmClip', loaded: 0, held: true },
+    { n: 'Shotgun', ammoKey: 'Base.ShotgunShells', magKey: '', loaded: 0 },
+  ], { loose: { 'Base.Bullets38': 12 }, mags: { 'Base.9mmClip': 15 } });
+  assert.deepEqual(out, [
+    { n: 'Pistol', ammo: 15, loaded: 0, held: true },
+    { n: 'Revolver', ammo: 12, loaded: 2, held: false },
+  ]);
+});

@@ -1,7 +1,7 @@
 // Pro rules from docs/research.md. Only the ones whose condition holds go into this turn's
 // message, so the prompt stays short and every line is about now.
 
-import { needs, isNight, inside, unaware, untreated, zombies, heavy, canTreat, weaponPoor } from './senses.mjs';
+import { needs, isNight, inside, unaware, untreated, zombies, heavy, canTreat, weaponPoor, heldGun } from './senses.mjs';
 import { safehouseScore, building } from './memory.mjs';
 
 export const MAX_RULES = 5;
@@ -37,7 +37,7 @@ export const PLAYBOOK = [
   },
   {
     id: 'no-weapon',
-    when: (p) => String(p.weapon || 'none') === 'none' && !(Array.isArray(p.weapons) && p.weapons.length),
+    when: (p) => String(p.weapon || 'none') === 'none' && !heldGun(p) && !(Array.isArray(p.weapons) && p.weapons.length),
     text: 'No weapon: search houses for one first and keep away from every zombie.',
   },
   {

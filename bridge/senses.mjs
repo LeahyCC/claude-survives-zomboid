@@ -129,6 +129,19 @@ export function canTreat(p) {
 
 const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+// A firearm in her hand. The mod names it in heldGun and leaves weapon at "none": the reflex
+// cannot fire a gun, so it is not the melee weapon. But it is not bare hands either.
+export function heldGun(p) {
+  const g = p && p.heldGun;
+  return typeof g === 'string' && g !== '' && g !== 'none' ? g : null;
+}
+
+// True when what is in her hand is Colin's own pick (he equipped it), or a gun, which the mod
+// never equips. The mod does not swap either away, so the policy must not ask it to.
+export function weaponByHand(p) {
+  return !!p && (p.weaponByHand === true || heldGun(p) !== null);
+}
+
 // The carried weapon with the best score, or null when the mod sent no scores.
 function bestCarried(p) {
   const list = Array.isArray(p && p.weapons) ? p.weapons : [];
@@ -146,6 +159,9 @@ function bestCarried(p) {
 export function betterWeapon(p) {
   const list = Array.isArray(p && p.weapons) ? p.weapons : [];
   if (!list.length) return null;
+  // Colin's pick, or a gun in hand: nothing is better than that, so nothing is offered. The mod
+  // would refuse the order anyway, and a refused EQUIP would only sit on the menu.
+  if (weaponByHand(p)) return null;
   const unarmed = String((p && p.weapon) || 'none') === 'none';
   const best = bestCarried(p);
   if (unarmed) return { n: String((best && best.n) || (list[0] && list[0].n) || 'weapon'), swap: false };
@@ -157,6 +173,8 @@ export function betterWeapon(p) {
 // True when nothing in hand or in the bag is a real weapon yet, so houses are worth looking in.
 export function weaponPoor(p) {
   if (!p) return false;
+  // A gun in hand is an armed survivor, not one that needs a house to find a weapon in.
+  if (heldGun(p)) return false;
   const list = Array.isArray(p.weapons) ? p.weapons : [];
   if (String(p.weapon || 'none') === 'none' && !list.length) return true;
   const known = [finite(p.weaponScore), (bestCarried(p) || {}).score].filter((s) => s !== undefined && s !== null);

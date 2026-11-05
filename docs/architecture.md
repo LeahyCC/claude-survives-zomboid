@@ -20,13 +20,15 @@ All code is in `mods/LocalSurvivor/42/media/lua/client/`. Every module hangs off
 LocalSurvivor.lua          entry: requires the modules, owns onTick, registers every event once
 LocalSurvivor/
   Core.lua      LocalSurvivor.*   state, constants, hudData, verbs, result, setResult
-                LocalSurvivor.Core  esc n2 json split queueLength, item classification
+                LocalSurvivor.Core  esc n2 json split queueLength, item classification, weaponScore,
+                                    gun and ammo facts, the pure loot value (lootKinds lootValue lootWorth)
   Sense.lua     LocalSurvivor.Sense zombieScan scanBuildings step buildPercept writePercept,
                                     and pure summarisers (summarizeWounds, summarizeZombies, ...)
   Move.lua      LocalSurvivor.Move  canStand stepWalk queuedWalkOnly doMove momentum, lineClear,
                                     progress and the unstick watch the skills share
   Act.lua       LocalSurvivor.Act   the doEquip, doCloseDoor, doConceal and doBreakin actions, manageLight, execIntent, pollIntent, the verbs,
-                                    the skills (GOTO ENTER SEARCH LOOT), update, the loot table
+                                    the skills (GOTO ENTER SEARCH LOOT DROP), update, the take or leave rules for loot
+                                    (lootPick planTake), the container walk, and the hand watch (watchHand)
   Reflex.lua    LocalSurvivor.Reflex fleeVector nearestZombie engage reflex survive releaseDoor manageSpeed
   Needs.lua     LocalSurvivor.Needs start update, the needs verbs and their jobs (docs/needs.md)
   HUD.lua       LocalSurvivor.HUD   start, onKeyPressed (and the LocalHUD panel class)

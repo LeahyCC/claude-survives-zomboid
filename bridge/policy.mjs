@@ -39,6 +39,8 @@ export const POLICY_RULES = [
   {
     id: 'equip',
     pick(p, mem, opts) {
+      // Not for a gun in hand, nor for a weapon Colin put there himself: betterWeapon says null,
+      // the same as the mod's own EQUIP, which would turn the order down.
       const better = betterWeapon(p);
       if (!better) return null;
       const thought = better.swap ? `The ${better.n} in my bag is clearly better. Swapping.` : `Nothing in my hands and a ${better.n} in the bag. Holding it.`;

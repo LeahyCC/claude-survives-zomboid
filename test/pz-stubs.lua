@@ -74,6 +74,7 @@ MoodleType = nameTable()
 ItemBodyLocation = nameTable()
 ItemTag = nameTable()
 WeaponCategory = nameTable()
+FluidCategory = nameTable()
 BodyPartType = { ToString = function(t) return tostring(t) end }
 
 -- ---------- UI classes ----------
@@ -358,10 +359,24 @@ function __makeItem(opts)
   function it:isbDangerousUncooked() return false end
   function it:isCooked() return false end
   function it:getPoisonPower() return opts.poison or 0 end
-  function it:IsWeapon() return opts.melee or false end
+  -- opts.gun = { ammo, mag, box, loaded, max, chambered }: a firearm. Its ammo keys are full types.
+  local gun = opts.gun
+  function it:IsWeapon() return opts.melee or gun ~= nil or false end
   function it:isBareHands() return false end
-  function it:isRanged() return false end
-  function it:isAimedFirearm() return false end
+  function it:isRanged() return gun ~= nil end
+  function it:isAimedFirearm() return gun ~= nil end
+  function it:getAmmoType()
+    local key = (gun and gun.ammo) or opts.ammoKey
+    if not key then return nil end
+    return { getItemKey = function() return key end }
+  end
+  function it:getMagazineType() return gun and gun.mag or nil end
+  function it:getAmmoBox() return gun and gun.box or nil end
+  function it:getCurrentAmmoCount() return (gun and gun.loaded) or opts.rounds or 0 end
+  function it:isRoundChambered() return gun and gun.chambered or false end
+  function it:getMaxAmmo() return (gun and gun.max) or opts.maxAmmo or 0 end
+  function it:getCount() return opts.count or 1 end
+  function it:getDisplayCategory() return opts.displayCategory or "Item" end
   function it:getMaxDamage() return opts.dmg or 0 end
   function it:getMaxRange() return opts.range or 0 end
   function it:getCriticalChance() return opts.crit or 0 end
@@ -388,8 +403,10 @@ function __makeItem(opts)
   function it:getFluidContainer()
     local f = opts.fluid
     if not f then return nil end
-    local amount = (f.water or 0) + (f.alcohol or 0)
+    -- f.other: litres of some other fluid, and f.beverage says whether it is one you drink.
+    local amount = (f.water or 0) + (f.alcohol or 0) + (f.other or 0)
     return {
+      isCategory = function(_, c) return c == "Beverage" and (f.beverage or false) end,
       isEmpty = function() return amount <= 0 end,
       isInputLocked = function() return f.locked or false end,
       isFull = function() return amount >= (f.cap or 1) end,
@@ -449,9 +466,11 @@ function __makeObject(opts)
   function o:getFluidAmount() return opts.water or 0 end
   function o:isTaintedWater() return opts.tainted or false end
   function o:getSquare() return o.square end
-  function o:getContainer() return opts.container end
-  function o:getContainerCount() return opts.container and 1 or 0 end
-  function o:getContainerByIndex(i) return i == 0 and opts.container or nil end
+  -- opts.containers: several containers on one object, like a fridge with a freezer.
+  local list = opts.containers or (opts.container and { opts.container } or {})
+  function o:getContainer() return list[1] end
+  function o:getContainerCount() return #list end
+  function o:getContainerByIndex(i) return list[i + 1] end
   return o
 end
 
@@ -466,6 +485,12 @@ function __makeSquare(opts)
   function sq:getBuilding() return opts.building end
   function sq:getRoom() return opts.room end
   function sq:getObjects() return __javaList(self.objects) end
+  -- opts.world: item stubs lying on the floor of this square.
+  function sq:getWorldObjects()
+    local list = {}
+    for i, item in ipairs(opts.world or {}) do list[i] = { getItem = function() return item end } end
+    return __javaList(list)
+  end
   function sq:getLightLevel() return opts.light or 1 end
   function sq:isFree() return not opts.blocked end
   function sq:canStand() return not opts.blocked end
@@ -536,9 +561,10 @@ function __makeRoom(opts)
 end
 
 -- A container on a square. opts: items (item stubs), square. Tests move items out to fake a
--- finished transfer with __take(container).
+-- finished transfer with __take(container). opts.loot: the items the game rolls the first time
+-- the container is looked at (ItemPicker.fillContainer). Until then it is not explored and empty.
 function __makeContainer(opts)
-  local c = { items = opts.items or {} }
+  local c = { items = opts.items or {}, loot = opts.loot, explored = opts.loot == nil }
   local parent = { getSquare = function() return opts.square end }
   function c:getItems() return __javaList(self.items) end
   function c:contains(it)
@@ -547,8 +573,26 @@ function __makeContainer(opts)
   end
   function c:getParent() return parent end
   function c:getType() return opts.type or "crate" end
+  function c:isExplored() return self.explored end
+  function c:setExplored(v) self.explored = v end
+  function c:AddItem(it) table.insert(self.items, it); return it end
+  function c:DoRemoveItem(it)
+    for i, x in ipairs(self.items) do if x == it then table.remove(self.items, i); return end end
+  end
   return c
 end
+
+-- The game rolls loot into a container the first time it comes into view.
+ItemPicker = {
+  fillContainer = function(c, p)
+    for _, it in ipairs(c.loot or {}) do table.insert(c.items, it) end
+    c.loot = nil
+  end,
+}
+-- The floor container the loot window builds: a plain container of type "floor".
+ItemContainer = {
+  new = function(kind) local c = __makeContainer({ type = kind }); return c end,
+}
 
 -- Finish every queued transfer out of container c: the item leaves c, the queue empties.
 function __take(p, c)
@@ -556,6 +600,44 @@ function __take(p, c)
   for _, a in ipairs(q) do
     if a.Type == "ISInventoryTransferAction" and a.args[3] == c then
       for i, x in ipairs(c.items) do if x == a.args[2] then table.remove(c.items, i); break end end
+    end
+  end
+  ISTimedActionQueue.clear(p)
+end
+
+-- Finish every queued transfer wherever it comes from: the item leaves its container (and the
+-- square, for the floor) and lands in the player's items. Returns the names taken.
+function __finishTransfers(p)
+  local names = {}
+  for _, a in ipairs(ISTimedActionQueue.getTimedActionQueue(p).queue) do
+    if a.Type == "ISInventoryTransferAction" then
+      local item, src = a.args[2], a.args[3]
+      src:DoRemoveItem(item)
+      if src:getType() == "floor" then
+        for _, sq in pairs(__squares) do
+          local world = sq.opts.world or {}
+          for i, x in ipairs(world) do if x == item then table.remove(world, i); break end end
+        end
+      end
+      table.insert(p.__items.items, item)
+      table.insert(names, item:getDisplayName())
+    end
+  end
+  ISTimedActionQueue.clear(p)
+  return names
+end
+
+-- Finish every queued pick-up from the floor: the item leaves the square it lay on, as the
+-- game removes its world object, and the queue empties.
+function __takeFloor(p)
+  local q = ISTimedActionQueue.getTimedActionQueue(p).queue
+  for _, a in ipairs(q) do
+    if a.Type == "ISInventoryTransferAction" and a.args[3]:getType() == "floor" then
+      a.args[3]:DoRemoveItem(a.args[2])
+      for _, sq in pairs(__squares) do
+        local world = sq.opts.world or {}
+        for i, x in ipairs(world) do if x == a.args[2] then table.remove(world, i); break end end
+      end
     end
   end
   ISTimedActionQueue.clear(p)

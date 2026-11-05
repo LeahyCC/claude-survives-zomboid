@@ -121,6 +121,17 @@ A swap needs the new weapon to score 25% over the one in hand (`Core.WEAPON.SWAP
 
 The reflex does not read the score yet. It still counts a pen as an armed hand (`Reflex.snapshot`).
 
+Loot has a higher floor than the reflex. A weapon is only worth carrying at a score of 8 (`Core.LOOT.WEAPON_MIN`): a kitchen knife (9) and a saucepan pass, a plunger (6.3) does not. See "Loot table" in `docs/skills.md`.
+
+## Guns
+
+A firearm is gear, not the melee weapon. `Core.isMeleeWeapon` leaves it out (`isRanged()` or `isAimedFirearm()`), so it has no weapon score and never enters the list of melee weapons.
+
+- The mod carries one, takes one in a search (with its ammo), and reports it in the percept: `guns`, `heldGun` (`docs/percept.md`).
+- EQUIP never wields a gun, and never swaps a gun in hand for a melee weapon (`docs/skills.md`).
+- A gun in hand is armed for the equip rule and for the bridge (`weaponPoor` is false, the equip rule does not fire).
+- **The reflex does not fire it.** `Reflex.snapshot` sets `armed` from `Core.holdingMelee`, which is false for a gun, so a survivor with a pistol in hand shoves and stomps as if unarmed, and flees from a pack. Firing is the reflex card's follow-up. It needs, found in the jar and the vanilla Lua but not run: aim (`setIsAiming`, `isAimingFirearmEquipped`) and fire with `IsoPlayer:DoAttack` while a ranged weapon is in the main hand and a round is chambered or loaded (`isRangedWeaponEmpty`, `HandWeapon:isRoundChambered`, `getCurrentAmmoCount`); rack with `ISRackFirearm`; reload with `ISReloadWeaponAction` (a magazine gun takes `getBestMagazine` through `ISInsertMagazine`, an empty magazine fills through `ISLoadBulletsInMagazine`, loose rounds go in through `ISInventoryPaneContextMenu.onLoadBulletsIntoFirearm`; `ISReloadWeaponAction.attackHook` already calls `DoAttack`); `getMinRangeRanged()` and `getMaxRange()` for the distance; and the per-gun ammo facts the percept now carries (`guns[i].ammo`, `guns[i].loaded`). A noise rule is also needed, since a shot is loud and pulls zombies from far off.
+
 ## Flags
 
 ```lua
