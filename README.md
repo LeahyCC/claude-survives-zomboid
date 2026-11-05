@@ -2,6 +2,8 @@
 
 A local model plays Project Zomboid. The body and the fight-or-flee reflex come from [claude-survives-zomboid](https://github.com/LeahyCC/claude-survives-zomboid). This project changes the brain: Ollama, a short prompt, and JSON mode, so an 8B model can answer before the reflex has to take over.
 
+What comes next, and why, is in `docs/roadmap.md`.
+
 ```
 Project Zomboid (LocalSurvivor mod)
     writes  Zomboid/Lua/local_percept.txt     about once a second
@@ -30,7 +32,7 @@ cd bridge
 node pz-bridge.mjs
 ```
 
-Enable **Local Survivor**, start a sandbox game, take your hands off the keys. H hides the in-game panel. G toggles fast-forward. WASD takes over for about 10 seconds.
+Enable **Local Survivor**, start a sandbox game, take your hands off the keys. H hides the in-game panel. G toggles fast-forward. K toggles the night fast forward. WASD takes over for about 10 seconds.
 
 Default model is `gemma4:12b`. It fits the 16 GB card. `llama3.1:8b` is faster and weaker. Switch with the shell before you start the bridge:
 
@@ -44,6 +46,8 @@ node pz-bridge.mjs
 `bridge/pz-state.json` is the memory, the map memory and the current day plan included. Delete it for a fresh mind.
 
 `bridge/lessons.json` holds the lessons written after each death, and the run record that checks them. It is kept apart so a fresh mind still remembers what past deaths taught. Delete it, or press delete on a lesson at `/mind`, to forget. Both files are ignored by git.
+
+`bridge/decisions.jsonl` records every decided turn and what came of it. `bridge/nudges.jsonl` holds the picks you make in the Nudge panel on `/mind`. Both are ignored by git and only ever appended to. `node bridge/tools/review.mjs` prints a short report from them, and `node bridge/tools/nudges-to-eval.mjs` turns your picks into eval scenarios. See `docs/eval.md`.
 
 A slower planner writes a short day plan and a death review writes lessons (`docs/planner.md`). It uses `PZ_PLANNER_MODEL`. On this PC the default is `qwen3.6-35b_abliterated_pc:latest`, run on the CPU with thinking off: a plan takes about 6 seconds and the menu model stays fast beside it, game running or not. If that model is not installed the planner falls back to `PZ_MODEL`. Set `PZ_PLANNER_MODEL` to pick your own, which then runs the old way (Ollama places it, thinking on auto). `PZ_PLANNER_GPU_LAYERS` sets how many layers go on the GPU, and `node bridge/tools/planner-bench.mjs <model>` measures a planner. The table is in `docs/planner.md`.
 

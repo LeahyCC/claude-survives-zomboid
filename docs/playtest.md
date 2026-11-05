@@ -19,11 +19,32 @@ What `playtest.ps1` does:
 
 Tracing: create `Zomboid/Lua/ls_trace.txt` and the mod writes `LocalSurvivor trace` lines to `console.txt` (checked once a minute, no restart needed). It logs each reflex flee, each ENTER attempt and failure with the window's state, each SECURE walk, and every time she goes in or out of a building with the job that was running. Delete the file to stop.
 
+Night fast forward: with a safe house and a WAIT, REST or SLEEP order at night, `speed` in the percept goes to 3 and the clock races. It drops to 1 on a new walking order, a zombie within 20 tiles, a chaser, bleeding or a hit. Run with `ls_trace.txt` on and check that no walk is dropped after the clock slows. The soak test reads `speed` to see how long she sat at 3.
+
 What to watch:
 
 - `Zomboid/console.txt`: Lua errors and `LocalSurvivor` lines.
 - `Zomboid/Lua/local_percept.txt`: the senses, once a second.
 - `http://localhost:8799/mind`: what the brain chose and why.
+- `bridge/decisions.jsonl`: one line per decided turn and what came of it. `node bridge/tools/review.mjs` summarizes it.
+
+## Nudging while you watch
+
+When the brain picks something you would not, use the Nudge panel on `/mind` (`docs/eval.md` has the details):
+
+1. Click the option you would have chosen. The brain's pick is marked.
+2. Type a short why. If the right option is not on the menu, say what it should be in the second box.
+3. **Do it now** sends it as the next order. **Just log it** only records it.
+
+After a session:
+
+```
+node bridge/tools/review.mjs --since 2026-11-04     how often she agreed with you, what failed, what hurt
+node bridge/tools/nudges-to-eval.mjs                make eval scenarios from the picks
+node bridge/eval/run.mjs                            score the brain against them
+```
+
+With examples on (the default, `PZ_EXAMPLES=0` turns them off), up to two of your past picks from a similar spot go into the next prompt as "In a similar spot, the better pick was ..." lines.
 
 The screenshot is taken from the screen, so anything on top of the game window shows up in it.
 

@@ -45,6 +45,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `v` | int | Percept version, 2. | |
 | `panic01` | number | Panic on 0 to 1, so it matches the other stats. | `PANIC / 100` |
 | `asleep` | bool | The survivor is asleep, by the game's own state. | `p:isAsleep()` |
+| `speed` | int | The game speed button: 0 paused, 1 normal, 2 to 4 fast forward. Night fast forward runs at 3. | `getGameSpeed()` |
 | `kills` | int | Zombies killed. | `p:getZombieKills()` |
 | `hoursAlive` | number | In-game hours survived. | `p:getHoursSurvived()` |
 | `moodle` | object | Moodle levels 0 to 4: `endurance tired panic pain heavy hungry thirsty`. 0 is none. | `p:getMoodles():getMoodleLevel(MoodleType.X)` with `ENDURANCE TIRED PANIC PAIN HEAVY_LOAD HUNGRY THIRST` |

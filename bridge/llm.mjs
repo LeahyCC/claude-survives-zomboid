@@ -164,6 +164,8 @@ export async function callChoice(user, ids, model = MODEL) {
     ms: Date.now() - started,
     promptTokens: Number(data.prompt_eval_count) || 0,
     outTokens: Number(data.eval_count) || 0,
+    // Ollama reports nanoseconds. Reading the prompt is the part extra prompt lines slow down.
+    promptMs: Math.round((Number(data.prompt_eval_duration) || 0) / 1e6),
   };
 }
 
