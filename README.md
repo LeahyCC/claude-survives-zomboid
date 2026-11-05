@@ -32,7 +32,7 @@ cd bridge
 node pz-bridge.mjs
 ```
 
-Enable **Local Survivor**, start a sandbox game, take your hands off the keys. H hides the in-game panel. G toggles fast-forward. K toggles the night fast forward. WASD takes over for about 10 seconds.
+Enable **Local Survivor**, start a sandbox game, take your hands off the keys. H hides the in-game panel. G toggles fast-forward. K toggles the night fast forward. `;` hides the inner voice bubble and panel. WASD takes over for about 10 seconds.
 
 Default model is `gemma4:12b`. It fits the 16 GB card. `llama3.1:8b` is faster and weaker. Switch with the shell before you start the bridge:
 
@@ -63,6 +63,10 @@ node pz-bridge.mjs
 `node bridge/eval/run.mjs --model gemma4:12b --n 3` scores the brain on 39 scenarios against Ollama and prints a table. See `docs/eval.md`.
 
 The prompt tells her how her last orders went (done, failed and why, HP lost, still chased), which houses are off the menu after a failure, and a plain warning when she goes in circles. The `/mind` page has a Reactions strip with the same data. See "Reactions" in `docs/brain.md`.
+
+## Streaming
+
+The inner voice shows in the game: a bubble over her head and an "Inner voice" panel in the top right with the last 3 lines. `Zomboid/Lua/ls_voice_off.txt` turns it off for good. `Zomboid/Lua/ls_voice_clean.txt` stars out slurs in the game display only, so make it before going live. `/mind` and `pepe.log` are never filtered. Setup is in `docs/playtest.md`, the details in `docs/brain.md`.
 
 ## Check
 

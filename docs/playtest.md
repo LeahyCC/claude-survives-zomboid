@@ -121,6 +121,31 @@ With examples on (the default, `PZ_EXAMPLES=0` turns them off), up to two of you
 
 The screenshot is taken from the screen, so anything on top of the game window shows up in it.
 
+## Streaming with the inner voice
+
+The inner voice shows in the game for viewers, so they do not need the /mind page.
+
+1. Start the bridge as usual. The inner voice model runs on the CPU and a line comes about every 30 seconds at most.
+2. Start the game. Her voice shows as a teal bubble over her head and in the "Inner voice" panel, top right (last 3 lines, newest on top).
+3. In OBS, capture the game window as usual. The panel is drawn by the game, so it is in the capture. Nothing else to add.
+4. Before going live, make the filter file in the Lua folder, next to `local_intent.txt`:
+
+```
+New-Item "$env:USERPROFILE/Zomboid/Lua/ls_voice_clean.txt" -ItemType File
+```
+
+Slurs and the worst words are starred in the game display from then on. Delete the file to turn it off. It takes effect within a second, no restart. Check a few lines yourself: it is a short list.
+
+Switches:
+
+| What | How |
+|---|---|
+| Hide or show bubble and panel | `;` in the game |
+| Hide both for good | make `ls_voice_off.txt` in the Lua folder |
+| Star out slurs | make `ls_voice_clean.txt` in the Lua folder |
+
+The panel sits at the top right. If your overlay covers that corner, change `Voice.MARGIN` or move the overlay.
+
 ## Live runs, 2026-11-04
 
 Four runs of about six minutes each with the menu brain on gemma4:12b. Same PC, frame cap 240.
@@ -142,6 +167,6 @@ Since run 4 the bridge reads the newer percept fields (`docs/brain.md`): BANDAGE
 node tools/soak.mjs --hours 3
 ```
 
-Runs unattended with normal loot. It launches the game through `playtest.ps1`, starts the bridge, and keeps the respawn flag (`ls_autoload.txt`) in place so the helper mod brings in a new random survivor after each death. Every 30 seconds it checks the game: if the game is gone, or no percept came for 4 minutes, it relaunches it. A bridge that exits is restarted. When the time is up it writes `bridge/soak-<start>.txt` with `bridge/tools/review.mjs --since <start>` (deaths by cause, reflex by stance, critic flags against outcomes), stops the bridge and leaves the game running. Its own log is `bridge/soak.log`, the bridge's is `bridge/soak-bridge.log`.
+Runs unattended with normal loot. It launches the game through `playtest.ps1`, starts the bridge, and keeps the respawn flag (`ls_autoload.txt`) in place so the helper mod brings in a new random survivor after each death, in a random spawn region (the game's own "Random" entry). Always the first region put every life in the same town, already looted by the lives before and full of the zombies they drew. Every 30 seconds it checks the game: if the game is gone, or no percept came for 4 minutes, it relaunches it. A bridge that exits is restarted. When the time is up it writes `bridge/soak-<start>.txt` with `bridge/tools/review.mjs --since <start>` (deaths by cause, reflex by stance, critic flags against outcomes), stops the bridge and leaves the game running. Its own log is `bridge/soak.log`, the bridge's is `bridge/soak-bridge.log`.
 
 Set `TYPESAFE_API_KEY` for the critic. The PC must not sleep during the run.

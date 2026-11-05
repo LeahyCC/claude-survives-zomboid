@@ -609,18 +609,22 @@ test('stuck: Stance.params carries the new numbers', () => {
   assert.equal(n.END_SHOVE, 0.3);
 });
 
-test('a new walking order with a chaser in range is the brain\'s way out: the flee lets it run', () => {
-  const h = body();
+// Winded, so the reflex backs off for any chaser. Two chasers, 6 and 9.5 tiles out: inside the bridge hold radius
+// (10), only one inside the pack radius (7), none on her. Without the stand-aside the reflex would act.
+const WINDED = { ENDURANCE: 0.1 };
+const farPair = (h) => { addZombie(h, 16, 10, false); addZombie(h, 19.5, 10, false); };
+
+test('a new walking order with a chaser in range is the way out of a chase: the flee lets it run', () => {
+  const h = body(WINDED);
   h.run('__squares["0,10,0"] = { isFree = function() return true end }');
-  for (const x of [13, 14, 15]) addZombie(h, x, 10, false);
+  farPair(h);
   h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
   assert.equal(survive(h), true, 'the first look only remembers the order number');
-  assert.equal(h.get('LocalSurvivor.hudData.action'), 'BREAK CONTACT (reflex)');
   // The bridge hands the turn back and the brain sends ENTER.
   h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
   h.run('ISTimedActionQueue.clear(__players[0]); ISTimedActionQueue.add(ISWalkToTimedAction:new(__players[0], {}))');
   assert.equal(survive(h), false);
-  assert.deepEqual(queue(h), ['ISWalkToTimedAction'], 'the brain\'s walk is not cut');
+  assert.deepEqual(queue(h), ['ISWalkToTimedAction'], 'the walk is not cut');
   assert.ok(h.get('LocalSurvivor.reflexState.handBackUntil') > 110);
   // The window ends.
   h.run('LocalSurvivor.tick = 110 + LocalSurvivor.Reflex.HANDBACK_TICKS + 5');
@@ -628,9 +632,9 @@ test('a new walking order with a chaser in range is the brain\'s way out: the fl
 });
 
 test('a zombie on her ends the hand-back window, and a WAIT or a posture does not start one', () => {
-  const h = body();
+  const h = body(WINDED);
   h.run('__squares["0,10,0"] = { isFree = function() return true end }');
-  for (const x of [13, 14, 15]) addZombie(h, x, 10, false);
+  farPair(h);
   h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
   survive(h);
   h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "WAIT"');
@@ -641,6 +645,85 @@ test('a zombie on her ends the hand-back window, and a WAIT or a posture does no
   addZombie(h, 11.5, 10, false);
   h.run('LocalSurvivor.tick = 130');
   assert.equal(survive(h), true, 'one within 2 tiles gets the reflex back at once');
+});
+
+// The 2026-11-05 death: ENTER sent with four chasing, the reflex stood aside for 20 seconds.
+test('no stand-aside for a pack: three inside SWARM_R, or two inside 3 tiles', () => {
+  for (const [name, spots] of [['three inside 7', [[14, 10], [15, 10], [16.5, 10]]], ['two inside 3', [[11, 12], [10, 12.5], [18, 10]]]]) {
+    const h = body(WINDED);
+    h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+    for (const [x, y] of spots) addZombie(h, x, y, false);
+    h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+    survive(h);
+    h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+    assert.equal(survive(h), true, name + ': the reflex runs');
+    assert.ok(!h.get('LocalSurvivor.reflexState.handBackUntil'), name + ': no window');
+  }
+});
+
+test('a window ends when a pack forms in it', () => {
+  const h = body(WINDED);
+  h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  farPair(h);
+  h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  survive(h);
+  h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+  assert.equal(survive(h), false);
+  // The two close up and a third arrives. Nobody is within 2 tiles.
+  h.run('__zombies[1].getX = function() return 14.5 end; __zombies[2].getX = function() return 15.5 end');
+  addZombie(h, 16.5, 10, false);
+  h.run('LocalSurvivor.tick = 150');
+  assert.equal(survive(h), true, 'three inside 7 tiles: the stance rules take over');
+  assert.equal(h.get('LocalSurvivor.reflexState.handBackUntil'), 0);
+});
+
+test('a hit ends the window and keeps the next one from starting', () => {
+  const h = body(WINDED);
+  h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  farPair(h);
+  h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  survive(h);
+  h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+  assert.equal(survive(h), false);
+  h.run('__players[0].hp = 100; LocalSurvivor.Reflex.watchHealth(__players[0]); LocalSurvivor.tick = 120; __players[0].hp = 90; LocalSurvivor.Reflex.watchHealth(__players[0])');
+  assert.equal(survive(h), true, 'hit: the reflex is back');
+  // A new order a second after the hit does not open a window; one a few seconds on does.
+  h.run('LocalSurvivor.tick = 180; LocalSurvivor.lastSeq = 7; LocalSurvivor.result.verb = "GOTO"');
+  assert.equal(survive(h), true);
+  h.run('LocalSurvivor.tick = 400; LocalSurvivor.lastSeq = 8');
+  assert.equal(survive(h), false, 'quiet for 3 seconds, so GOTO opens a window again');
+});
+
+test('a bleed too slow to be a hit does not end the window', () => {
+  const h = body(WINDED);
+  h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  farPair(h);
+  h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  survive(h);
+  h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+  survive(h);
+  h.run('__players[0].hp = 50; LocalSurvivor.Reflex.watchHealth(__players[0]); __players[0].hp = 49.99; LocalSurvivor.Reflex.watchHealth(__players[0])');
+  assert.equal(survive(h), false);
+});
+
+test('a chaser past the bridge hold radius does not start a window', () => {
+  const h = body(WINDED);
+  h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  addZombie(h, 20.5, 10, false);
+  h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  survive(h);
+  h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+  survive(h);
+  assert.equal(h.get('LocalSurvivor.reflexState.handBackUntil'), undefined, '10.5 tiles is for the reflex, not an escape');
+  // And at 9.5 it does.
+  const g = body(WINDED);
+  g.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  addZombie(g, 19.5, 10, false);
+  g.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  survive(g);
+  g.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+  survive(g);
+  assert.ok(g.get('LocalSurvivor.reflexState.handBackUntil') > 110);
 });
 
 test('the snapshot carries the tally, and a loop turns into a stand in the game-facing side', () => {

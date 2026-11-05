@@ -216,6 +216,8 @@ export function updateStory(story, p, ctx = {}) {
   next.lowHp = Math.min(next.lowHp, num(p.hp, 100));
   for (const e of Array.isArray(ctx.history) ? ctx.history : []) {
     if (!isObj(e) || e.id == null || e.result !== 'done' || next.seenOrders.includes(e.id)) continue;
+    // The history spans characters. Without this a new one "found" what the last one took.
+    if (next.run != null && e.run != null && e.run !== next.run) continue;
     next.seenOrders = [...next.seenOrders, e.id].slice(-60);
     for (const item of tookItems(e.why)) next.finds = uniqPush(next.finds, item.slice(0, 30), 6);
   }
@@ -321,10 +323,14 @@ export function createCommentator(deps) {
       self.watch = seen.watch;
       const before = self.story;
       self.story = updateStory(self.story, p, { ...ctx, events: seen.events });
-      // A new character: what the voice remembered belongs to the one before.
+      // A new character: what the voice remembered belongs to the one before. The moment watcher
+      // starts over too, so the jump from the old body to the new one is not read as moments.
+      // An unsaid death stays: it carries the old character's state (death below).
       if (self.story.gen !== before.gen) {
         self.inner = [];
         self.pending = self.pending.filter((e) => e.kind === 'death');
+        self.watch = emptyWatch();
+        return self.maybeRun();
       }
       if (!self.idleAt && seen.watch.live) self.idleAt = t + idleGap();
       for (const e of seen.events) self.push(e);
@@ -353,7 +359,10 @@ export function createCommentator(deps) {
       if (!self.enabled || !isObj(r)) return null;
       const hours = Math.max(0, num(r.hoursAlive) - num(r.startHours));
       const text = `She died${r.cause ? ` (${String(r.cause).slice(0, 40)})` : ''} after ${Math.round(hours * 10) / 10} game hours and ${num(r.kills)} kills.`;
-      self.pending.push({ kind: 'death', text, weight: WEIGHT.death, at: now() });
+      // The line is often said after the respawn (the model is slow), so it keeps the dead
+      // character's last look, story and lines. Otherwise it reads "alive again with a cleaver".
+      const snap = { percept: self.percept, summary: summaryLines(self.story), inner: [...self.inner] };
+      self.pending.push({ kind: 'death', text, weight: WEIGHT.death, at: now(), snap });
       return self.maybeRun();
     },
 
@@ -377,7 +386,8 @@ export function createCommentator(deps) {
         // A death is always the line. Otherwise the line answers the latest order, with the moments beside it.
         if (ranked.length && ranked[0].kind === 'death') {
           top = ranked[0];
-          others = [...ranked.slice(1), ...(order ? [order] : [])].slice(0, 2);
+          // Only what came before the death rides along: later moments are the next character's.
+          others = [...ranked.slice(1), ...(order ? [order] : [])].filter((e) => e.at <= top.at).slice(0, 2);
         } else if (order) {
           top = order;
           others = ranked.slice(0, 2);
@@ -398,7 +408,10 @@ export function createCommentator(deps) {
     async speak(top, others, events) {
       const started = now();
       try {
-        const user = userMessage(top, others, self.percept, { summary: summaryLines(self.story), inner: self.inner });
+        const snap = top.snap;
+        const user = snap
+          ? userMessage(top, others, snap.percept, { summary: snap.summary, inner: snap.inner })
+          : userMessage(top, others, self.percept, { summary: summaryLines(self.story), inner: self.inner });
         const reply = await ask({ system: SYSTEM, user });
         self.lastAt = started;
         self.idleAt = started + idleGap();
@@ -410,7 +423,8 @@ export function createCommentator(deps) {
           at: now(), event: top.text, kind: top.kind, action: top.action || '', thought: top.thought || '', line, ms: num(reply.ms),
         };
         self.lines = [...self.lines, rec].slice(-PANEL_LINES);
-        self.inner = [...self.inner, line].slice(-INNER_MEMORY);
+        // A death line is the last character's last word, not the new one's memory.
+        if (!snap) self.inner = [...self.inner, line].slice(-INNER_MEMORY);
         self.spoken += 1;
         write({ at: new Date(rec.at).toISOString(), kind: rec.kind, event: rec.event, action: rec.action, thought: rec.thought, line, ms: rec.ms });
         voice(voiceText(rec));

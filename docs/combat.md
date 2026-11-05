@@ -191,7 +191,7 @@ All in `Stance.N` (`Reflex.N` is the same table). Distances are in tiles.
 | `HEAVY_MAX` | 2 | heavy load gate (moodle level) |
 | `TIRED_MAX` | 3 | tired gate (moodle level) |
 
-In `Reflex`: `LINE_LEN` 6, `TERRAIN_TICKS` 30, `BAD_LINE_TICKS` 300, `RUN_STUCK` 60, `CLIMB_ANIM` 120, `CLIMB_GIVEUP` 300, `CLIMB_AGAIN` 600, `WEAPON_TICKS` 300, `HANDBACK_TICKS` 1200.
+In `Reflex`: `LINE_LEN` 6, `TERRAIN_TICKS` 30, `BAD_LINE_TICKS` 300, `RUN_STUCK` 60, `CLIMB_ANIM` 120, `CLIMB_GIVEUP` 300, `CLIMB_AGAIN` 600, `WEAPON_TICKS` 300, `HANDBACK_TICKS` 1200, `HANDBACK_R` 10, `HANDBACK_NEAR` 3, `HANDBACK_HIT_TICKS` 180.
 
 In `ReflexLog`: `OUTCOME_TICKS` 300 (also the length of one escape try), `CLEAR_TICKS` 180.
 
@@ -314,7 +314,19 @@ A door between them is the brain's job, since it knows the buildings. The last c
 
 **The bridge side** (`bridge/chase.mjs`, `docs/brain.md`): the hold is a loan. The brain gets a turn when `reflex.stuck` is true, or when the reflex has had a small chase to itself for 60 seconds, nothing has hit her in the last minute and it is not fighting. The turn has a short escape menu (the nearest two houses to enter, shutting this building's doors, a walk away, standing to fight when she has a weapon and the health). The walks set the posture `avoid` and the stand sets `clear`. Hand-back decisions are logged with a `handback` field.
 
-**Letting the brain's walk run.** `Reflex.survive` remembers `LS.lastSeq`. A new GOTO, ENTER, SECURE or MOVE order that arrives with a chaser inside 11 can only be the brain's way out, so for `HANDBACK_TICKS` (20 seconds) the reflex returns false while nothing is within 2 tiles. Without that the flee cancels the walk within a second. A WAIT or a posture change does not start the window.
+**Letting the brain's walk run.** `Reflex.survive` remembers `LS.lastSeq`. A new GOTO, ENTER, SECURE or MOVE order that arrives with a chaser inside `HANDBACK_R` (10 tiles, the bridge's hold radius) can only be the brain's way out, so for `HANDBACK_TICKS` (20 seconds) the reflex returns false while nothing is within 2 tiles. Without that the flee cancels the walk within a second. A WAIT or a posture change does not start the window. A chaser between 10 and 11 tiles does not start it either: the bridge was not holding orders for it, so the order is not an escape.
+
+**When the stand-aside ends, or never starts.** In the 2026-11-05 soak (death at 21:45:52Z) she died on an ENTER walk with the reflex off. The ENTER went out at 21:45:35 with hp 12, bleeding, 2 chasing at 7.2 and 7.9 tiles and 9 zombies near. There was no reflex line for the next 17 seconds, and at death 4 were chasing. Her normal rules would have run (`SWARM_N` 3). A pack is not the brain's to walk out of, so:
+
+```
+never starts, and ends at once, when:
+  3 or more zombies inside SWARM_R (7), counted the way Stance counts its pack (downed ones too)
+  2 or more inside HANDBACK_NEAR (3)
+  she took a hit: a drop of more than HIT_DROP in one tick (Reflex.watchHealth)
+never starts for 3 seconds after a hit (HANDBACK_HIT_TICKS)
+```
+
+A slow bleed (a hundredth of a point a tick) is not a hit. The pack check is `Reflex.handBackPack`, run on every reflex tick, so a pack that forms during the window ends it. The one-zombie-within-2-tiles rule is unchanged.
 
 Numbers to watch live: the review's "Stuck in a chase" lines.
 

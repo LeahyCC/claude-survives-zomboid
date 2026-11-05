@@ -195,3 +195,18 @@ test('the helper parses as Lua 5.1 and has no em dash', () => {
   luaparse.parse(source, { luaVersion: '5.1' });
   assert.ok(!source.includes('—'));
 });
+
+test('a respawn picks the game\'s Random region, or a random one when the list has none', () => {
+  const lua = world();
+  lua.run(`
+    function getText(k) return k == "UI_mapspawn_random" and "Random" or k end
+    function ZombRand(n) return n - 1 end
+    __withRandom = { items = { { item = { name = "Muldraugh" } }, { item = { name = "Riverside" } }, { item = { name = "Random" } } } }
+    __without = { items = { { item = { name = "Muldraugh" } }, { item = { name = "Riverside" } } } }
+    LocalSurvivorDevSpawn.pickRegion(__withRandom)
+    LocalSurvivorDevSpawn.pickRegion(__without)
+    LocalSurvivorDevSpawn.pickRegion(nil)
+  `);
+  assert.equal(lua.run('return __withRandom.selected'), 3, 'the Random entry, so the game rolls');
+  assert.equal(lua.run('return __without.selected'), 2, 'a roll over the list, not always the first');
+});

@@ -223,6 +223,12 @@ About 1.2 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 
 
 `LS.hudData.weapon` feeds the bottom line of the panel, `Inv N food, N water | <weapon>`. It shows the melee weapon, or the gun when one is held. When the weapon is the player's own pick (`weaponByHand`) the line adds `(your pick)`, for example `Baseball Bat (your pick)`.
 
+## The voice files
+
+The mod also reads `local_voice.txt` (the inner voice, one line, written by the bridge) and looks for two flag files, `ls_voice_off.txt` and `ls_voice_clean.txt`. They are all in the same folder as the percept. See "Inner voice on screen" in `docs/brain.md`. Nothing from them goes into the percept or an order.
+
 ## Checked and unchecked
+
+The voice display calls (`addLineChatElement`, `getTextManager`, `MeasureStringX`, `getFontHeight`, `Keyboard.KEY_SEMICOLON`) were checked the same way. `getChatElement():IsSpeaking()` looked fine in the jar but throws in game: ChatElement is not exposed to Lua.
 
 Every Java method above was checked against the 42.21 jar with `node tools/pz-api.mjs`, and enum names with `node tools/pz-consts.mjs`. What they return in a live game (for example whether `getBuildingList()` covers every loaded building, or whether `getWaterSources()` lists every sink) is not checked yet.

@@ -276,3 +276,42 @@ test('nothing the voice says or remembers reaches the brain, the planner or the 
   assert.match(bridge, /VOICE_FILE = path\.join\(LUA_DIR, 'local_voice\.txt'\)/);
   assert.ok(!/voice[^\n]*orderLine|orderLine[^\n]*voice/i.test(bridge));
 });
+
+test('a new character starts with a clean head: no old lines, finds or moments', async () => {
+  // The history spans characters. The new one must not "find" the old one's crowbar.
+  let st = emptyStory();
+  const hist = [{ id: 'o1', run: 'r1', result: 'done', why: 'took 1: Crowbar' }];
+  st = updateStory(st, look({ hoursAlive: 6 }), { run: 'r1', history: hist });
+  assert.deepEqual(st.finds, ['Crowbar']);
+  st = updateStory(st, look({ hoursAlive: 0.1 }), { run: 'r2', history: hist });
+  assert.deepEqual(st.finds, [], 'the last life\'s finds stay with it');
+
+  const r = rig();
+  r.c.observe(look({ hp: 100, kills: 5, hoursAlive: 9 }), { run: 'r1' });
+  r.clock.t += MIN_GAP_MS;
+  r.c.order({ action: 'SEARCH', thought: 'old' });
+  await r.c.maybeRun();
+  assert.equal(r.c.inner.length, 1);
+  r.clock.t += 1000;
+  r.c.observe(look({ hp: 100, kills: 0, hoursAlive: 0.1 }), { run: 'r2' });
+  assert.deepEqual(r.c.inner, [], 'old lines are gone');
+  assert.equal(r.c.pending.length, 0, 'the swap of bodies is not read as moments');
+});
+
+test('a death said after the respawn still speaks from the dead character', async () => {
+  const r = rig();
+  r.c.observe(look({ hp: 30, kills: 7, hoursAlive: 20, weapon: 'Meat Cleaver' }), { run: 'r1' });
+  r.setBusy(true);
+  r.c.death({ cause: 'overrun', hoursAlive: 20, startHours: 5, kills: 7 });
+  // The new character is in before the model is free.
+  r.clock.t += 2000;
+  r.c.observe(look({ hp: 100, kills: 0, hoursAlive: 0.1 }), { run: 'r2' });
+  r.c.order({ action: 'ENTER house N', thought: 'new life' });
+  r.setBusy(false);
+  await r.c.maybeRun();
+  const user = r.asked[0].user;
+  assert.match(user, /WHAT JUST HAPPENED: She died/);
+  assert.match(user, /Meat Cleaver/, 'the dead one\'s state');
+  assert.ok(!/ENTER house N/.test(user), 'nothing from the new life rides along');
+  assert.deepEqual(r.c.inner, [], 'the death line is not the new character\'s memory');
+});

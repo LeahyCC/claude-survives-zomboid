@@ -12,7 +12,7 @@ LocalHUD = LocalHUD or ISUIElement:derive("LocalHUD")
 function LocalHUD:new()
   local sh = 1080
   pcall(function() sh = getCore():getScreenHeight() end)
-  local h = 182
+  local h = 198
   local o = ISUIElement:new(14, sh - h - 48, 384, h)   -- bottom-left, above the vanilla bars
   setmetatable(o, self); self.__index = self
   return o
@@ -81,6 +81,10 @@ function LocalHUD:render()
   self:drawText("Zombies  " .. data.zClose .. " close / " .. data.zNear .. " near  (" .. zt .. ")", 12, by + 22, 0.9, 0.62, 0.62, 1, UIFont.Small)
   self:drawText("Inv  " .. data.foods .. " food, " .. data.waters .. " water  |  " .. data.weapon, 12, by + 38, 0.7, 0.86, 0.7, 1, UIFont.Small)
   self:drawTextRight("day " .. data.day .. "  " .. string.format("%02d", data.hour) .. ":00   [H hides]", w - 12, by + 38, 0.55, 0.6, 0.66, 1, UIFont.Small)
+  -- The keys, because the mod has no menu. The voice state shows here too.
+  local vstate = "off"
+  pcall(function() if LS.Voice.visible() then vstate = LS.voice.clean and "on, clean" or "on" end end)
+  self:drawText("Keys  H panel   G speed   K night   ; voice (" .. vstate .. ")", 12, by + 54, 0.55, 0.6, 0.66, 1, UIFont.Small)
 end
 
 function HUD.start()
@@ -103,6 +107,10 @@ function HUD.onKeyPressed(key)
     LS.autoSpeed = not LS.autoSpeed
     -- Speed and multiplier together, or a 20x clock would be left behind at speed 1.
     if not LS.autoSpeed then Core.setSpeed(1) end
+    return
+  end
+  if key == Keyboard.KEY_SEMICOLON then
+    pcall(function() LS.Voice.toggle() end)
     return
   end
   if key == Keyboard.KEY_K then
