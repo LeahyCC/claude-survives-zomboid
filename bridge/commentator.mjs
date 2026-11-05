@@ -18,6 +18,10 @@
 import { LOOP_MS } from './reactions.mjs';
 import { isMissingModel } from './llm.mjs';
 import { tookItems } from './memory.mjs';
+import { heldGun } from './senses.mjs';
+
+// What is in her hand: the melee weapon, or the gun the mod keeps out of weapon.
+const handName = (p) => heldGun(p) || String(p.weapon || 'none');
 
 export const MIN_GAP_MS = 30_000;
 // A moment that is not said within this long is stale, and the next one is more interesting.
@@ -97,7 +101,7 @@ export function detectMoments(watch, p, ctx = {}) {
   const hp = num(p.hp, 100);
   const kills = num(p.kills);
   const hours = num(p.hoursAlive);
-  const weapon = String(p.weapon || 'none');
+  const weapon = handName(p);
   const score = typeof p.weaponScore === 'number' && Number.isFinite(p.weaponScore) ? p.weaponScore : null;
   const results = {};
   for (const e of history) if (isObj(e) && e.id != null) results[e.id] = e.result || '';
@@ -169,7 +173,7 @@ export function stateText(p) {
   bits.push(chase > 0 ? `${chase} zombies chasing her` : close > 0 ? `${close} zombies close` : 'no zombies near');
   if (num(p.bleeding) > 0) bits.push('bleeding');
   bits.push(insideOf(p) ? 'inside a building' : 'outside');
-  bits.push(String(p.weapon || 'none') === 'none' ? 'no weapon in hand' : `holding a ${String(p.weapon).slice(0, 30)}`);
+  bits.push(handName(p) === 'none' ? 'no weapon in hand' : `holding a ${handName(p).slice(0, 30)}`);
   bits.push(`day ${num(p.day)}, ${num(p.kills)} kills`);
   return bits.join(', ');
 }
@@ -194,7 +198,7 @@ export function updateStory(story, p, ctx = {}) {
   const runChanged = ctx.run != null && story.run != null && ctx.run !== story.run;
   // The hours or kills going back is a new character even when no run id came with it.
   const base = runChanged || hours < story.hours - 0.5 || kills < story.kills ? { ...emptyStory(), gen: story.gen + 1 } : story;
-  const weapon = String(p.weapon || 'none');
+  const weapon = handName(p);
   const next = {
     ...base, run: ctx.run != null ? ctx.run : base.run, hours, day: num(p.day), hour: num(p.hour), kills, weapon,
     plan: ctx.plan && typeof ctx.plan.goal === 'string' ? ctx.plan.goal.slice(0, 80) : '', inside: insideOf(p),

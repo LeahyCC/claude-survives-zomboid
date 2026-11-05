@@ -193,6 +193,52 @@ test('policy: equip a carried weapon that scores clearly better, or any real one
   assert.equal(betterWeapon(moment({ weapon: 'none', weapons: [] }).percept), null);
 });
 
+test('policy: a gun in hand is armed, and no melee weapon is swapped in for it', () => {
+  const saucepan = { n: 'Saucepan', cond: 0.7, dmg: 0.7, reach: 1, score: 9.2 };
+  const axe = { n: 'Axe', cond: 1, dmg: 2, reach: 1.2, score: 51 };
+  // The live run: a pistol in hand, a saucepan in the bag. The old percept read as unarmed.
+  const pistol = moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weaponByHand: true, weapons: [saucepan],
+    guns: [{ n: 'Pistol', ammo: 12, loaded: 8, held: true }] });
+  assert.equal(betterWeapon(pistol.percept), null);
+  assert.equal(policy(pistol), null);
+  assert.equal(byId(menu(pistol), 'equip'), undefined, 'and the menu does not offer it either');
+  // Even a much better weapon in the bag.
+  assert.equal(policy(moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [axe] })), null);
+  // A mod that sends heldGun but not weaponByHand is read the same way.
+  assert.equal(betterWeapon(moment({ weapon: 'none', heldGun: 'Pistol', weapons: [axe] }).percept), null);
+  // A gun carried in the bag with empty hands is not held: the melee weapon is still offered.
+  const bagged = moment({ weapon: 'none', weaponScore: 0, heldGun: 'none', weaponByHand: false, weapons: [saucepan], guns: [{ n: 'Pistol', ammo: 0, loaded: 4, held: false }] });
+  assert.equal(policy(bagged).rule, 'equip');
+  // She is not unarmed, so no house is sold as "no real weapon yet" and the playbook does not say so.
+  assert.equal(weaponPoor(pistol.percept), false);
+  assert.equal(weaponPoor(moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [] }).percept), false);
+  const rules = selectRules(moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [] }).percept, {}).map((r) => r.id);
+  assert.ok(!rules.includes('no-weapon') && !rules.includes('weak-weapon'));
+  assert.ok(selectRules(moment({ weapon: 'none', weaponScore: 0, heldGun: 'none', weapons: [] }).percept, {}).some((r) => r.id === 'no-weapon'));
+});
+
+test('policy: a weapon Colin put in her hand is left alone, even for a much better one', () => {
+  const crowbar = { n: 'Crowbar', cond: 1, dmg: 1.15, reach: 1.25, score: 30 };
+  const axe = { n: 'Axe', cond: 1, dmg: 2, reach: 1.2, score: 51 };
+  // The same percept without the flag swaps. With it, nothing is offered.
+  const free = moment({ weapon: 'Crowbar', weaponScore: 30, weapons: [axe, crowbar] });
+  assert.equal(policy(free).rule, 'equip');
+  const chosen = moment({ weapon: 'Crowbar', weaponScore: 30, weaponByHand: true, weapons: [axe, crowbar] });
+  assert.equal(betterWeapon(chosen.percept), null);
+  assert.equal(policy(chosen), null);
+  assert.equal(byId(menu(chosen), 'equip'), undefined);
+  // Only a true flag counts.
+  assert.equal(policy(moment({ weapon: 'Crowbar', weaponScore: 30, weaponByHand: 'yes', weapons: [axe, crowbar] })).rule, 'equip');
+});
+
+test('the digest says a gun is held and a weapon was her own pick', async () => {
+  const { digest } = await import('./digest.mjs');
+  const gun = moment({ weapon: 'none', heldGun: 'Pistol', weaponByHand: true, weapons: [], guns: [{ n: 'Pistol', ammo: 12, loaded: 8, held: true }] });
+  assert.match(digest(gun.percept), /Holding a Pistol \(a gun, 8 loaded and 12 spare rounds\)/);
+  const own = moment({ weapon: 'Crowbar', weaponScore: 30, weaponByHand: true, weapons: [{ n: 'Crowbar', cond: 1, dmg: 1, reach: 1, score: 30 }] });
+  assert.match(digest(own.percept), /Holding a Crowbar \(100%\), your own pick/);
+});
+
 test('EQUIP is not sent again while the weapon is being raised', () => {
   const m = moment({ weapon: 'none', weaponScore: 0, weapons: [{ n: 'Axe', cond: 1, dmg: 2, reach: 1.2, score: 51 }] });
   const first = policy(m);

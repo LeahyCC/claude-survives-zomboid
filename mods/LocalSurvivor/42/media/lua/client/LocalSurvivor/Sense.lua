@@ -185,7 +185,10 @@ function Sense.itemType(it)
   pcall(function() full = it:getFullType() end)
   local known = LS.itemTypes[full]
   if known then return known end
-  local t = { food = Core.isFoodItem(it), melee = Core.isMeleeWeapon(it) }
+  local t = { food = Core.isFoodItem(it), melee = Core.isMeleeWeapon(it), gun = Core.isGun(it) }
+  -- loose rounds, a magazine or a box of rounds, so the live count is only read for these
+  local ammo = Core.ammoFacts(it)
+  t.ammoKind = ammo.ammo and "ammo" or ammo.mag and "mag" or ammo.box and "box" or nil
   t.opener = hasTag(it, "CAN_OPENER")
   t.hammer = hasTag(it, "HAMMER")
   t.saw = hasTag(it, "SAW")
@@ -248,6 +251,51 @@ function Sense.carriedItems(p)
   end
   pcall(function() walk(p:getInventory():getItems(), 0) end)
   return out
+end
+
+-- Pure. guns: { { n, ammoKey, magKey, loaded, held } } for the guns carried. stock.loose maps an
+-- ammo item key to the rounds carried, stock.mags maps a magazine key to the rounds in the spare
+-- ones. Returns up to limit guns, the held one first, then the best supplied: { n, ammo, loaded,
+-- held }. ammo is what she carries for it outside the gun, loose rounds plus spare magazines.
+function Sense.summarizeGuns(guns, stock, limit)
+  limit = limit or 2
+  stock = stock or {}
+  local rows = {}
+  for _, g in ipairs(guns or {}) do
+    local ammo = (stock.loose and stock.loose[g.ammoKey]) or 0
+    if g.magKey and g.magKey ~= "" then ammo = ammo + ((stock.mags and stock.mags[g.magKey]) or 0) end
+    table.insert(rows, { n = tostring(g.n or "?"), ammo = round(ammo), loaded = round(g.loaded), held = g.held and true or false })
+  end
+  table.sort(rows, function(a, b)
+    if a.held ~= b.held then return a.held end
+    if a.ammo + a.loaded ~= b.ammo + b.loaded then return a.ammo + a.loaded > b.ammo + b.loaded end
+    return a.n < b.n
+  end)
+  local out = {}
+  for i = 1, math.min(limit, #rows) do out[i] = rows[i] end
+  return out
+end
+
+-- The guns carried, one level into bags, with the ammo she has for them.
+function Sense.gunsCarried(p)
+  local guns, stock = {}, { loose = {}, mags = {} }
+  local hand = nil
+  pcall(function() hand = p:getPrimaryHandItem() end)
+  for _, it in ipairs(Sense.carriedItems(p)) do
+    local t = Sense.itemType(it)
+    if t.gun then
+      local g = Core.gunFacts(it)
+      if not g.broken then
+        g.held = hand ~= nil and it == hand
+        table.insert(guns, g)
+      end
+    elseif t.ammoKind then
+      local a = Core.ammoFacts(it)
+      if a.ammo then stock.loose[a.ammo] = (stock.loose[a.ammo] or 0) + (a.count or 1) end
+      if a.mag then stock.mags[a.mag.key] = (stock.mags[a.mag.key] or 0) + a.mag.rounds end
+    end
+  end
+  return guns, stock
 end
 
 -- Pure. descs: the tables describeItem makes. Weapons are the best four by score. An item that
@@ -671,13 +719,19 @@ function Sense.buildPercept(p)
   end)
 
   -- A pen in hand reads as "none": the brain should go and find a weapon, not trust the pen.
-  local weapon, weaponScore = "none", 0
+  -- A pistol in hand reads as "none" too, but heldGun names it: it is not the melee weapon.
+  local weapon, weaponScore, heldGun = "none", 0, "none"
   pcall(function()
     local w = p:getPrimaryHandItem()
+    -- Not escaped: it goes through Core.json, which escapes it.
+    if Core.isGun(w) then heldGun = Core.gunFacts(w).n; return end
     if not Core.isMeleeWeapon(w) then return end
     local facts = Core.weaponFacts(w, Sense.itemType(w))
     if Core.isRealWeapon(facts) then weapon, weaponScore = esc(facts.n), facts.score end
   end)
+  -- Colin put it there with his own hands: the mod will not take it away.
+  local byHand = false
+  pcall(function() byHand = LS.Act.handChosen(p) end)
 
   local qlen = Core.queueLength(p)
 
@@ -694,7 +748,8 @@ function Sense.buildPercept(p)
   -- feed the HUD (visual transparency)
   hud.hp, hud.hunger, hud.thirst, hud.fatigue, hud.panic = hp, hunger, thirst, fatigue, panic
   hud.zNear, hud.zClose, hud.zDist, hud.zDir = zNear, zClose, nearestD, nearestDir
-  hud.foods, hud.waters, hud.weapon, hud.room = foods, waters, weapon, room
+  local held = heldGun ~= "none" and heldGun or weapon
+  hud.foods, hud.waters, hud.weapon, hud.room = foods, waters, byHand and (held .. " (your pick)") or held, room
   hud.qlen, hud.day, hud.hour = qlen, day, hour
 
   local j = '{"v":2'
@@ -719,14 +774,14 @@ function Sense.buildPercept(p)
   j = j .. ',"reflexed":' .. tostring(LS.tick - LS.reflexTick < 600)
   j = j .. ',"lastSeq":' .. LS.lastSeq
   j = j .. ',"err":"' .. esc(LS.lastError) .. '"'
-  j = j .. Sense.perceptV2(p, px, py, room, weaponScore)
+  j = j .. Sense.perceptV2(p, px, py, room, weaponScore, heldGun, byHand)
   -- The last seconds before death, only on the dead percept (docs/percept.md).
   if LS.deathRecord and p:isDead() then j = j .. ',"death":' .. Core.json(LS.deathRecord) end
   return j .. '}'
 end
 
 -- The v2 fields, each part guarded on its own so one bad call only blanks its own field.
-function Sense.perceptV2(p, px, py, room, weaponScore)
+function Sense.perceptV2(p, px, py, room, weaponScore, heldGun, byHand)
   local json = Core.json
   local parts = {}
   local function add(key, value) table.insert(parts, ',"' .. key .. '":' .. json(value)) end
@@ -760,6 +815,12 @@ function Sense.perceptV2(p, px, py, room, weaponScore)
   carried.inv.canRip = carried.inv.bandages == 0 and try(function() return LS.Needs.canRip(p) end, false) or false
   add("weapons", carried.weapons)
   add("weaponScore", weaponScore)
+  -- A gun is gear, not the melee weapon: weapon stays "none" for a held pistol, and heldGun
+  -- names it so the bridge counts her as armed (docs/percept.md).
+  local guns, stock = Sense.gunsCarried(p)
+  add("guns", Sense.summarizeGuns(guns, stock))
+  add("heldGun", heldGun)
+  add("weaponByHand", byHand)
   add("inv", carried.inv)
 
   local body = Sense.summarizeWounds(Sense.bodyFacts(p))

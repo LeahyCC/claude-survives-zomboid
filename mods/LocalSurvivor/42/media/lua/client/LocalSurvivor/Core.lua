@@ -230,6 +230,66 @@ end
 function Core.isFoodSupply(it)
   return Core.isEdible(it) or Core.isSealedFood(it)
 end
+-- A firearm. It is gear for now: the reflex cannot fire one, so it is never the melee weapon
+-- (see isMeleeWeapon), but it is worth carrying with its ammo and it counts as armed.
+function Core.isGun(it)
+  if not it then return false end
+  local gun = false
+  pcall(function()
+    if not it:IsWeapon() then return end
+    local ranged, aimed = false, false
+    pcall(function() ranged = it:isRanged() == true end)
+    pcall(function() aimed = it:isAimedFirearm() == true end)
+    gun = ranged or aimed
+  end)
+  return gun
+end
+-- Plain facts about a gun: its name, the item keys of its ammo, magazine and ammo box, the rounds
+-- loaded (magazine plus one in the chamber) and its capacity. A key is "" when the gun has none,
+-- as a revolver or a shotgun has no magazine. Item keys are full types like Base.Bullets9mm.
+function Core.gunFacts(it)
+  local g = { n = "?", ammoKey = "", magKey = "", boxKey = "", loaded = 0, max = 0, broken = false }
+  pcall(function() g.n = it:getDisplayName() end)
+  pcall(function() g.ammoKey = tostring(it:getAmmoType():getItemKey() or "") end)
+  pcall(function() g.magKey = tostring(it:getMagazineType() or "") end)
+  pcall(function() g.boxKey = tostring(it:getAmmoBox() or "") end)
+  pcall(function() g.loaded = tonumber(it:getCurrentAmmoCount()) or 0 end)
+  pcall(function() if it:isRoundChambered() then g.loaded = g.loaded + 1 end end)
+  pcall(function() g.max = tonumber(it:getMaxAmmo()) or 0 end)
+  pcall(function() g.broken = it:isBroken() == true end)
+  return g
+end
+
+-- What an item is as ammunition, or an empty table. Loose rounds carry the tag base:ammo, a
+-- magazine has an ammo type and a capacity, and a box of rounds is the only other thing the
+-- game files under the Ammo category. Rounds and boxes are named by their item key.
+function Core.ammoFacts(it)
+  local f = {}
+  local full, weapon = "", false
+  pcall(function() full = tostring(it:getFullType()) end)
+  pcall(function() weapon = it:IsWeapon() == true end)
+  if weapon then return f end
+  local tagged = false
+  pcall(function() tagged = it:hasTag(ItemTag.AMMO) == true end)
+  if tagged then
+    f.ammo, f.count = full, 1
+    pcall(function() f.count = math.max(1, tonumber(it:getCount()) or 1) end)
+    return f
+  end
+  pcall(function()
+    local kind = it:getAmmoType()
+    local max = tonumber(it:getMaxAmmo()) or 0
+    if kind and max > 0 then
+      f.mag = { key = full, ammoKey = tostring(kind:getItemKey() or ""), rounds = tonumber(it:getCurrentAmmoCount()) or 0, max = max }
+    end
+  end)
+  if f.mag then return f end
+  local category = ""
+  pcall(function() category = tostring(it:getDisplayCategory()) end)
+  if category == "Ammo" then f.box = full end
+  return f
+end
+
 -- A flashlight, a water bottle, or bare hands is not a weapon. A gun is the wrong tool here.
 function Core.isMeleeWeapon(it)
   if not it then return false end
@@ -304,6 +364,128 @@ end
 -- Pure. A real weapon: it scores over the floor EQUIP and LOOT use.
 function Core.isRealWeapon(w)
   return type(w) == "table" and (tonumber(w.score) or Core.weaponScore(w)) >= Core.WEAPON.MIN_SCORE
+end
+
+-- ---------- loot value ----------
+-- Pure. What an item is worth taking, from plain facts, so SEARCH and LOOT take in one order:
+--
+--   a bag, a better melee weapon, a gun with its ammo or ammo for a gun she has, medical,
+--   water, food that keeps, food that spoils (only when she will eat it soon), tools, and
+--   nothing for junk (dye, perfume, a plunger, decorations: no row, so no value).
+--
+-- Values are only compared with each other. Which of them she may still take (how many of a
+-- kind, how much weight is left) is a game rule and lives in Act.
+Core.LOOT = {
+  VALUE = {
+    bag = 100, weapon = 90, gun = 86, ammo = 84, mag = 84, box = 80,
+    bandage = 78, disinfectant = 76, antibiotic = 74, painkiller = 72, splint = 70, sheet = 64,
+    water = 68, bottle = 56, drink = 50,
+    food = 60, can = 58, opener = 58, fresh = 52,
+    hammer = 46, saw = 45, screwdriver = 44, lighter = 43, flashlight = 42, battery = 40,
+  },
+  GUN_BARE = 56,      -- a gun with no ammo found yet: worth a kilo and a half, not a place over medicine
+  FRESH_SOON = 36,    -- food that spoils soon, taken when she will be hungry within the day
+  WEAPON_MIN = 8,     -- the least melee score worth carrying: a saucepan (9) yes, a plunger (6) no
+  BAG_GAIN = 1.5,     -- a worn bag is only replaced by one with this much more room
+  KEEP_DAYS = 14,     -- food with fewer days left than this is "fresh": it spoils soon
+  HUNGRY = 0.25,      -- hunger now
+  PECKISH = 0.1,      -- hunger that will show within the day
+  DENSITY = 60,       -- value per kg asked of a pick once the pack is nearly full
+}
+
+local function byValue(a, b)
+  if a.value ~= b.value then return a.value > b.value end
+  return a.kind < b.kind
+end
+
+-- Pure. Every way d is worth taking, best first: { { kind, value } }. An empty list is junk.
+-- d: the plain item table Act.describeLoot builds. ctx: what is carried and needed:
+--   weaponBest   score of the best melee weapon carried, 0 for none
+--   bagWorn      a back bag is worn, and bagCapacity how much it holds
+--   hunger       0 to 1, foodReady the edible food carried
+--   ammoOf, magOf, boxOf   sets of item keys that fit a gun she carries (or is taking)
+function Core.lootKinds(d, ctx)
+  local out = {}
+  if type(d) ~= "table" or d.broken then return out end
+  ctx = ctx or {}
+  local L, V = Core.LOOT, Core.LOOT.VALUE
+  local function add(kind, value) table.insert(out, { kind = kind, value = value }) end
+  if d.clothing and not d.bag then return out end
+
+  if d.bag then
+    local cap = tonumber(d.bag.capacity) or 0
+    local worn = tonumber(ctx.bagCapacity) or 0
+    if not ctx.bagWorn then add("bag", V.bag + math.min(cap, 50) / 100)
+    elseif worn > 0 and cap > worn * L.BAG_GAIN then add("bag", V.bag - 8 + math.min(cap, 50) / 100) end
+  end
+
+  if type(d.weapon) == "table" then
+    local v = tonumber(d.weapon.score) or Core.weaponScore(d.weapon)
+    local best = tonumber(ctx.weaponBest) or 0
+    -- Over the floor, and a clear gain on the best carried: the same swap margin as EQUIP, so
+    -- she never picks up what she would not wield.
+    if v >= L.WEAPON_MIN and (best <= 0 or v > best * Core.WEAPON.SWAP) then
+      add("weapon", V.weapon + math.min(v, 100) / 20)
+    end
+  end
+
+  if type(d.gun) == "table" then
+    local known = (ctx.ammoOf and ctx.ammoOf[d.gun.ammoKey]) or (tonumber(d.gun.loaded) or 0) > 0
+    add("gun", known and V.gun or L.GUN_BARE)
+  end
+  if d.ammo and ctx.ammoOf and ctx.ammoOf[d.ammo] then add("ammo", V.ammo) end
+  if type(d.mag) == "table" and ctx.magOf and ctx.magOf[d.mag.key] then add("mag", V.mag) end
+  if d.box and ctx.boxOf and ctx.boxOf[d.box] then add("box", V.box) end
+
+  if d.bandage and not d.sheet then add("bandage", V.bandage) end
+  if d.sheet then add("sheet", V.sheet) end
+  if d.disinfect then add("disinfectant", V.disinfectant) end
+  if d.antibiotic then add("antibiotic", V.antibiotic) end
+  if d.painkiller then add("painkiller", V.painkiller) end
+  if d.splint then add("splint", V.splint) end
+
+  if (tonumber(d.waterL) or 0) > 0 then add("water", V.water) end
+  if d.emptyBottle then add("bottle", V.bottle) end
+  if d.drink then add("drink", V.drink) end
+
+  if d.edible then
+    -- No shelf figure means it does not spoil (dry goods, sealed packs). Frozen food melts the
+    -- hour it leaves the freezer, so it counts as spoiling soon.
+    local keeps = not d.frozen and (d.shelf == nil or d.shelf >= L.KEEP_DAYS)
+    local hunger = tonumber(ctx.hunger) or 0
+    if keeps then add("food", V.food)
+    elseif hunger >= L.HUNGRY and not d.frozen then add("fresh", V.fresh)
+    elseif hunger >= L.PECKISH and not d.frozen and (d.shelf or 0) >= 1 and (tonumber(ctx.foodReady) or 0) < 3 then
+      add("fresh", L.FRESH_SOON)
+    end
+  end
+  if d.sealed then add("can", V.can) end
+
+  if d.opener then add("opener", V.opener) end
+  if d.hammer then add("hammer", V.hammer) end
+  if d.saw then add("saw", V.saw) end
+  if d.screwdriver then add("screwdriver", V.screwdriver) end
+  if d.lighter then add("lighter", V.lighter) end
+  if d.flashlight then add("flashlight", V.flashlight) end
+  if d.battery then add("battery", V.battery) end
+
+  table.sort(out, byValue)
+  return out
+end
+
+-- Pure. The best value of d, 0 for junk.
+function Core.lootValue(d, ctx)
+  local kinds = Core.lootKinds(d, ctx)
+  return kinds[1] and kinds[1].value or 0
+end
+
+-- Pure. Is a pick worth its weight? The bar is value per kilo, and it rises as the pack fills:
+-- anything goes while the pack is empty, and near full only light, valuable things do. room is
+-- the share of the weight budget still free, 0 to 1.
+function Core.lootWorth(value, weight, room)
+  local w = math.max(tonumber(weight) or 0, 0.1)
+  local r = clamp(tonumber(room) or 1, 0, 1)
+  return (tonumber(value) or 0) / w >= Core.LOOT.DENSITY * (1 - r) * (1 - r)
 end
 
 -- Plain facts about a melee weapon item, with its score. t is the cached item type from
