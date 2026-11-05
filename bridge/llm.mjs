@@ -187,39 +187,48 @@ export async function callPlanner({ system, user, schema, model = PLANNER_MODEL,
   const started = Date.now();
   const cancel = new AbortController();
   planCancel = cancel;
-  const send = (think) => postJSON(BASE() + '/api/chat', {
-    model,
-    stream: false,
-    think,
-    format: schema,
-    keep_alive: KEEP_ALIVE,
-    options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: NUM_CTX },
-    messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-  }, 'ollama', timeout, cancel.signal);
-  let think = PLANNER_THINK !== 'off' && !cannotThink.has(model);
-  let data;
-  try {
-    data = await send(think);
-  } catch (err) {
-    if (cancel.signal.aborted) throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true });
-    if (!think || !thinkRefused(err && err.message)) throw err;
-    cannotThink.add(model);
-    think = false;
+  const send = async (think) => {
     try {
-      data = await send(false);
-    } catch (err2) {
+      const data = await postJSON(BASE() + '/api/chat', {
+        model,
+        stream: false,
+        think,
+        format: schema,
+        keep_alive: KEEP_ALIVE,
+        options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: NUM_CTX },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      }, 'ollama', timeout, cancel.signal);
+      // Never fall back to message.thinking: that is reasoning text, not the JSON the schema asked for.
+      const msg = data.message || {};
+      return { raw: msg.content || '', thought: !!msg.thinking };
+    } catch (err) {
       if (cancel.signal.aborted) throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true });
-      throw err2;
+      throw err;
     }
+  };
+  let think = PLANNER_THINK !== 'off' && !cannotThink.has(model);
+  try {
+    let reply;
+    try {
+      reply = await send(think);
+    } catch (err) {
+      if (err.preempted || !think || !thinkRefused(err && err.message)) throw err;
+      cannotThink.add(model);
+      think = false;
+      reply = await send(false);
+    }
+    // Thinking can use up the whole budget and leave no answer (seen twice in a live run on
+    // gemma4:12b). Ask once more without thinking rather than lose the plan.
+    if (!reply.raw && think) {
+      think = false;
+      reply = await send(false);
+    }
+    if (!reply.raw) throw new Error('empty reply');
+    return { raw: reply.raw, ms: Date.now() - started, thought: reply.thought, think };
   } finally {
     if (planCancel === cancel) {
       planCancel = null;
       if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
     }
   }
-  const msg = data.message || {};
-  // Never fall back to msg.thinking: that is reasoning text, not the JSON the schema asked for.
-  const raw = msg.content || '';
-  if (!raw) throw new Error(think ? 'empty reply (the thinking may have used up num_predict)' : 'empty reply');
-  return { raw, ms: Date.now() - started, thought: !!msg.thinking, think };
 }

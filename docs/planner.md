@@ -56,7 +56,7 @@ The home building gets the tag `your planned home` on the menu. It goes first in
 |---|---|---|
 | `PZ_PLANNER_MODEL` | `PZ_MODEL` | The model for plans and death reviews. |
 | `PZ_PLANNER_THINK` | `auto` | `auto` asks Ollama to think and falls back once for a model that cannot. `off` never thinks. |
-| `PZ_PLANNER_PREDICT` | `1500` | Token budget. Thinking uses it too. |
+| `PZ_PLANNER_PREDICT` | `1500` | Token budget. Thinking uses it too. When thinking uses it all and no answer comes back, the plan is asked once more without thinking. |
 | `PZ_PLANNER_TIMEOUT` | `120000` | Milliseconds before the call is given up. |
 
 ## Lessons

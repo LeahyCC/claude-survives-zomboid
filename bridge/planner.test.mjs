@@ -478,3 +478,15 @@ test('a plan that ends inside the grace is not cut', async () => {
     globalThis.fetch = real;
   }
 });
+
+test('a plan whose thinking used up the budget is asked again without thinking', async () => {
+  const m = mockFetch((body) => (body.think ? okReply('', 'long reasoning, no answer') : okReply('{"goal":"g","steps":["a"],"home":"","why":"w"}')));
+  try {
+    const r = await callPlanner({ system: 's', user: 'u', schema: planSchema(), model: 'think-runs-out' });
+    assert.match(r.raw, /goal/);
+    assert.equal(r.think, false);
+  } finally {
+    m.restore();
+  }
+  assert.deepEqual(m.bodies.map((b) => b.think), [true, false]);
+});
