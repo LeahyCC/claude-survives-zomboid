@@ -25,7 +25,19 @@ require "LocalSurvivor/HUD"
 local LS = LocalSurvivor
 local Core = LS.Core
 
+-- Every timer in the mod counts ticks and was tuned near 60 a second. The game's frame cap can be
+-- far higher (240 on the dev PC), which made "stuck for 90 ticks" under half a second and had the
+-- unstick cutting ordinary walks. So the logic runs at a steady 60 a second whatever the frame rate.
+LS.TICK_MS = 1000 / 60
+
 function LS.onTick()
+  if getTimestampMs then
+    local now = getTimestampMs()
+    local last = LS.lastTickMs
+    if last and now - last < LS.TICK_MS then return end
+    -- Keep the cadence on a fast PC; after a long stall (a load, a pause) start counting afresh.
+    if last and now - last < 100 then LS.lastTickMs = last + LS.TICK_MS else LS.lastTickMs = now end
+  end
   local hud = LS.hudData
   LS.tick = LS.tick + 1
   local tick = LS.tick
