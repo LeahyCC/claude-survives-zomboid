@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { callLLM, callChoice, parseChoice, callPlanner, warmPlanner, plannerModelInUse, tacticalBusy, BACKEND, MODEL } from './llm.mjs';
+import { callLLM, callChoice, parseChoice, callPlanner, warmPlanner, plannerModelInUse, tacticalBusy, callCommentary, modelInstalled, PEPE_ENABLED, PEPE_MODEL, BACKEND, MODEL } from './llm.mjs';
 import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside } from './decide.mjs';
 import { isV2, holdReason } from './senses.mjs';
 import { loadMemory, updateMemory, recordOrder, memoryStats, memorySlice } from './memory.mjs';
@@ -25,6 +25,7 @@ import { loadStats, observe as observeStats, observeDeath, takeEnded, saveable a
 import { createTracker } from './decisions.mjs';
 import { reactionRows } from './reactions.mjs';
 import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
+import { createCommentator, linesFromLog } from './commentator.mjs';
 import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,9 @@ const LESSONS_FILE = process.env.PZ_LESSONS_FILE || path.join(DIR, 'lessons.json
 const DECISIONS_FILE = process.env.PZ_DECISIONS_FILE || path.join(DIR, 'decisions.jsonl');
 const NUDGES_FILE = process.env.PZ_NUDGES_FILE || path.join(DIR, 'nudges.jsonl');
 const LOG_MAX_BYTES = Number(process.env.PZ_LOG_MAX_BYTES) || DEFAULT_MAX_BYTES;
+// The peanut gallery's lines (commentator.mjs). Small cap: it is only read back for the last 10.
+const PEPE_FILE = process.env.PZ_PEPE_FILE || path.join(DIR, 'pepe.log');
+const PEPE_MAX_BYTES = Number(process.env.PZ_PEPE_LOG_MAX) || 1024 * 1024;
 
 function writeIntentFile(line) {
   fs.mkdirSync(LUA_DIR, { recursive: true });
@@ -74,6 +78,17 @@ delete state.recent;
 const stats = loadStats(state.stats);
 const runId = () => (stats.run ? stats.run.start : null);
 const tracker = createTracker({ write: createAppender(DECISIONS_FILE, { maxBytes: LOG_MAX_BYTES }) });
+// Commentary only. The busy check also covers the whole menu turn and the death review, so it never
+// starts while anything the brain needs is waiting on Ollama, and llm.mjs cancels it if one arrives.
+const pepe = createCommentator({
+  ask: callCommentary,
+  busy: () => tacticalBusy() || planner.running || inFlight || reviewNote === 'reviewing the run',
+  write: createAppender(PEPE_FILE, { maxBytes: PEPE_MAX_BYTES }),
+  log: (kind, text) => log(kind, text),
+  lines: linesFromLog(readLog(PEPE_FILE)),
+  enabled: PEPE_ENABLED,
+});
+const pepeObserve = () => pepe.observe(percept, { history: tracker.history(), plan: planner.plan, run: runId() });
 const appendNudge = createAppender(NUDGES_FILE, { maxBytes: LOG_MAX_BYTES });
 const EXAMPLES_ON = examplesEnabled();
 const pastNudges = readLog(NUDGES_FILE, { rotated: false });
@@ -145,6 +160,7 @@ function readPercept() {
     perceptAt = Date.now();
     if (observeStats(stats, percept, perceptAt)) saveState();
     tracker.observe(percept, perceptAt);
+    pepeObserve();
     logEnded();
   } catch { /* partial write, or the game is not up */ }
 }
@@ -156,6 +172,7 @@ function logEnded() {
   if (!r) return;
   try {
     tracker.death(r, Date.now());
+    pepe.death(r);
     log('death', `cause: ${r.cause}${r.death && r.death.job ? `, doing ${r.death.job}` : ''}`);
   } catch { /* disk */ }
 }
@@ -191,6 +208,15 @@ const planner = createPlanner({
   log,
   onChange: () => { state.plan = planner.plan; saveState(); },
 });
+// Machines without the model never ask for it. Ollama not up yet is left to the 404 check on the first call.
+if (PEPE_ENABLED) {
+  modelInstalled(PEPE_MODEL).then((ok) => {
+    if (ok === false) pepe.disable(`model ${PEPE_MODEL} is not installed`);
+    else log('pepe', `peanut gallery on: ${PEPE_MODEL}`);
+  });
+}
+// An event can wait only because the model was busy; look again every few seconds.
+setInterval(() => { pepe.maybeRun(); }, 3000);
 setInterval(() => {
   if (!percept || Date.now() - perceptAt > 15000 || !isV2(percept)) return;
   // The first plan can come before the first tactical turn has filled the map, and the plan's
@@ -633,6 +659,8 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 #reacts{border-collapse:collapse;width:100%}#reacts th,#reacts td{text-align:left;padding:3px 10px;background:#151b22;border-bottom:2px solid #101418}
 #reacts th{font-size:11px;color:#8899aa;text-transform:uppercase}#reacts tr.failed td:nth-child(3){color:#f3b4b4}#reacts tr.running td{color:#7fd1b9}
 #reacts tr.replaced td,#reacts tr.unfinished td{color:#8899aa}#reacts td.hp{text-align:right;white-space:nowrap}
+#pepe{list-style:none;padding:0;margin:0}#pepe li{padding:6px 10px;border-radius:4px;margin:3px 0;background:#151b22;border-left:3px solid #c28fe0}
+#pepe .when{color:#8899aa;font-size:12px}
 #nudge-buttons{display:flex;flex-direction:column;gap:4px;margin:6px 0}
 #nudge-buttons button{text-align:left;font-weight:400;background:#151b22;color:#dde3ea;border:1px solid #26303a}
 #nudge-buttons button.brain::after{content:"  \\2190  brain's pick";color:#7fd1b9;font-size:12px}
@@ -661,6 +689,9 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <h2>Reactions</h2>
 <div class="note">The last 8 orders: how each went, and what she chose next.</div>
 <table id="reacts"><thead><tr><th>time</th><th>choice</th><th>result</th><th>HP</th><th>next choice</th></tr></thead><tbody></tbody></table>
+<h2>Peanut gallery</h2>
+<div class="note" id="pepe-note"></div>
+<ul id="pepe"></ul>
 <h2>Nudge</h2>
 <div class="bubble" id="nudge">
 <div class="note" id="nudge-note">No menu yet.</div>
@@ -714,6 +745,7 @@ async function tick(){
   fill('rules', t.rules || [], (r) => { const li = document.createElement('li'); li.textContent = r; return li; });
   renderNudge(s);
   renderReactions(s.reactions || []);
+  renderPepe(s.pepe);
   const plan = s.plan;
   const pl = s.planner || {};
   document.getElementById('plan-goal').textContent = plan ? plan.goal : (pl.running ? 'thinking about a plan...' : '(no plan yet)');
@@ -784,6 +816,30 @@ function renderReactions(rows){
       tr.append(td);
     });
     return tr;
+  }));
+}
+// Commentary from a second model, shown newest first. Rebuilt only when a line changed. The bridge
+// sends the last 10 on every refresh and reloads them from pepe.log at start, so a reload keeps them.
+let pepeSig = '';
+function renderPepe(pz){
+  const sig = JSON.stringify(pz || null);
+  if (sig === pepeSig) return;
+  pepeSig = sig;
+  const note = document.getElementById('pepe-note');
+  const list = document.getElementById('pepe');
+  if (!pz) { note.textContent = ''; list.replaceChildren(); return; }
+  note.textContent = (pz.on ? 'Commentary by ' + pz.model + '. It only watches and never changes what she does.' : 'Off: ' + (pz.off || 'switched off') + '.')
+    + (pz.lastError ? ' Last error: ' + pz.lastError : '');
+  if (!pz.lines.length) {
+    const li = document.createElement('li'); li.textContent = pz.on ? 'Nothing to say yet.' : 'No lines.'; list.replaceChildren(li); return;
+  }
+  list.replaceChildren(...pz.lines.slice().reverse().map((l) => {
+    const li = document.createElement('li');
+    li.append(document.createTextNode(l.line));
+    const w = document.createElement('div'); w.className = 'when';
+    w.textContent = (l.at ? new Date(l.at).toLocaleTimeString([], { hour12: false }) + ' · ' : '') + l.event;
+    li.append(w);
+    return li;
   }));
 }
 // The nudge panel is built once. A refresh only rebuilds the buttons when the menu itself changed,
@@ -894,6 +950,7 @@ http.createServer((req, res) => {
       },
       nudge: nudgeView(),
       reactions: reactionRows(tracker.history(), percept),
+      pepe: { ...pepe.view(), model: PEPE_MODEL },
       nudges: nudgeCount,
       examples: EXAMPLES_ON,
       lessons: lessonView(),
