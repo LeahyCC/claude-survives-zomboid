@@ -481,3 +481,62 @@ test('policy: night shelter and securing still come before the weapon search', (
   const secured = moment({ ...BARE, hour: 23 }, INSIDE_MEM);
   assert.equal(policy(secured).rule, 'find-weapon');
 });
+
+// The 2026-11-05 soak: two bleed-outs, BANDAGE on the menu in 1 of 21 turns and 0 of 7, and the
+// bridge dropping junk, securing and waiting while hp ran down.
+const WOUND = { bleeding: 1, wounds: [{ part: 'Leg_L', bleed: true }] };
+
+test('bleeding beats drop, secure, enter and goto when nothing is on her', () => {
+  const m = moment({
+    ...INSIDE, ...WOUND, hp: 70, hour: 23, weight: 7.5, moodle: { heavy: 2 }, inv: { bandages: 2, canRip: false },
+  }, { current: '4021', buildings: { 4021: { visited: true, res: true, enteredAt: 38 } } });
+  const opts = menu(m);
+  assert.ok(byId(opts, 'drop') && byId(opts, 'secure'), 'the other rules have their options');
+  const got = policy(m);
+  assert.equal(got.rule, 'bleeding');
+  assert.equal(got.option.id, 'bandage');
+  // Walking: the bandage interrupts a running GOTO or ENTER.
+  const walking = moment({ ...WOUND, hp: 70, inv: { bandages: 1 }, res: { seq: 5, verb: 'GOTO', status: 'running', why: '', target: '1,2' } });
+  const turn = planTurn(walking.percept, walking.memory, { now: NOW, last: { at: NOW - 30_000, needs: [], chasing: 0 } });
+  assert.equal(turn.policy.rule, 'bleeding');
+});
+
+test('a zombie within 3 tiles is on her: the bleeding rule steps aside for the reflex', () => {
+  const near = moment({ ...WOUND, inv: { bandages: 2 }, zList: [{ dx: 2, dy: 0, d: 2, chase: true }], zChasing: 1 });
+  assert.equal(policy(near), null);
+  const far = moment({ ...WOUND, inv: { bandages: 2 }, zList: [{ dx: 9, dy: 0, d: 9, chase: false }] });
+  assert.equal(policy(far).rule, 'bleeding');
+  // A downed one is a free stomp, not something on her.
+  const down = moment({ ...WOUND, inv: { bandages: 2 }, zList: [{ dx: 2, dy: 0, d: 2, down: true }] });
+  assert.equal(policy(down).rule, 'bleeding');
+});
+
+test('with no bandage the order is a rip, and the thought says so', () => {
+  const m = moment({ ...WOUND, inv: { bandages: 0, canRip: true } });
+  const got = policy(m);
+  assert.equal(got.rule, 'bleeding');
+  assert.match(got.option.label, /rip cloth/);
+  assert.match(got.thought, /ripping cloth/);
+});
+
+test('a "no bandage" failure is lifted by a bandage found since, and holds without one', () => {
+  const m = moment({ ...WOUND, inv: { bandages: 0, canRip: false } });
+  const opt = { verb: 'BANDAGE', key: 'BANDAGE' };
+  recordOrder(m.memory, 3, opt, m.percept, NOW);
+  updateMemory(m.memory, { ...m.percept, res: { seq: 3, verb: 'BANDAGE', status: 'failed', why: 'no bandage, treated 2' } }, NOW);
+  const later = { ...m.percept, inv: { bandages: 1, canRip: false } };
+  assert.ok(byId(buildOptions(later, m.memory, { now: NOW + 5_000 }), 'bandage'), 'found one: back on the menu');
+  // Another failure (the wound would not take) stays blocked.
+  const other = moment({ ...WOUND, inv: { bandages: 1 } });
+  recordOrder(other.memory, 4, opt, other.percept, NOW);
+  updateMemory(other.memory, { ...other.percept, res: { seq: 4, verb: 'BANDAGE', status: 'failed', why: 'stuck' } }, NOW);
+  assert.equal(byId(buildOptions(other.percept, other.memory, { now: NOW + 5_000 }), 'bandage'), undefined);
+});
+
+test('under 30 hp there is no drop, on the menu or from the policy', () => {
+  const low = moment({ weight: 7.5, moodle: { heavy: 2 }, hp: 29 });
+  assert.equal(byId(menu(low), 'drop'), undefined);
+  assert.equal(policy(low), null);
+  const ok = moment({ weight: 7.5, moodle: { heavy: 2 }, hp: 30 });
+  assert.equal(policy(ok).rule, 'overloaded');
+});

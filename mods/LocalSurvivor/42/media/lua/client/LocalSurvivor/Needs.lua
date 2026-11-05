@@ -68,7 +68,8 @@ function Needs.worstWound(parts, skip)
   return best
 end
 
--- One wound, one next step. kit: { bandage, disinfect, rip } as booleans.
+-- One wound, one next step. kit: { bandage, disinfect, rip, strip } as booleans. strip means the
+-- only cloth is worn, so it comes off first and is ripped on the next pass.
 -- "keep" means a dirty bandage with nothing clean to swap in: better than an open wound.
 function Needs.treatStep(f, kit)
   kit = kit or {}
@@ -80,6 +81,7 @@ function Needs.treatStep(f, kit)
   if kit.disinfect and not f.alcohol then return "disinfect" end
   if kit.bandage then return "bandage" end
   if kit.rip then return "rip" end
+  if kit.strip then return "strip" end
   return "none"
 end
 
@@ -468,10 +470,43 @@ local function isWorn(p, it)
   return worn
 end
 
+-- Pure. Which worn piece to sacrifice first; lower goes first. Things that keep nothing out
+-- (a scarf, a hat, socks) before a shirt, a shirt before the warm layers, trousers and
+-- underwear last. The body location name is the game's, so match on a fragment of it.
+function Needs.stripRank(location)
+  local s = string.lower(tostring(location or ""))
+  if s:find("scarf", 1, true) or s:find("neck", 1, true) or s:find("hat", 1, true) or s:find("glove", 1, true) then return 1 end
+  if s:find("sock", 1, true) then return 2 end
+  if s:find("under", 1, true) or s:find("pants", 1, true) or s:find("trouser", 1, true) or s:find("shoe", 1, true) then return 5 end
+  if s:find("sweater", 1, true) or s:find("jumper", 1, true) or s:find("jacket", 1, true) or s:find("hoodie", 1, true) then return 4 end
+  return 3
+end
+
+-- A piece of cotton clothing she is wearing and could take off to rip. The recipe refuses a worn
+-- item (IsNotWorn), so the caller strips it first and rips it on the next pass. Never a bag.
+local function wornRipSource(p, items)
+  local best, bestRank = nil, nil
+  for _, it in ipairs(items) do
+    if hasTag(it, "RIP_CLOTHING_COTTON") and isWorn(p, it) then
+      local isBag = false
+      pcall(function() isBag = it:IsInventoryContainer() == true end)
+      if not isBag then
+        local loc = ""
+        pcall(function() loc = tostring(it:getBodyLocation()) end)
+        local rank = Needs.stripRank(loc)
+        if not best or rank < bestRank then best, bestRank = it, rank end
+      end
+    end
+  end
+  return best
+end
+
 -- Something he could rip into a bandage: a sheet, or cotton clothing that is not worn, and the
--- craft recipe the game would let him do on it now. { item, recipe } or nil.
+-- craft recipe the game would let him do on it now. { item, recipe } or nil. With none of that,
+-- cotton clothing he has on: { item, worn = true }, to be taken off and then ripped.
 function Needs.ripSource(p)
-  for _, it in ipairs(Sense.carriedItems(p)) do
+  local items = Sense.carriedItems(p)
+  for _, it in ipairs(items) do
     local recipeName = nil
     if hasTag(it, "SHEET") then recipeName = "RipSheets"
     elseif hasTag(it, "RIP_CLOTHING_COTTON") and not isWorn(p, it) then recipeName = "RipClothing" end
@@ -480,6 +515,8 @@ function Needs.ripSource(p)
       if r then return { item = it, recipe = r } end
     end
   end
+  local worn = wornRipSource(p, items)
+  if worn then return { item = worn, worn = true } end
   return nil
 end
 
@@ -1021,7 +1058,8 @@ skills.BANDAGE = function(p, job)
   end
   local f = parts[i]
   local kit = Needs.medKit(p)
-  local stepName = Needs.treatStep(f, { bandage = kit.bandage ~= nil, disinfect = kit.disinfect ~= nil, rip = kit.rip ~= nil })
+  local stepName = Needs.treatStep(f, { bandage = kit.bandage ~= nil, disinfect = kit.disinfect ~= nil,
+    rip = kit.rip ~= nil and not kit.rip.worn, strip = kit.rip ~= nil and kit.rip.worn == true })
   if stepName == "keep" then job.skipParts[f.part] = true; return end
   if stepName == "none" then return Needs.fail(job, why("no bandage")) end
   aim(job, f.part)
@@ -1047,8 +1085,14 @@ skills.BANDAGE = function(p, job)
     ISTimedActionQueue.add(ISApplyBandage:new(p, p, kit.bandage, f.bp, true))
   elseif stepName == "rip" then
     ISInventoryPaneContextMenu.OnNewCraft(kit.rip.item, kit.rip.recipe, playerNum(p), false)
+  elseif stepName == "strip" then
+    -- The rip recipe will not take a worn item. Off with it now; the next pass rips it.
+    ISTimedActionQueue.add(ISUnequipAction:new(p, kit.rip.item, 50))
   end
-  think(job, stepName == "rip" and "No bandage. Ripping cloth." or ("Treating " .. f.part .. "."))
+  local thought = "Treating " .. f.part .. "."
+  if stepName == "rip" then thought = "No bandage. Ripping cloth."
+  elseif stepName == "strip" then thought = "No bandage. Taking off a shirt to rip it." end
+  think(job, thought)
   local onDone = nil
   if stepName == "bandage" then onDone = function() job.treated = job.treated + 1 end end
   if not Needs.queued(p, job, nil, onDone) then

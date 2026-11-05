@@ -104,11 +104,11 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 
 | id | verb | offered when |
 |---|---|---|
-| `bandage` | BANDAGE | a wound is bleeding, deep, bitten, has glass, or is an unbandaged cut or scratch; and `inv.bandages` is above 0 or `inv.canRip` is true (the job rips cloth). A percept with no `canRip` gets the old test: she is bleeding |
+| `bandage` | BANDAGE | a wound is bleeding, deep, bitten, has glass, or is an unbandaged cut or scratch; and `inv.bandages` is above 0 or `inv.canRip` is true (the job rips cloth). A percept with no `canRip` gets the old test: she is bleeding. A "no bandage" failure keeps it off for 3 minutes, but a bandage in the bag lifts that at once |
 | `drink` | DRINK | thirst 0.25 or more (or the moodle); water in a bottle, or a tap in this building |
 | `eat` | EAT | hunger 0.25 or more (or the moodle); food ready, or a can and a can opener |
 | `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count. Never with a gun in hand (`heldGun`), and never when the weapon in hand is the player's own pick (`weaponByHand`) |
-| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie within 8 |
+| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie within 8, hp 30 or more |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
 | `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie within 8. The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first" |
@@ -140,7 +140,7 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 
 | Rule | When | Sends |
 |---|---|---|
-| `bleeding` | `bleeding > 0`. Steps aside when `bandage` is not on the menu (no bandage, nothing to rip) | `bandage` |
+| `bleeding` | `bleeding > 0` and no standing zombie within 3 tiles (the reflex owns that fight). First in the list, so it beats DROP, SECURE, GOTO and ENTER, and it can interrupt a running walk. Steps aside when `bandage` is not on the menu (no bandage, nothing to rip, not even a shirt she wears) | `bandage` |
 | `thirst` | thirst 0.6 or more, or the moodle at 2 | `drink` |
 | `hunger` | hunger 0.6 or more, or the moodle at 2, and `inv.foodReady` above 0. A can that needs opening is the model's call | `eat` |
 | `equip` | a carried weapon is clearly better than the one in hand, or the hands are empty. Not with a gun in hand, and not when the weapon in hand is the player's own pick (`weaponByHand`): the mod would turn the order down, and the player's choice stands | `equip` |
@@ -148,7 +148,7 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
 | `find-weapon` | bare hands (weapon `none`, no gun in hand, no real weapon in the `weapons` list), inside, no chaser, and `search` is on the menu (so the building is not done, she is not heavy and no zombie is within 8) | `search` |
-| `overloaded` | heavy, no chaser (and `drop` is on the menu, so no zombie within 8) | `drop` |
+| `overloaded` | heavy, no chaser, hp 30 or more (and `drop` is on the menu, so no zombie within 8) | `drop` |
 
 `equip` is kept off the menu for 45 seconds after it is sent. EQUIP never reports done while the weapon is still being raised, so without that the rule would send it again on every look. A `done` result lifts the block at once, and a failed `drop` or `equip` stays off longer (`not heavy` 3 minutes, `nothing to drop` and `equip: no weapon` 10).
 

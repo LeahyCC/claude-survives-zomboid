@@ -107,12 +107,14 @@ dirty bandage          take it off if a clean one is carried, else leave it
 not disinfected        disinfect if disinfectant is carried (ISDisinfect)
 then                   the best bandage (ISApplyBandage)
 no bandage             rip cotton clothing that is not worn, or a sheet, then bandage
+only worn cloth        take the shirt off (ISUnequipAction), then rip it on the next pass
 ```
 
-The percept's `inv.canRip` is the same ripping check (`Needs.ripSource`), asked without starting a job.
+The percept's `inv.canRip` is the same ripping check (`Needs.ripSource`), asked without starting a job. It is true when she wears cotton clothing too, so she is never without a bandage while she has a shirt on.
 
 - The best bandage is the highest `getBandagePower()` that is not tagged `base:canbewashed`. On a tie, an alcohol one.
 - Disinfectant is vanilla's health panel rule (see `docs/percept.md`, inv). A part counts as disinfected when `getAlcoholLevel() > 0`.
+- Worn cloth is the last resort, after a bandage, a carried sheet and carried cotton clothing. The rip recipe refuses a worn item (`IsNotWorn`), so the item comes off first. The order of sacrifice is `Needs.stripRank`: scarf, hat, neck and gloves, then socks, then a shirt, then sweaters and jackets, trousers and underwear last. A bag is never taken. Only cotton (`base:ripclothingcotton`): denim and leather need scissors.
 - Ripping uses the craft recipes `RipClothing` (tag `base:ripclothingcotton`, not worn) and `RipSheets` (tag `base:sheet`), through `ISInventoryPaneContextMenu.OnNewCraft`. Only when the recipe check passes.
 - The game lets glass come out by hand, with more pain. So it does, and says so.
 - A step that does not change the wound twice is given up on that part.
@@ -123,6 +125,8 @@ The percept's `inv.canRip` is the same ripping check (`Needs.ripSource`), asked 
 | failed | `no bandage` (plus `treated N` if some were done) |
 
 Deep wounds still need stitches. That is not done here.
+
+DROP keeps any cloth that binds a wound or can be ripped into one: clean and dirty bandages and rags, ripped sheets, and a whole sheet (`d.cloth` in `Act.describeLoot`). With 29 hp or less the bridge offers no DROP at all (`DROP_MIN_HP` in `bridge/options.mjs`).
 
 ### WEARBAG
 
@@ -172,7 +176,7 @@ A chaser is `getNumChasingZombies() > 0`, or a living zombie within 20 tiles who
 
 ## Pure functions
 
-Tested with plain tables: `worstWound`, `treatStep`, `bestBandage`, `chooseFood`, `bestBag`, `pickTarget`, `secureSummary`, `drinkPercent`, `restCheck`.
+Tested with plain tables: `worstWound`, `treatStep`, `stripRank`, `bestBandage`, `chooseFood`, `bestBag`, `pickTarget`, `secureSummary`, `drinkPercent`, `restCheck`.
 
 ## Checked and unchecked
 

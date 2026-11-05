@@ -4,6 +4,7 @@
 
 import { needs, isNight, inside, zombies, heavy, chasing, betterWeapon, bareHanded } from './senses.mjs';
 import { securedThisVisit } from './memory.mjs';
+import { DROP_MIN_HP } from './options.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -13,12 +14,23 @@ function bestShelter(options) {
   return ins.find((o) => /walk into house/.test(o.label)) || ins[0] || null;
 }
 
+// A zombie this close (and up) is on her. The same line as the reflex's contact range.
+const ON_HER_R = 3;
+
+function onHer(p) {
+  return zombies(p).some((z) => !z.down && !z.crawl && z.d <= ON_HER_R);
+}
+
 export const POLICY_RULES = [
   {
     id: 'bleeding',
     pick(p, mem, opts) {
-      if (num(p.bleeding) <= 0) return null;
-      return [opts.find((o) => o.id === 'bandage'), 'Bleeding. Bandage it now.'];
+      // First in the list, so it beats DROP, SECURE, GOTO and ENTER. Two of the 2026-11-05 deaths were
+      // bleed-outs (hp 63 to 0 in 4 minutes, hp 78 to 0 in 2) while she walked, waited and dropped
+      // things. Not with a zombie on her: the reflex has that fight, and the wound is the second problem.
+      if (num(p.bleeding) <= 0 || onHer(p)) return null;
+      const tail = num(p.inv && p.inv.bandages) > 0 ? '' : ' No bandage, so ripping cloth.';
+      return [opts.find((o) => o.id === 'bandage'), `Bleeding. Bandage it now.${tail}`];
     },
   },
   {
@@ -87,7 +99,7 @@ export const POLICY_RULES = [
     id: 'overloaded',
     pick(p, mem, opts) {
       // A drop takes a few passes. Not with something after her; the reflex has the fight.
-      if (!heavy(p) || chasing(p) > 0) return null;
+      if (!heavy(p) || chasing(p) > 0 || num(p.hp, 100) < DROP_MIN_HP) return null;
       return [opts.find((o) => o.id === 'drop'), 'Too heavy. Dropping the junk.'];
     },
   },

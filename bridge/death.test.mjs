@@ -225,3 +225,20 @@ test('the 40 hour run: a SEARCH with a zombie on her ends as bitten while busy',
   assert.equal(g.cause, 'bitten while busy');
   assert.equal(g.facts.inside, true);
 });
+
+test('a bleed-out is "bled out" before the infected flag, thirst and hunger are looked at', () => {
+  const bleed = { hp: 30, bleeding: 2, wounds: 2 };
+  const read = (extra) => guessDeath(ten([{ ...bleed, ...extra }, { ...bleed, hp: 0, ...extra }])).cause;
+  assert.equal(read({ infected: true, bite: true }), 'bled out');
+  assert.equal(read({ thirst: 1 }), 'bled out');
+  assert.equal(read({ hunger: 1 }), 'bled out');
+  assert.equal(read({ infected: true, thirst: 1, hunger: 1 }), 'bled out');
+  // Without the bleeding the old readings stand.
+  const dry = (extra) => guessDeath(ten([{ hp: 30, ...extra }, { hp: 0, ...extra }])).cause;
+  assert.equal(dry({ infected: true, bite: true }), 'infection');
+  assert.equal(dry({ thirst: 1 }), 'thirst');
+  assert.equal(dry({ hunger: 1 }), 'starved');
+  // A zombie on her still wins over the bleed.
+  const hit = { ...bleed, zAdj: 1, zChasing: 1, reflex: 'fight' };
+  assert.equal(guessDeath(ten([hit, { ...hit, hp: 0 }])).cause, 'bitten in a fight');
+});

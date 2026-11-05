@@ -345,6 +345,77 @@ test('BANDAGE takes glass out by hand when there are no tweezers', () => {
   assert.equal(lua.run('return ISTimedActionQueue.getTimedActionQueue(__players[0]).queue[1].args[4]'), true);
 });
 
+test('treatStep: worn cloth is stripped last, after a bandage and after a rip', () => {
+  assert.deepEqual(pure('treatStep', { bleed: true }, { strip: true }), ['strip']);
+  assert.deepEqual(pure('treatStep', { bleed: true }, { strip: true, rip: true }), ['rip']);
+  assert.deepEqual(pure('treatStep', { bleed: true }, { strip: true, bandage: true }), ['bandage']);
+});
+
+test('stripRank gives up a scarf or socks before a shirt, a shirt before a sweater, trousers last', () => {
+  const rank = (name) => pure('stripRank', name)[0];
+  assert.ok(rank('Scarf') < rank('Socks'));
+  assert.ok(rank('Socks') < rank('Tshirt'));
+  assert.ok(rank('Tshirt') < rank('Sweater'));
+  assert.ok(rank('Sweater') < rank('Pants'));
+  assert.equal(rank(undefined), rank('Tshirt'), 'an unknown location is a middle choice');
+});
+
+// A shirt she has on: the rip recipe will not take a worn item, so it comes off first.
+const wornShirt = `
+  parts = { __makeBodyPart({ type = "Torso_Upper", bleeding = true }) },
+  items = { __makeItem({ type = "Base.Tshirt", name = "T-shirt", worn = true, tags = { RIP_CLOTHING_COTTON = true } }) }`;
+const readyRip = (lua) => lua.run('__recipes.RipClothing = { name = "RipClothing" }; __canCraft.RipClothing = true');
+
+test('BANDAGE with only worn cotton takes it off, then rips it on the next pass', () => {
+  const lua = body(wornShirt);
+  readyRip(lua);
+  assert.equal(lua.run('return LocalSurvivor.Needs.canRip(__players[0])'), true, 'the percept offers BANDAGE');
+  order(lua, '1|BANDAGE|0|0|||');
+  assert.deepEqual(queue(lua), ['ISUnequipAction']);
+  assert.deepEqual(calls(lua), []);
+  // Off now: the same item is carried, not worn, and the recipe is allowed.
+  lua.run('local items = __players[0]:getInventory():getItems() items:get(0).isWorn = function() return false end');
+  finish(lua);
+  step(lua);
+  assert.deepEqual(calls(lua), ['OnNewCraft']);
+});
+
+test('BANDAGE rips what is carried before it takes anything off', () => {
+  const lua = body(`
+    parts = { __makeBodyPart({ type = "Hand_L", cut = true }) },
+    items = {
+      __makeItem({ type = "Base.Tshirt", name = "Worn shirt", worn = true, tags = { RIP_CLOTHING_COTTON = true } }),
+      __makeItem({ type = "Base.Tshirt", name = "Spare shirt", tags = { RIP_CLOTHING_COTTON = true } }),
+    }`);
+  readyRip(lua);
+  order(lua, '1|BANDAGE|0|0|||');
+  assert.deepEqual(calls(lua), ['OnNewCraft']);
+});
+
+test('worn clothes that are not cotton are no source, so BANDAGE still fails with no bandage', () => {
+  const lua = body(`
+    parts = { __makeBodyPart({ type = "Hand_L", cut = true }) },
+    items = { __makeItem({ type = "Base.Jeans", name = "Jeans", worn = true }) }`);
+  readyRip(lua);
+  assert.equal(lua.run('return LocalSurvivor.Needs.canRip(__players[0])'), false);
+  order(lua, '1|BANDAGE|0|0|||');
+  assert.deepEqual(result(lua), { seq: 1, verb: 'BANDAGE', status: 'failed', why: 'no bandage' });
+});
+
+test('DROP keeps every rag, bandage and sheet, clean or dirty, and a whole sheet to rip', () => {
+  const lua = body();
+  // A type each: the mod caches an item type's facts by its full name.
+  let n = 0;
+  const cloth = (extra) => lua.run(`
+    local it = __makeItem({ type = "Base.Thing${++n}", name = "Thing", weight = 0.2, ${extra} })
+    return LocalSurvivor.Act.keepValue(LocalSurvivor.Act.describeLoot(it, __players[0]))`);
+  assert.equal(cloth('bandage = true, power = 2') ?? null, null, 'a clean rag');
+  // A washable one is not "bandage" to Sense.itemType but still binds a wound.
+  assert.equal(cloth('power = 2, tags = { CAN_BE_WASHED = true }') ?? null, null, 'a dirty rag');
+  assert.equal(cloth('tags = { SHEET = true }') ?? null, null, 'a whole sheet');
+  assert.notEqual(cloth('') ?? null, null, 'junk still goes');
+});
+
 test('BANDAGE with no wounds is done', () => {
   const lua = body();
   order(lua, '1|BANDAGE|0|0|||');

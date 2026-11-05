@@ -581,6 +581,9 @@ function Act.describeLoot(it, p)
   d.opener, d.hammer, d.saw, d.screwdriver, d.lighter = t.opener, t.hammer, t.saw, t.screwdriver, t.lighter
   d.painkiller, d.bandage, d.flashlight = t.painkiller, t.bandage, lt.flashlight
   d.sheet = t.bandage and d.type == "Base.RippedSheets" or false
+  -- Any cloth that binds a wound or can be ripped into one, dirty rags and whole sheets too. Sense.itemType
+  -- leaves the washable ones out of bandage, and DROP must not throw them away while she bleeds.
+  pcall(function() d.cloth = (tonumber(it:getBandagePower()) or 0) > 0 or it:hasTag(ItemTag.SHEET) == true end)
   d.antibiotic, d.splint, d.battery = d.type == "Base.Antibiotics", d.type == "Base.Splint", d.type == "Base.Battery"
   if t.wipe then d.disinfect = true end
   return d
@@ -1327,8 +1330,8 @@ end
 -- ---------- DROP ----------
 -- Shed weight. The least valuable things go first, until he is back under the line SEARCH stops
 -- at. Never the weapon in hand, the best weapon he carries, clothes he wears, a bag, water, food
--- he can eat now or a bandage. It uses the game's own drop (ISInventoryPaneContextMenu.dropItem),
--- so a held item is unequipped first and one in a bag comes out of the bag.
+-- he can eat now, a bandage or any cloth to bind a wound with. It uses the game's own drop
+-- (ISInventoryPaneContextMenu.dropItem), so a held item is unequipped first and one in a bag comes out of the bag.
 Act.DROP_PASSES = 3
 
 -- Pure. How much a described item is worth keeping; higher stays longer. nil means never drop it.
@@ -1336,7 +1339,7 @@ Act.DROP_PASSES = 3
 function Act.keepValue(d)
   if type(d) ~= "table" then return nil end
   if d.held or d.worn or d.container then return nil end
-  if (tonumber(d.waterL) or 0) > 0 or d.edible or d.bandage or d.sheet then return nil end
+  if (tonumber(d.waterL) or 0) > 0 or d.edible or d.bandage or d.sheet or d.cloth then return nil end
   -- A spare weapon outranks the tools but not the food and medicine, and a better one outranks a worse.
   if Core.isRealWeapon(d.weapon) then return 25 + math.min(weaponScoreOf(d), 100) / 10 end
   for _, row in ipairs(Act.LOOT) do
