@@ -593,8 +593,8 @@ Act.PAUSE_MAX = 1800        -- a fight this long and the target is not worth it
 Act.UNSAFE_R = 4            -- a living zombie this close to the target on resume: give up
 Act.LOOT_ZOMBIE_R = 8
 Act.ROOM_TRIES = 2            -- a room with a container she could not reach is looked at this many times
-Act.WEIGHT_CAP = 0.85         -- DROP sheds down to this share of the carry limit
-Act.WEIGHT_CAP_NO_BAG = 0.6   -- SEARCH stops here with no bag: every kilo is on her back
+Act.WEIGHT_CAP = 0.85         -- SEARCH stops and DROP sheds down to this share of the carry limit with a bag
+Act.WEIGHT_CAP_NO_BAG = 0.6   -- the same with no bag: every kilo is on her back
 Act.LOOT_RADIUS = 10
 
 function Act.startSkill(p, verb, args, def)
@@ -1351,7 +1351,9 @@ end
 -- Queue one pass of drops. Each pass reads the world again, so a resume after the reflex, or a
 -- pass that left him heavy because a bag softened the weight, simply plans the rest.
 local function dropPass(p, s)
-  local over = -Act.weightLeft(p)
+  -- Down to the same line SEARCH stops at. With DROP at 85% and SEARCH at 60% with no bag, she sat
+  -- at 7.3 of 9 kg in the soak run: too full to search, not heavy enough to drop, so she waited.
+  local over = -Act.searchLeft(p)
   if over <= 0 then return endDrop(s, false) end
   if s.passes >= Act.DROP_PASSES then return endDrop(s, true) end
   local descs, items = dropFacts(p)
@@ -1373,7 +1375,7 @@ end
 
 Act.SKILL.DROP = {
   start = function(p, s)
-    if Act.weightLeft(p) >= 0 then return Act.finish(s, "failed", "not heavy") end
+    if Act.searchLeft(p) >= 0 then return Act.finish(s, "failed", "not heavy") end
     LS.hudData.action = "DROP"
     s.names, s.passes = {}, 0
     dropPass(p, s)

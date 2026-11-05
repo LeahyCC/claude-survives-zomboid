@@ -83,7 +83,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `drink` | DRINK | thirst 0.25 or more (or the moodle); water in a bottle, or a tap in this building |
 | `eat` | EAT | hunger 0.25 or more (or the moodle); food ready, or a can and a can opener |
 | `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count. Never with a gun in hand (`heldGun`), and never when the weapon in hand is the player's own pick (`weaponByHand`) |
-| `drop` | DROP | heavy (moodle, or weight 85% of the maximum), no chaser, no zombie within 8 |
+| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie within 8 |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
 | `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie within 8. The label counts the rooms left: "2 rooms left, partly searched" |
@@ -188,7 +188,7 @@ At most 5 rules whose condition holds go into the user message, in this order:
 | `wounded` | an untreated wound, and a bandage carried or one she could rip |
 | `go-home` | outside and tired or panicked |
 | `night` | 21:00 to 06:00 |
-| `overloaded` | heavy moodle, or weight 85% of max |
+| `overloaded` | heavy moodle, or weight at the search line (60% of max with no bag, 85% with one) |
 | `one-at-a-time` | an idle zombie within 20, or more than one in sight |
 | `no-weapon` | none in hand and none carried, and no gun in hand |
 | `weak-weapon` | a weapon in hand or bag, but nothing scores 20 or more |

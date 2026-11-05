@@ -504,3 +504,12 @@ test('a SEARCH that finds a better weapon leaves the one Colin chose in her hand
   assert.equal(result(lua).status, 'done');
   assert.equal(result(lua).why, 'took 1: Axe');
 });
+
+test('DROP sheds down to the line SEARCH stops at: 60% of the limit with no bag', () => {
+  // 6 of 8 kg with no bag is too full to search (4.8), so DROP must not call it "not heavy".
+  const lua = kit('SPIFFO');
+  lua.run('P.back = nil; P.weight = 6');
+  order(lua, '1|DROP|0|0|||');
+  assert.notEqual(result(lua).why, 'not heavy');
+  assert.ok(queue(lua).length > 0, 'it queues a drop');
+});

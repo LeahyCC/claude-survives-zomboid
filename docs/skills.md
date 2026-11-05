@@ -131,7 +131,7 @@ a gun in hand                          ->  always his: the mod never equips a gu
 
 ## DROP
 
-No arguments. Sheds weight until he is under the same line SEARCH stops at (85% of `getMaxWeight()`).
+No arguments. Sheds weight until he is under the same line SEARCH stops at (`Act.searchLeft`: 85% of `getMaxWeight()` with a back bag, 60% with none). It used to shed only to 85%, so with no bag she could sit between the two lines, too full to search and not heavy enough to drop.
 
 - Takes the least valuable items first, the heaviest first among equals. Junk goes before anything useful: a pen, spare clothes, toys, weights, food he cannot eat.
 - After junk come tools, then a spare weapon, then sealed food, then empty bottles. Guns and ammo go last of all. DROP has its own scale (`keep` in `Act.LOOT`), not the loot value.

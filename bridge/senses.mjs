@@ -78,9 +78,13 @@ export function inside(p) {
   return !!(p && p.inBldg && p.inBldg.id != null && !p.outside);
 }
 
+// Too full to search: the same line the mod's SEARCH and DROP use (Act.searchLeft), 60% of the
+// carry limit with no bag and 85% with one. With 85% here and 60% in the mod she could neither
+// search nor drop, and waited.
 export function heavy(p) {
   const max = num(p && p.maxWeight);
-  return moodle(p, 'heavy') >= 1 || (max > 0 && num(p.weight) >= 0.85 * max);
+  const share = p && typeof p.bag === 'string' && p.bag !== 'none' && p.bag !== '' ? 0.85 : 0.6;
+  return moodle(p, 'heavy') >= 1 || (max > 0 && num(p.weight) >= share * max);
 }
 
 export function untreated(p) {
