@@ -1,15 +1,23 @@
-// The peanut gallery. A second local model (a meme model) reacts to what happens in the game, for fun.
-// It is commentary only: nothing here decides anything, writes an order, or goes into the brain's
-// prompt. Lines go to pepe.log and to the panel on /mind, and nowhere else.
+// The inner voice. A second local model (a meme model) is the voice in her head: first person, and it
+// knows what has happened so far this run. It is commentary only: nothing here decides anything, writes
+// an order, or goes into the brain's prompt. Lines go to pepe.log, the panel on /mind and
+// Lua/local_voice.txt, and nowhere else.
 //
 //   percept + order history + plan --> detectMoments --> pending events
-//        pending --- at most one per 30 s, never while the model is busy ---> ask --> line --> log + panel
+//   each order the brain sends -------------------------> pending (only the latest is kept)
+//   quiet for 60 to 90 s -------------------------------> an idle thought
+//        pending --- at most one per 30 s, never while the model is busy ---> ask --> line
+//        line --> pepe.log + panel + voice file
+//
+// Every line is a pair: what the brain chose and why, then the voice's answer. The model is also sent a
+// short running summary of the run and its last 4 lines, so the monologue has continuity.
 //
 // The only things this module is given are read-only copies of what the bridge already knows.
 // Nothing it returns is read by brain.mjs, planner.mjs or the order line (commentator.test.mjs checks).
 
 import { LOOP_MS } from './reactions.mjs';
 import { isMissingModel } from './llm.mjs';
+import { tookItems } from './memory.mjs';
 
 export const MIN_GAP_MS = 30_000;
 // A moment that is not said within this long is stale, and the next one is more interesting.
@@ -18,19 +26,27 @@ export const EXPIRE_MS = 45_000;
 export const DEATH_EXPIRE_MS = 10 * 60_000;
 export const LINE_MAX = 240;
 export const PANEL_LINES = 10;
+// Idle thoughts come about every 60 to 90 seconds of quiet. The spread keeps them from feeling like a clock.
+export const IDLE_MIN_MS = 60_000;
+export const IDLE_MAX_MS = 90_000;
+// The model runs on a CPU, so the run summary is a few short lines and its memory of itself is 4 lines.
+export const SUMMARY_LINES = 6;
+export const SUMMARY_LINE_MAX = 150;
+export const INNER_MEMORY = 4;
 export const HP_DROP = 8;
 export const NEAR_DEATH_HP = 25;
 const NEAR_DEATH_REARM = 50;
 const MAX_PENDING = 12;
 const MAX_EVENT_TEXT = 200;
+const MAX_ORDER_TEXT = 120;
 
 // How much each kind of moment is worth saying. The heaviest pending one is spoken.
 export const WEIGHT = {
   death: 100, nearDeath: 80, hpDrop: 70, bleeding: 60, loop: 55, failed: 45, kill: 40, weapon: 35,
-  secured: 32, entered: 30, plan: 20,
+  secured: 32, entered: 30, order: 25, plan: 20,
 };
 
-export const SYSTEM = `You are Pepe, a shitposting meme goblin watching a livestream of one survivor in a zombie game (Project Zomboid). Each time something happens you get a short plain description of it and her state. React as yourself, in character, in one or two short sentences. Plain text only, no lists, no quotes around it. You only watch and joke; you cannot talk to her and she cannot hear you.`;
+export const SYSTEM = `You are Pepe, a shitposting meme goblin, and you are the voice inside the head of one survivor in a zombie game (Project Zomboid). You speak as her, in the first person: "I", "me", "my". You are her inner monologue, in your own style, and you are not a viewer: never talk about "she" or "her" as someone else. Each time you get what she just chose and why, or what just happened, or a quiet moment, plus a short summary of her run so far and your own last thoughts. Say your next thought in one or two short sentences, the kind of thing like "I'm feeling ...", "the situation is ...", "this better ...". Carry on from your last thoughts and do not repeat them. Plain text only, no lists, no quotes around it. You only think out loud: you never give her orders and you do not decide anything.`;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -51,7 +67,10 @@ export function cleanLine(text, max = LINE_MAX) {
 export function linesFromLog(records) {
   return (Array.isArray(records) ? records : [])
     .filter((r) => isObj(r) && typeof r.line === 'string' && r.line)
-    .map((r) => ({ at: Date.parse(r.at) || 0, event: String(r.event || ''), kind: String(r.kind || ''), line: r.line }))
+    .map((r) => ({
+      at: Date.parse(r.at) || 0, event: String(r.event || ''), kind: String(r.kind || ''),
+      action: String(r.action || ''), thought: String(r.thought || ''), line: r.line,
+    }))
     .slice(-PANEL_LINES);
 }
 
@@ -155,32 +174,121 @@ export function stateText(p) {
   return bits.join(', ');
 }
 
-export function userMessage(top, others, p, lastLine) {
-  const parts = [`WHAT JUST HAPPENED: ${top.text}`];
+// What this character has done so far. Built only from what the bridge already knows, and thrown
+// away when the character changes.
+export function emptyStory() {
+  return {
+    gen: 0, run: null, startHours: null, hours: 0, day: 0, hour: 0, kills: 0, startWeapon: null, weapon: 'none', weaponChanges: 0,
+    houses: [], searched: 0, finds: [], seenOrders: [], hits: 0, bled: 0, close: 0, lowHp: 100, plan: '', inside: false,
+  };
+}
+
+const uniqPush = (list, v, max) => (list.includes(v) ? list : [...list, v].slice(-max));
+
+// ctx: { run, history, plan, searched (buildings searched, from the run stats), events (this look's moments) }.
+// Returns a new story; the old one is not changed.
+export function updateStory(story, p, ctx = {}) {
+  if (!isObj(p) || p.dead) return story;
+  const hours = num(p.hoursAlive);
+  const kills = num(p.kills);
+  const runChanged = ctx.run != null && story.run != null && ctx.run !== story.run;
+  // The hours or kills going back is a new character even when no run id came with it.
+  const base = runChanged || hours < story.hours - 0.5 || kills < story.kills ? { ...emptyStory(), gen: story.gen + 1 } : story;
+  const weapon = String(p.weapon || 'none');
+  const next = {
+    ...base, run: ctx.run != null ? ctx.run : base.run, hours, day: num(p.day), hour: num(p.hour), kills, weapon,
+    plan: ctx.plan && typeof ctx.plan.goal === 'string' ? ctx.plan.goal.slice(0, 80) : '', inside: insideOf(p),
+  };
+  if (next.startHours === null) next.startHours = hours;
+  if (next.startWeapon === null) next.startWeapon = weapon;
+  else if (weapon !== base.weapon) next.weaponChanges += 1;
+  if (next.inside) next.houses = uniqPush(next.houses, String(p.inBldg.id), 40);
+  next.searched = Math.max(next.searched, num(ctx.searched));
+  next.lowHp = Math.min(next.lowHp, num(p.hp, 100));
+  for (const e of Array.isArray(ctx.history) ? ctx.history : []) {
+    if (!isObj(e) || e.id == null || e.result !== 'done' || next.seenOrders.includes(e.id)) continue;
+    next.seenOrders = [...next.seenOrders, e.id].slice(-60);
+    for (const item of tookItems(e.why)) next.finds = uniqPush(next.finds, item.slice(0, 30), 6);
+  }
+  for (const e of Array.isArray(ctx.events) ? ctx.events : []) {
+    if (e.kind === 'hpDrop') next.hits += 1;
+    else if (e.kind === 'bleeding') next.bled += 1;
+    else if (e.kind === 'nearDeath') next.close += 1;
+  }
+  return next;
+}
+
+// A few short lines for the model. Lines with nothing to say are left out, and the whole thing is capped.
+export function summaryLines(st) {
+  const out = [];
+  const hrs = Math.round(Math.max(0, st.hours - (st.startHours || 0)) * 10) / 10;
+  out.push(`Alive ${hrs} game hours (day ${st.day}, ${String(Math.floor(st.hour)).padStart(2, '0')}:00), ${st.kills} kills, now ${st.inside ? 'inside a building' : 'outside'}.`);
+  const had = st.startWeapon === 'none' ? 'with nothing in hand' : `with a ${st.startWeapon}`;
+  if (st.weapon === 'none') out.push(`Started ${had}, now empty handed.`);
+  else out.push(st.weaponChanges ? `Started ${had}, now holding a ${st.weapon}.` : `Holding a ${st.weapon} since the start.`);
+  out.push(`Went into ${st.houses.length} building${st.houses.length === 1 ? '' : 's'}, searched ${st.searched}.`);
+  if (st.finds.length) out.push(`Found: ${st.finds.join(', ')}.`);
+  if (st.hits || st.bled || st.close) out.push(`Hurt: ${st.hits} big hits, bled ${st.bled} times, ${st.close} close calls, lowest ${Math.round(st.lowHp)} HP.`);
+  if (st.plan) out.push(`Plan: ${st.plan}.`);
+  return out.slice(0, SUMMARY_LINES).map((l) => l.slice(0, SUMMARY_LINE_MAX));
+}
+
+function headline(top) {
+  if (top.kind === 'order') return `SHE JUST CHOSE: ${top.action}.${top.thought ? ` Her own reasoning: "${top.thought}"` : ''}`;
+  if (top.kind === 'idle') return 'NOTHING JUST HAPPENED. She is between things: waiting, walking or searching.';
+  return `WHAT JUST HAPPENED: ${top.text}`;
+}
+
+// info: { summary (lines), inner (the voice's own last lines, oldest first) }
+export function userMessage(top, others, p, info = {}) {
+  const parts = [];
+  const summary = Array.isArray(info.summary) ? info.summary : [];
+  if (summary.length) parts.push(`HER RUN SO FAR:\n${summary.join('\n')}`);
+  const inner = Array.isArray(info.inner) ? info.inner : [];
+  if (inner.length) parts.push(`YOUR LAST THOUGHTS (oldest first, do not repeat them):\n${inner.map((l) => `- ${l}`).join('\n')}`);
+  parts.push(headline(top));
   if (others.length) parts.push(`ALSO: ${others.map((e) => e.text).join(' ')}`);
   parts.push(`HER STATE: ${stateText(p)}.`);
-  if (lastLine) parts.push(`YOUR LAST LINE (do not repeat it): ${lastLine}`);
-  parts.push('React in one or two short sentences.');
+  parts.push('Say your next thought as her, in one or two short sentences.');
   return parts.join('\n');
+}
+
+// One line for the in-game HUD to read later: the brain's half, then the voice's half.
+export function voiceText(rec) {
+  const flat = (v) => String(v || '').replace(/\s+/g, ' ').replace(/\|/g, '/').trim();
+  const brain = rec.action ? `${flat(rec.action)}${rec.thought ? ` "${flat(rec.thought)}"` : ''}` : '';
+  return brain ? `${brain} | ${flat(rec.line)}` : flat(rec.line);
 }
 
 // deps:
 //   ask({ system, user })   async, returns { raw, ms }. Throws { preempted } when cut short.
 //   busy()                  true while a menu turn, a plan or a review needs the model
+//   active()                true while the game is feeding percepts; idle thoughts need it
 //   write(obj)              appends one line to pepe.log; returns false when it could not
+//   voice(text)             overwrites Lua/local_voice.txt with one line
 //   now()                   wall clock ms
+//   rand()                  0 to 1, for the idle spacing
 //   log(kind, text)         the bridge's logger (switch-off notices only)
 //   lines                   the last lines from the log, oldest first, so the panel survives a restart
 //   enabled                 false starts it off
 export function createCommentator(deps) {
-  const { ask, busy = () => false, write = () => true, now = Date.now, log = () => {}, enabled = true } = deps;
+  const {
+    ask, busy = () => false, active = () => true, write = () => true, voice = () => true, now = Date.now,
+    rand = Math.random, log = () => {}, enabled = true,
+  } = deps;
+  const idleGap = () => IDLE_MIN_MS + rand() * (IDLE_MAX_MS - IDLE_MIN_MS);
   const self = {
     enabled,
     offReason: enabled ? '' : 'switched off',
     watch: emptyWatch(),
+    story: emptyStory(),
+    // The voice's own last lines for this character, oldest first.
+    inner: [],
     pending: [],
     running: false,
     lastAt: 0,
+    // When a quiet moment is next worth a thought. 0 until the first live look.
+    idleAt: 0,
     lastError: '',
     errors: 0,
     spoken: 0,
@@ -192,7 +300,7 @@ export function createCommentator(deps) {
       self.enabled = false;
       self.offReason = reason;
       self.pending = [];
-      log('pepe', `peanut gallery off: ${reason}`);
+      log('pepe', `inner voice off: ${reason}`);
     },
 
     // Call with every new percept. Returns the running promise when a line was started (a test awaits it).
@@ -202,7 +310,32 @@ export function createCommentator(deps) {
       const t = now();
       const seen = detectMoments(self.watch, p, { ...ctx, now: t });
       self.watch = seen.watch;
-      for (const e of seen.events) self.pending.push(e);
+      const before = self.story;
+      self.story = updateStory(self.story, p, { ...ctx, events: seen.events });
+      // A new character: what the voice remembered belongs to the one before.
+      if (self.story.gen !== before.gen) {
+        self.inner = [];
+        self.pending = self.pending.filter((e) => e.kind === 'death');
+      }
+      if (!self.idleAt && seen.watch.live) self.idleAt = t + idleGap();
+      for (const e of seen.events) self.push(e);
+      return self.maybeRun();
+    },
+
+    push(e) {
+      self.pending.push(e);
+      // Something is happening, so a quiet-moment thought is not due yet.
+      self.idleAt = Math.max(self.idleAt, e.at + idleGap());
+    },
+
+    // An order the brain just sent (policy or model): { action, thought }. Only the latest is kept, so
+    // when orders come faster than the gap the line pairs with the newest one.
+    order(o) {
+      if (!self.enabled || !isObj(o) || !o.action) return null;
+      const action = String(o.action).slice(0, MAX_ORDER_TEXT);
+      const thought = String(o.thought || '').replace(/\s+/g, ' ').trim().slice(0, MAX_ORDER_TEXT);
+      self.pending = self.pending.filter((e) => e.kind !== 'order');
+      self.push({ kind: 'order', text: `She chose ${action}.`, action, thought, weight: WEIGHT.order, at: now() });
       return self.maybeRun();
     },
 
@@ -215,40 +348,63 @@ export function createCommentator(deps) {
       return self.maybeRun();
     },
 
-    // Also called on a timer: an event can be waiting only because the model was busy.
+    // Also called on a timer: an event can be waiting only because the model was busy, and a quiet
+    // moment is only noticed by the clock.
     maybeRun() {
       if (!self.enabled || self.running) return null;
       const t = now();
       self.pending = self.pending
         .filter((e) => t - e.at <= (e.kind === 'death' ? DEATH_EXPIRE_MS : EXPIRE_MS))
         .slice(-MAX_PENDING);
-      if (!self.pending.length) return null;
       const dying = self.pending.some((e) => e.kind === 'death');
       if (!dying && t - self.lastAt < MIN_GAP_MS) return null;
       if (busy()) return null;
-      const ranked = [...self.pending].sort((a, b) => b.weight - a.weight || b.at - a.at);
-      const top = ranked[0];
-      const others = ranked.slice(1, 3);
-      const events = self.pending;
-      self.pending = [];
+      let top;
+      let others = [];
+      let events = self.pending;
+      if (self.pending.length) {
+        const ranked = self.pending.filter((e) => e.kind !== 'order').sort((a, b) => b.weight - a.weight || b.at - a.at);
+        const order = self.pending.find((e) => e.kind === 'order');
+        // A death is always the line. Otherwise the line answers the latest order, with the moments beside it.
+        if (ranked.length && ranked[0].kind === 'death') {
+          top = ranked[0];
+          others = [...ranked.slice(1), ...(order ? [order] : [])].slice(0, 2);
+        } else if (order) {
+          top = order;
+          others = ranked.slice(0, 2);
+        } else {
+          top = ranked[0];
+          others = ranked.slice(1, 3);
+        }
+        self.pending = [];
+      } else {
+        if (!self.idleAt || t < self.idleAt || !self.watch.live || !active()) return null;
+        top = { kind: 'idle', text: 'Nothing has happened for a while.', weight: 0, at: t };
+        events = [];
+      }
       self.running = true;
       return self.speak(top, others, events).finally(() => { self.running = false; });
     },
 
     async speak(top, others, events) {
       const started = now();
-      const last = self.lines.length ? self.lines[self.lines.length - 1].line : '';
       try {
-        const reply = await ask({ system: SYSTEM, user: userMessage(top, others, self.percept, last) });
+        const user = userMessage(top, others, self.percept, { summary: summaryLines(self.story), inner: self.inner });
+        const reply = await ask({ system: SYSTEM, user });
         self.lastAt = started;
+        self.idleAt = started + idleGap();
         const line = cleanLine(reply && reply.raw);
         if (!line) throw new Error('empty reply');
         self.errors = 0;
         self.lastError = '';
-        const rec = { at: now(), event: top.text, kind: top.kind, line, ms: num(reply.ms) };
+        const rec = {
+          at: now(), event: top.text, kind: top.kind, action: top.action || '', thought: top.thought || '', line, ms: num(reply.ms),
+        };
         self.lines = [...self.lines, rec].slice(-PANEL_LINES);
+        self.inner = [...self.inner, line].slice(-INNER_MEMORY);
         self.spoken += 1;
-        write({ at: new Date(rec.at).toISOString(), kind: rec.kind, event: rec.event, line, ms: rec.ms });
+        write({ at: new Date(rec.at).toISOString(), kind: rec.kind, event: rec.event, action: rec.action, thought: rec.thought, line, ms: rec.ms });
+        voice(voiceText(rec));
       } catch (err) {
         // A menu turn or a plan needed the model. Not a failure and not a turn used: the moment goes back.
         if (err && err.preempted) {
@@ -256,6 +412,7 @@ export function createCommentator(deps) {
           return;
         }
         self.lastAt = started;
+        self.idleAt = started + idleGap();
         const msg = String(err && err.message || err).slice(0, 200);
         if (isMissingModel(msg)) {
           self.disable('the model is not installed in Ollama (404)');
@@ -270,7 +427,7 @@ export function createCommentator(deps) {
     view() {
       return {
         on: self.enabled, off: self.offReason, running: self.running, lastError: self.lastError,
-        lines: self.lines.map((l) => ({ at: l.at, event: l.event, line: l.line })),
+        lines: self.lines.map((l) => ({ at: l.at, event: l.event, action: l.action || '', thought: l.thought || '', line: l.line })),
       };
     },
   };

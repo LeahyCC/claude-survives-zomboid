@@ -10,7 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   detectMoments, emptyWatch, createCommentator, cleanLine, stateText, userMessage, linesFromLog, SYSTEM,
-  MIN_GAP_MS, EXPIRE_MS, LINE_MAX, PANEL_LINES,
+  MIN_GAP_MS, EXPIRE_MS, LINE_MAX, PANEL_LINES, IDLE_MIN_MS, IDLE_MAX_MS, INNER_MEMORY, SUMMARY_LINES, SUMMARY_LINE_MAX,
+  emptyStory, updateStory, summaryLines, voiceText,
 } from './commentator.mjs';
 import { createAppender, readLog } from './jsonl.mjs';
 import { callCommentary, callChoice, commentBusy, pepeOptions, PEPE_GPU_LAYERS, DEFAULT_PEPE_MODEL, modelInstalled } from './llm.mjs';
@@ -100,17 +101,21 @@ function rig(opts = {}) {
   const asked = [];
   const written = [];
   const logs = [];
+  const voiced = [];
   let isBusy = false;
   const c = createCommentator({
     ask: opts.ask || (async (req) => { asked.push(req); return { raw: `line ${asked.length}`, ms: 5 }; }),
     busy: () => isBusy,
     write: (o) => { written.push(o); return true; },
     now: () => clock.t,
+    rand: opts.rand || (() => 0),
+    active: opts.active,
+    voice: (t) => { voiced.push(t); return true; },
     log: (k, t) => logs.push([k, t]),
     enabled: opts.enabled,
     lines: opts.lines,
   });
-  return { c, clock, asked, written, logs, setBusy: (b) => { isBusy = b; } };
+  return { c, clock, asked, written, logs, voiced, setBusy: (b) => { isBusy = b; } };
 }
 const nextKill = (c, kills, extra = {}) => c.observe(look({ kills, ...extra }), {});
 
@@ -298,10 +303,10 @@ test('pepe.log is capped: it rolls to .1 and stays under twice the cap', () => {
 test('the prompt it sends is small and plain, and carries the state', () => {
   const p = look({ hp: 42, zChasing: 3, bleeding: 1, weapon: 'Bat', kills: 4, inBldg: house, outside: false });
   assert.match(stateText(p), /42\/100 HP, 3 zombies chasing her, bleeding, inside a building, holding a Bat, day 1, 4 kills/);
-  const msg = userMessage({ text: 'She killed a zombie.' }, [{ text: 'She started bleeding.' }], p, 'previous');
+  const msg = userMessage({ kind: 'kill', text: 'She killed a zombie.' }, [{ text: 'She started bleeding.' }], p, { inner: ['previous'] });
   assert.match(msg, /WHAT JUST HAPPENED: She killed a zombie\./);
   assert.match(msg, /ALSO: She started bleeding\./);
-  assert.match(msg, /YOUR LAST LINE \(do not repeat it\): previous/);
+  assert.match(msg, /YOUR LAST THOUGHTS \(oldest first, do not repeat them\):\n- previous/);
   assert.match(SYSTEM, /survivor in a zombie game/);
   assert.ok(!SYSTEM.includes(String.fromCharCode(0x2014)) && !SYSTEM.includes(String.fromCharCode(0x2013)));
 });
@@ -428,7 +433,7 @@ test('only the bridge entry point imports the commentator, and it feeds nothing 
   const bridge = fs.readFileSync(path.join(dir, 'pz-bridge.mjs'), 'utf8');
   // The only reads of the gallery's state are the /mind payload and the switch-off notice.
   const uses = bridge.split('\n').filter((l) => /(?<![\w'])pepe\.[a-zA-Z]+\(/.test(l)).map((l) => l.trim());
-  for (const l of uses) assert.match(l, /pepe\.(observe|death|disable|maybeRun|view)\(/, l);
+  for (const l of uses) assert.match(l, /pepe\.(observe|death|disable|maybeRun|view|order)\(/, l);
   assert.ok(!/planTurn\([^)]*pepe/s.test(bridge));
   assert.ok(!/state\.log\.push\([^)]*pepe/.test(bridge));
 });

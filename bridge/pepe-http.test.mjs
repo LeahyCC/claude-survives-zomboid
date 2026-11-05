@@ -69,7 +69,7 @@ test('the last 10 saved lines are on /api/state after a restart, and the page ha
     assert.equal(state.pepe.lines.length, 10);
     assert.equal(state.pepe.lines[0].line, 'saved line 2');
     assert.equal(state.pepe.lines[9].line, 'saved line 11');
-    assert.match(page, /<h2>Peanut gallery<\/h2>/);
+    assert.match(page, /<h2>Inner voice<\/h2>/);
     assert.match(page, /id="pepe"/);
   });
 });

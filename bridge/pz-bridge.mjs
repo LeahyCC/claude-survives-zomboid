@@ -34,6 +34,8 @@ const PORT = Number(process.env.PORT || 8799);
 const LUA_DIR = process.env.PZ_LUA_DIR || path.join(os.homedir(), 'Zomboid', 'Lua');
 const PERCEPT_FILE = path.join(LUA_DIR, 'local_percept.txt');
 const INTENT_FILE = path.join(LUA_DIR, 'local_intent.txt');
+// The inner voice's latest line, one line, overwritten. Nothing in the mod reads it yet (docs/brain.md).
+const VOICE_FILE = path.join(LUA_DIR, 'local_voice.txt');
 // The mod writes this when she dies, and it stays until the next death (mods/.../Death.lua).
 const DEATH_FILE = path.join(LUA_DIR, 'local_death.txt');
 const STATE_FILE = process.env.PZ_STATE_FILE || path.join(DIR, 'pz-state.json');
@@ -42,20 +44,30 @@ const LESSONS_FILE = process.env.PZ_LESSONS_FILE || path.join(DIR, 'lessons.json
 const DECISIONS_FILE = process.env.PZ_DECISIONS_FILE || path.join(DIR, 'decisions.jsonl');
 const NUDGES_FILE = process.env.PZ_NUDGES_FILE || path.join(DIR, 'nudges.jsonl');
 const LOG_MAX_BYTES = Number(process.env.PZ_LOG_MAX_BYTES) || DEFAULT_MAX_BYTES;
-// The peanut gallery's lines (commentator.mjs). Small cap: it is only read back for the last 10.
+// The inner voice's lines (commentator.mjs). Small cap: it is only read back for the last 10.
 const PEPE_FILE = process.env.PZ_PEPE_FILE || path.join(DIR, 'pepe.log');
 const PEPE_MAX_BYTES = Number(process.env.PZ_PEPE_LOG_MAX) || 1024 * 1024;
 
-function writeIntentFile(line) {
+function writeLineFile(file, line) {
   fs.mkdirSync(LUA_DIR, { recursive: true });
-  const tmp = INTENT_FILE + '.tmp';
+  const tmp = file + '.tmp';
   fs.writeFileSync(tmp, line + '\n');
   try {
-    fs.renameSync(tmp, INTENT_FILE);
+    fs.renameSync(tmp, file);
   } catch {
     // Windows can refuse the replace while the game has the file open.
-    fs.copyFileSync(tmp, INTENT_FILE);
+    fs.copyFileSync(tmp, file);
     fs.rmSync(tmp, { force: true });
+  }
+}
+const writeIntentFile = (line) => writeLineFile(INTENT_FILE, line);
+// Commentary must never stop the bridge, so a locked file is swallowed.
+function writeVoiceFile(line) {
+  try {
+    writeLineFile(VOICE_FILE, line);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -83,12 +95,14 @@ const tracker = createTracker({ write: createAppender(DECISIONS_FILE, { maxBytes
 const pepe = createCommentator({
   ask: callCommentary,
   busy: () => tacticalBusy() || planner.running || inFlight || reviewNote === 'reviewing the run',
+  active: () => !!percept && !percept.dead && Date.now() - perceptAt < 15000,
   write: createAppender(PEPE_FILE, { maxBytes: PEPE_MAX_BYTES }),
+  voice: writeVoiceFile,
   log: (kind, text) => log(kind, text),
   lines: linesFromLog(readLog(PEPE_FILE)),
   enabled: PEPE_ENABLED,
 });
-const pepeObserve = () => pepe.observe(percept, { history: tracker.history(), plan: planner.plan, run: runId() });
+const pepeObserve = () => pepe.observe(percept, { history: tracker.history(), plan: planner.plan, run: runId(), searched: stats.run ? stats.run.searched : 0 });
 const appendNudge = createAppender(NUDGES_FILE, { maxBytes: LOG_MAX_BYTES });
 const EXAMPLES_ON = examplesEnabled();
 const pastNudges = readLog(NUDGES_FILE, { rotated: false });
@@ -212,7 +226,7 @@ const planner = createPlanner({
 if (PEPE_ENABLED) {
   modelInstalled(PEPE_MODEL).then((ok) => {
     if (ok === false) pepe.disable(`model ${PEPE_MODEL} is not installed`);
-    else log('pepe', `peanut gallery on: ${PEPE_MODEL}`);
+    else log('pepe', `inner voice on: ${PEPE_MODEL}`);
   });
 }
 // An event can wait only because the model was busy; look again every few seconds.
@@ -336,6 +350,8 @@ function send(option, thought, say, decidedBy) {
   state.goal = option.label;
   state.subtask = `${option.id}: ${option.label}`;
   brainNote = `${decidedBy}: ${lastAction}`;
+  // The inner voice answers this order. It only reads it.
+  pepe.order({ action: lastAction, thought: lastThought });
   log('decide', `${decidedBy} ${option.id} ${lastAction}${say ? ` "${say}"` : ''} ${lastThought}`);
 }
 
@@ -660,7 +676,7 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 #reacts th{font-size:11px;color:#8899aa;text-transform:uppercase}#reacts tr.failed td:nth-child(3){color:#f3b4b4}#reacts tr.running td{color:#7fd1b9}
 #reacts tr.replaced td,#reacts tr.unfinished td{color:#8899aa}#reacts td.hp{text-align:right;white-space:nowrap}
 #pepe{list-style:none;padding:0;margin:0}#pepe li{padding:6px 10px;border-radius:4px;margin:3px 0;background:#151b22;border-left:3px solid #c28fe0}
-#pepe .when{color:#8899aa;font-size:12px}
+#pepe .when{color:#8899aa;font-size:12px}#pepe .brain{color:#a9b8c8;font-size:12px;margin-bottom:2px}
 #nudge-buttons{display:flex;flex-direction:column;gap:4px;margin:6px 0}
 #nudge-buttons button{text-align:left;font-weight:400;background:#151b22;color:#dde3ea;border:1px solid #26303a}
 #nudge-buttons button.brain::after{content:"  \\2190  brain's pick";color:#7fd1b9;font-size:12px}
@@ -689,7 +705,7 @@ button{padding:8px 14px;border:0;border-radius:6px;background:#7fd1b9;color:#0c0
 <h2>Reactions</h2>
 <div class="note">The last 8 orders: how each went, and what she chose next.</div>
 <table id="reacts"><thead><tr><th>time</th><th>choice</th><th>result</th><th>HP</th><th>next choice</th></tr></thead><tbody></tbody></table>
-<h2>Peanut gallery</h2>
+<h2>Inner voice</h2>
 <div class="note" id="pepe-note"></div>
 <ul id="pepe"></ul>
 <h2>Nudge</h2>
@@ -835,6 +851,7 @@ function renderPepe(pz){
   }
   list.replaceChildren(...pz.lines.slice().reverse().map((l) => {
     const li = document.createElement('li');
+    if (l.action) { const b = document.createElement('div'); b.className = 'brain'; b.textContent = l.action + (l.thought ? ' "' + l.thought + '"' : ''); li.append(b); }
     li.append(document.createTextNode(l.line));
     const w = document.createElement('div'); w.className = 'when';
     w.textContent = (l.at ? new Date(l.at).toLocaleTimeString([], { hour12: false }) + ' · ' : '') + l.event;

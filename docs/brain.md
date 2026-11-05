@@ -56,7 +56,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `decisions.mjs` | The decision log: decision, outcome and after lines, and the join between them. It also keeps the last 12 orders with their results in memory (`history()`). See `docs/eval.md`. | service |
 | `death.mjs` | Why she died: the cause and its facts, from the mod's death record. See `docs/eval.md`. | service |
 | `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
-| `commentator.mjs` | The peanut gallery: spots moments, rate limits, asks the meme model for a line. Commentary only. See "Peanut gallery". | service |
+| `commentator.mjs` | The inner voice: spots moments, keeps a summary of the run, rate limits, asks the meme model for a first person line. Commentary only. See "Inner voice". | service |
 | `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
 | `pz-bridge.mjs` | Reads the percept, runs the loop, writes the order, serves `/mind`. | I/O |
@@ -269,39 +269,67 @@ It also keeps the last 12 orders sent (seq, verb, key, building), the fails with
 
 The Nudge panel on the same page lets you pick the option you would have chosen. See "Nudges" in `docs/eval.md`. A model thought that was still running when you pressed "Do it now" is dropped when it finishes, so it cannot overwrite your order.
 
-## Peanut gallery
+## Inner voice
 
-A second local model, `pepe-8b_abliterated_pc:latest`, reacts to what happens, for fun. It is commentary only. It never decides anything, never writes an order, and nothing it says goes into the brain's prompt, the planner's prompt or the order line. Its lines go to `bridge/pepe.log` and to the Peanut gallery panel on /mind, which shows the last 10, newest first. The panel is filled from the log when the bridge starts, so it survives a page refresh and a restart.
+A second local model, `pepe-8b_abliterated_pc:latest`, is the voice in her head. It speaks as her ("I", "me"), in its own style, one or two short sentences, and it knows what has happened so far this run. It is commentary only. It never decides anything, never writes an order, and nothing it says goes into the brain's prompt, the planner's prompt or the order line. (The code and logs still call it pepe.)
+
+Each line is a pair. The brain decides an action with its own short thought, and the voice answers right after with how she feels and how she reads the situation:
 
 ```
-percept, order history, plan --> moments --> pending
-pending --> one line at most every 30 s, only when nothing else needs Ollama --> pepe.log + panel
+ENTER house W  "I need to hide out before dark"
+  -> I'm feeling tense, the situation is that the light is going, and this better have a door that locks.
 ```
 
-What it notices: a kill, losing 8 or more HP at once, starting to bleed, HP falling to 25 or below, a clearly better weapon in hand (hands empty to anything, or a score 1.25 times higher), walking into a building, locking one up, a failed order, a flee and re-enter loop, the planner's new plan, and death. When several land together the heaviest is spoken and up to two others ride along in the prompt. A moment older than 45 seconds is dropped. Death is always spoken, never rate limited, and waits for a free model.
+```
+each order sent (policy or model) -----------> pending, only the latest kept
+percept, order history, plan --> moments ----> pending
+quiet for 60 to 90 s ------------------------> an idle thought
+pending --> one line at most every 30 s, only when nothing else needs Ollama
+        --> pepe.log + Inner voice panel + Lua/local_voice.txt
+```
+
+Where the lines go:
+
+- `bridge/pepe.log`: one JSON line each, with `action`, `thought` and `line`.
+- The Inner voice panel on /mind: the last 10, newest first, with the brain's half above the voice's half. It is filled from the log when the bridge starts, so it survives a refresh and a restart.
+- `Zomboid/Lua/local_voice.txt`: the latest line only, one line, overwritten, in the same folder as `local_intent.txt`. The format is `ACTION "thought" | the voice's line`, or just the line for an idle thought. **The HUD side is not built yet.** Nothing in the Lua mod reads this file. A later change can show it on screen.
+
+What triggers a line:
+
+- **An order.** Each order the brain sends, from the policy or the model. When orders come faster than the 30 s gap, the line pairs with the latest one and the older ones are dropped.
+- **A moment.** A kill, losing 8 or more HP at once, starting to bleed, HP falling to 25 or below, a clearly better weapon in hand (hands empty to anything, or a score 1.25 times higher), walking into a building, locking one up, a failed order, a flee and re-enter loop, the planner's new plan, and death. When an order is waiting, the line answers the order and up to two moments ride along. A moment alone gets its own line, with no action beside it. A moment older than 45 seconds is dropped.
+- **Death** is always spoken, never rate limited, and waits for a free model.
+- **An idle thought** about every 60 to 90 seconds when nothing has happened (waiting out the night, walking, searching). Any order, moment or line pushes the next one back. It only runs while the game is sending percepts.
+
+What the model is sent each time, kept small because it runs on a CPU:
+
+- A running summary of this character, at most 6 lines of 150 characters: game hours alive, kills and where she is now, the weapon she started with and the one in hand, buildings entered and searched, what she found, big hits, bleeding and close calls, and the planner's goal. It comes from the percept, the stats run, the order history and the plan, not from the model.
+- The voice's own last 4 lines, so the thought carries on.
+- The order or the moment, and her state line.
+
+The summary and the 4 lines are cleared when the stats run id changes (a new character), or when the hours or kills counter goes back.
 
 How it stays out of the way:
 
 - CPU only (`num_gpu` 0), the shared `num_ctx`, `num_predict` 120, thinking off. A reply cut by the budget is trimmed back to its last full sentence. It takes no VRAM and does not make Ollama reload the menu model.
-- It does not start while a menu turn, a plan, the death review or a menu turn's whole think-and-send is running.
-- A menu turn or a plan that starts while it is writing cancels it at once. The moment goes back in the queue and does not use up the 30 seconds.
-- One comment at a time. A moment that arrives during one waits for the next slot.
+- It does not start while a menu turn, a plan, the death review or a menu turn's whole think-and-send is running. That includes idle thoughts.
+- A menu turn or a plan that starts while it is writing cancels it at once. An order or moment goes back in the queue and does not use up the 30 seconds. An idle thought is just asked again later.
+- One line at a time. Anything that arrives during one waits for the next slot.
 
-The only changes to what the model says are a length cap (240 characters) and control characters turned into spaces. The log is capped at 1 MB and rolls to `pepe.log.1`.
+The only changes to what the model says are a length cap (240 characters), trimming a cut reply to its last full sentence, and control characters turned into spaces. The log is capped at 1 MB and rolls to `pepe.log.1`.
 
 Switches: `PZ_PEPE=0` turns it off. `PZ_PEPE_MODEL` picks another model. `PZ_PEPE_GPU_LAYERS` (default 0), `PZ_PEPE_PREDICT` (120), `PZ_PEPE_TIMEOUT`, `PZ_PEPE_KEEP_ALIVE` (10m), `PZ_PEPE_FILE` and `PZ_PEPE_LOG_MAX` (bytes) tune it. It is on by default when Ollama lists the model. If the model is not installed, or a call gets a 404, it logs one line and turns itself off for the session.
 
-Measured on this PC on 2026-11-05 with the game running (`node bridge/tools/try-pepe.mjs`, `gemma4:12b` as the menu model, 5 runs):
+Measured on this PC on 2026-11-04 (`node bridge/tools/try-pepe.mjs`, `gemma4:12b` as the menu model). The script plays seven lines of one short run through the real commentator, so the prompt grows from 383 to about 1330 characters:
 
 | | time |
 |---|---|
-| first line, model loading | 11.7 s |
-| warm line | 1.8 to 4.0 s, median 2.7 s |
-| menu turn alone | 355 to 485 ms, median 392 ms |
-| menu turn fired 0.7 s into a comment | 471 to 552 ms, median 518 ms, the comment cut every time |
-| lines through the real bridge, with its own menu turns and plans running | 2.2 s, 4.2 s, 11.8 s |
+| first line, model loading | 8.2 s |
+| warm line, longer prompt | 5.3 to 9.6 s, median 6.8 s |
+| menu turn alone | 406 to 428 ms, median 414 ms |
+| menu turn fired 0.7 s into a thought | 526 to 613 ms, median 577 ms, the thought cut every time |
 
-A menu turn that lands in the middle of a comment costs about 120 ms more than one on a quiet model, because the CPU is still winding down. It stayed under 600 ms in all five runs.
+The longer prompt makes a line slower than before the summary (1.8 to 4.0 s). That is fine for commentary that speaks at most every 30 s. A menu turn that lands in the middle of a thought costs about 160 ms more than one on a quiet model, because the CPU is still winding down. It stayed under 650 ms in all five runs.
 
 ## Examples from your nudges
 
