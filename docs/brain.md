@@ -15,6 +15,7 @@ update map memory ---------------------------------- memory.mjs
    v
 dead? ........................... no order
 chaser inside 10, or a zombie she can see inside 3 ... hold, the reflex owns it
+   ... unless handed back (60 s of it, or reflex.stuck): ask with the escape menu, below
 asleep? ......................... no order
 last order not picked up yet? ... wait for the body
    |
@@ -44,7 +45,8 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 |---|---|---|
 | `brain.mjs` | One turn without I/O: `planTurn`, `resolveChoice`, `orderLine`, the user message. | service |
 | `senses.mjs` | Reads a v2 percept: the hold rule, need flags, night, inside, busy. | service |
-| `options.mjs` | The menu: `buildOptions(percept, memory)`. | service |
+| `options.mjs` | The menu: `buildOptions(percept, memory)`, and the short escape menu for a handed-back turn, `escapeOptions`. | service |
+| `chase.mjs` | How long the reflex has had a chase to itself, and when the brain gets a turn anyway. See "When the hold ends". | service |
 | `policy.mjs` | Needs that cannot wait: `decidePolicy`. | service |
 | `playbook.mjs` | Pro rules with a condition each: `selectRules`. | service |
 | `memory.mjs` | Map memory by building id, saved as `map` in `pz-state.json`. | service |
@@ -72,6 +74,29 @@ The reflex leaves an idle zombie alone unless it is within about 2 tiles (`docs/
 - any zombie 3 tiles or closer
 
 A thought that comes back after one of these starts is dropped. With idle zombies further out, orders go on. Walks keep 5 tiles clear of every standing zombie within 20 (idle ones, and chasers the reflex does not own yet), and end at least 6 tiles from one. A house whose door is past a zombie is left off the menu.
+
+## When the hold ends
+
+The hold is a loan. In the 2026-11-05 soak one zombie held the brain off for 33 minutes: the reflex fled every minute, never got away, and no order was ever written. `chase.mjs` keeps a clock of how long the hold has been on (it ends when the hold has been off for 15 seconds) and says when the brain gets a turn anyway:
+
+- the percept's `reflex.stuck` is true: an escape loop hit its limit and the reflex has nothing of its own left (`docs/combat.md`, "Stuck in a chase"), or
+- the hold has been on for 60 seconds with at most two standing zombies inside 10, nothing has hurt her in the last minute (`reflex.hits60` is 0), and the reflex is not in a fresh FIGHT or SHOVE.
+
+A second hand-back waits 45 seconds after the last. Asleep and a pending order still come first.
+
+A handed-back turn skips the policy, the usual menu and the "keep" rule, and the prompt says the reflex has had the chase for N seconds and running is not shaking it. The menu is `escapeOptions` in `options.mjs`, at most 5:
+
+| id | verb | offered when | posture |
+|---|---|---|---|
+| `secure` | SECURE | inside, doors not shut this visit | |
+| `b1`, `b2` | ENTER | the two nearest houses or buildings whose door she can reach clear of the zombies | `avoid` |
+| `away` | GOTO | a walk 15 tiles out of sight of the zombie, clear of the others | `avoid` |
+| `fight` | WAIT | a weapon, hp 50+, endurance 0.3+, not heavy, not panicking, not bleeding, one or two chasing | `clear` |
+| `wait` | WAIT | only when nothing else is offered | |
+
+A pick that is the job already running is sent again (`resolveChoice(..., force)`), because that job is what the flee keeps cancelling. The order line carries the posture as its ninth field, which sets `LocalSurvivor.posture` for the reflex. On the mod side a new GOTO, ENTER, SECURE or MOVE order with a chaser in range makes the reflex stand aside for 20 seconds (`Reflex.HANDBACK_TICKS`), or the flee would cancel the walk at once.
+
+The decision line gets `handback: { why, ms }`, so `node bridge/tools/review.mjs` prints "Stuck in a chase": loop limits by what she did next, and the turns handed back with how those orders went. The bridge also prints `Reflex hands the turn back: ...`.
 
 ## Options
 

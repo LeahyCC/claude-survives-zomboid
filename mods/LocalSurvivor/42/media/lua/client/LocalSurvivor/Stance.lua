@@ -42,6 +42,10 @@ Stance.N = {
   HOLD_SCAN = 6,
   HOLD_MAX = 1800,     -- ticks of holding with nothing coming before giving the spot up
   END_LOW = 0.3,
+  ESCAPE_TRIES = 3,    -- this many escape tries in a row that ended chased is a loop (ReflexLog.tally)
+  STUCK_MAX = 2,       -- the loop rule is for a small chase: this many chasers at most
+  STUCK_AWAY = -0.2,   -- in a loop a fence may lead sideways, just not back toward them (a cosine)
+  END_SHOVE = 0.3,     -- endurance to stand and shove instead of walking on
   PANIC_MAX = 3,
   HEAVY_MAX = 2,
   TIRED_MAX = 3,
@@ -269,8 +273,9 @@ function Stance.choose(snap)
   end
 
   local ax, ay = Stance.awayFrom(zs, 22, false, A.near)
+  local lines = snap.lines
   local function run(kind, why, index)
-    local dx, dy = Stance.pickLine(snap.lines, zs, ax, ay)
+    local dx, dy = Stance.pickLine(lines, zs, ax, ay)
     return act(kind, index or A.chaser or A.near, why, dx, dy)
   end
   local function backoff(why)
@@ -279,7 +284,7 @@ function Stance.choose(snap)
   end
   -- Get away: over a fence or through a window if one is right there, crouch if they have lost
   -- her, sprint if she has the breath for it, otherwise just run.
-  local function escape(why)
+  local function getAway(why)
     if on("climb") then
       local b = Stance.pickBarrier(snap, A, N, ax, ay)
       if b and A.standD > N.ON_HIM then
@@ -289,11 +294,53 @@ function Stance.choose(snap)
     end
     if on("hide") and A.chasers > 0 and A.seers == 0 and A.chaseD > N.HIDE_NEAR then
       if A.chaseD >= N.HIDE_STILL then return act("hide", A.chaser, why, 0, 0) end
-      local dx, dy = Stance.pickLine(snap.lines, zs, ax, ay)
+      local dx, dy = Stance.pickLine(lines, zs, ax, ay)
       return act("hide", A.chaser, why, dx, dy)
     end
     if num(snap.endurance, 1) >= N.END_SPRINT and num(snap.heavy, 0) < N.HEAVY_MAX then return run("break", why) end
     return run("flee", why)
+  end
+
+  -- Getting away, unless that has been tried again and again against a small chase and a
+  -- chaser is still there (the 2026-11-05 soak: 35 FLEEs in 33 minutes against one zombie, none
+  -- escaped). Then try what can end it: a fence or window even if it leads sideways, or stand
+  -- and shove a lone chaser while she has the breath and the health. With neither, walk on
+  -- along another line than the last, and mark the decision so the bridge gives the brain a
+  -- turn. A door between them is the brain's job: it knows where the buildings are.
+  local function escape(why)
+    local fails = num(snap.escapeFails, 0)
+    local loop = fails >= N.ESCAPE_TRIES and A.chasers >= 1 and A.chasers <= N.STUCK_MAX and A.pack < N.SWARM_N
+    if not loop then return getAway(why) end
+    local tag = "stuck:" .. tostring(why)
+    local function mark(a) a.stuck = fails; return a end
+    if on("climb") then
+      local M = Stance.params(snap.posture)
+      M.CLIMB_AWAY = N.STUCK_AWAY
+      local b = Stance.pickBarrier(snap, A, M, ax, ay)
+      if b and A.standD > N.ON_HIM then
+        local bar = snap.barriers[b]
+        return mark(act("climb", A.chaser or A.near, tag, num(bar.dx, 0), num(bar.dy, 0), b))
+      end
+    end
+    -- Shoving with no breath left only gets her bitten, so this needs breath, health, calm
+    -- hands and no bleeding. It is the fight gates again, without the weapon.
+    local fitToShove = num(snap.endurance, 1) >= N.END_SHOVE and num(snap.hp, 100) >= N.HP_FIGHT
+      and num(snap.bleeding, 0) == 0 and num(snap.panic, 0) < N.PANIC_MAX
+    if A.chasers == 1 and A.pack <= 1 and fitToShove then
+      return mark(act("hold", A.chaser, tag, 0, 0))
+    end
+    -- Another heading than the run that did not work. Lines carry their compass index.
+    if snap.lastDir and type(lines) == "table" then
+      local other = {}
+      for i, l in ipairs(lines) do
+        other[i] = { dx = l.dx, dy = l.dy, dir = l.dir, blocked = l.blocked or l.dir == snap.lastDir }
+      end
+      lines = other
+    end
+    local a = getAway(why)
+    a.why = tag
+    a.handoff = true
+    return mark(a)
   end
 
   -- One on her. Turning to walk away now gets her bitten, so it is a swing or a shove.

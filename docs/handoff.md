@@ -35,7 +35,7 @@ The character playing at the start of the soak kept gear from a rich-loot run, s
 pwsh tools/playtest.ps1 [-RichLoot]   install the mod, start the game, continue the save
 cd bridge; node pz-bridge.mjs         the brain, http://localhost:8799/mind
 node tools/soak.mjs --hours 3         unattended run with a report
-npm test                              Lua check, Lua tests, bridge tests (761 at handoff)
+npm test                              Lua check, Lua tests, bridge tests (761 at handoff, 806 after the escape loop fix)
 node bridge/eval/run.mjs --n 2        brain eval; --backend jev for Jev
 node bridge/tools/review.mjs          decisions, nudges, reflex, critic, deaths
 ```
@@ -67,7 +67,8 @@ At handoff the board is back to normal: Sensei on in suggest mode, auto-fixers o
 
 From the cards' "New tasks" and live play, roughly by value:
 
-- **Reflex:** sprint probably never holds (the game resets it from the keyboard every frame); check the `sprint` field in BREAK outcomes. The posture field (`avoid`, `clear`) exists end to end but no menu option sets it. HIDE's line of sight and the fence side rule are unverified live.
+- **Reflex:** sprint does not hold (2 of 143 BREAK outcomes in the first soak), so BREAK and FLEE are the same walk and neither gains ground on a walker. The escape loop is handled (see "Escape loop" below); watch "Stuck in a chase" in the review on the next soak. The posture field (`avoid`, `clear`) is now set by the escape menu only; the usual menu still sets none. HIDE's line of sight and the fence side rule are unverified live. Nothing yet gets her inside and shuts a door from the reflex: that is the brain's escape menu.
+- **Escape loop:** in the first soak the last 33 minutes were one unarmed zombie chase at endurance 0, 35 FLEEs, 0 escaped, no brain turn. Fixed in two places: after 3 failed tries a small chase gets a climb, a stand-and-shove, or a different heading plus a brain turn (`docs/combat.md`, "Stuck in a chase"), and the bridge hands the brain a turn after 60 seconds of reflex hold (`docs/brain.md`, "When the hold ends"). Not yet tried live: the stand-and-shove at endurance 0.3 to 0.5 (does an unarmed shove drop a zombie often enough?), the 20 second window where the reflex stands aside for the brain's walk, and the escape menu's picks with a real model. Her load was 70 to 80 percent too, so she is also slow; DROP never ran in that loop because it is not offered while chased.
 - **Guns:** the reflex cannot fire. The calls it needs are listed in `docs/combat.md`. Shots draw zombies, so it needs a noise rule.
 - **Loot:** corpses are not searched. Floor pickups and the freezer and container walk are unverified live.
 - **Brain misses** in the eval: `panicked-outside`, `winded-no-chase` (rest), `can-with-opener` (eat). Jev gets the last two right.

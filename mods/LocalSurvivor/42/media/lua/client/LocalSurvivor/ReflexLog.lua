@@ -23,6 +23,9 @@ Log.HIT_WINDOW = 3600       -- "hits in the last minute"
 Log.FLUSH_TICKS = 60
 Log.MAX_OPEN = 12
 Log.MAX_BUF = 40
+Log.CLEAR_TICKS = 180       -- nothing chasing for this long ends an escape loop's tally
+-- The stances that try to get away. Only these count toward a loop.
+Log.ESCAPE = { FLEE = true, HIDE = true, BREAK = true }
 
 -- Session state. A new session (game restart) starts the file again: the bridge follows it
 -- from its end, so nothing it has not read is lost by that.
@@ -35,11 +38,36 @@ end
 local function r1(v) return math.floor((tonumber(v) or 0) * 10 + 0.5) / 10 end
 
 -- Pure. Is this decision a new call? A stance other than NONE that differs from the last one,
--- or the same one again after a quiet spell.
-function Log.isNewCall(st, stance, tick)
+-- or the same one again after a quiet spell. The first decision of an escape loop that hit its
+-- limit (why starts with "stuck") is always a call, so the log shows what she did next.
+function Log.isNewCall(st, stance, tick, why)
   if not stance or stance == "NONE" then return false end
+  if why and string.sub(tostring(why), 1, 5) == "stuck" and not st.stuckOpen then return true end
   if stance ~= st.lastStance then return true end
   return tick - (st.lastActTick or -99999) > Log.REPEAT_GAP
+end
+
+-- Pure. One reflex tick folded into the escape tally on st (fails, winStart, clearSince,
+-- stuckOpen, handoff). An escape try is a window of FLEE, HIDE or BREAK. When the next one
+-- starts OUTCOME_TICKS or more after the last began and a chaser has been there the whole time,
+-- the earlier try failed: that is one fail. Nothing chasing for CLEAR_TICKS means the chase is
+-- over and the tally starts again. escaped is Log.escaped of this tick's facts.
+function Log.tally(st, stance, escaped, tick)
+  if escaped then
+    if st.clearSince == nil then st.clearSince = tick end
+    if tick - st.clearSince >= Log.CLEAR_TICKS then
+      st.fails, st.winStart, st.stuckOpen, st.handoff = 0, nil, false, false
+    end
+    return
+  end
+  st.clearSince = nil
+  if not Log.ESCAPE[stance] then return end
+  if st.winStart == nil then
+    st.winStart = tick
+  elseif tick - st.winStart >= Log.OUTCOME_TICKS then
+    st.fails = (st.fails or 0) + 1
+    st.winStart = tick
+  end
 end
 
 -- Pure. The facts worth keeping about the moment: how many and how close, what she has, what
@@ -106,6 +134,7 @@ function Log.summary(st, tick)
     stance = st.lastStance or "NONE", why = st.lastWhy or "", calls = st.calls or 0,
     escapes = st.escapes or 0, outcomes = st.outs or 0, hits60 = hits,
     level = st.level or 0, posture = LS.posture or "normal",
+    fails = st.fails or 0, stuck = st.handoff == true,
     age = st.lastActTick and st.lastActTick > -99999 and math.floor((tick - st.lastActTick) / 60) or -1,
   }
 end
@@ -135,9 +164,8 @@ function Log.note(a, snap, tick, kills, sprintTook)
   a = a or {}
   local stance = a.stance or "NONE"
   st.level = a.level or 0
-  local facts = nil
-  if Log.isNewCall(st, stance, tick) then
-    facts = Log.facts(snap)
+  local facts = Log.facts(snap)
+  if Log.isNewCall(st, stance, tick, a.why) then
     st.serial = st.serial + 1
     st.session = st.session or stamp()
     local call = { id = st.session .. "-" .. st.serial, tick = tick, stance = stance, act = a.kind or "none",
@@ -146,9 +174,16 @@ function Log.note(a, snap, tick, kills, sprintTook)
     while #st.open > Log.MAX_OPEN do table.remove(st.open, 1) end
     st.calls = st.calls + 1
     table.insert(st.buf, { t = "call", id = call.id, tick = tick, stance = stance, act = call.act, why = call.why,
-      threat = a.threat or 0, level = a.level or 0, f = facts })
+      threat = a.threat or 0, level = a.level or 0, stuck = a.stuck, f = facts })
     st.lastWhy = call.why
   end
+  -- The escape loop hit its limit: this decision is the first of the way out. handoff says the
+  -- reflex has nothing of its own left and wants the brain to have a turn (percept reflex.stuck).
+  if a.stuck then
+    st.stuckOpen = true
+    st.handoff = a.handoff == true
+  end
+  Log.tally(st, stance, Log.escaped(facts), tick)
   if stance ~= "NONE" then
     st.lastStance = stance
     st.lastActTick = tick
@@ -162,7 +197,6 @@ function Log.note(a, snap, tick, kills, sprintTook)
   local keep = {}
   for _, c in ipairs(st.open) do
     if tick - c.tick >= Log.OUTCOME_TICKS then
-      facts = facts or Log.facts(snap)
       local out = Log.outcome(c, { tick = tick, facts = facts, lost = st.lost, hitCount = (st.hitTotal or 0),
         kills = kills, stance = stance })
       st.outs = st.outs + 1

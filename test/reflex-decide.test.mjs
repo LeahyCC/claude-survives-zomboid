@@ -528,3 +528,131 @@ test('climb: walk to the fence, climb with the game action, then wait out the an
   assert.deepEqual(queue(h), ['ISWalkToTimedAction'], 'the queue is left alone while she climbs');
   assert.equal(h.get('LocalSurvivor.reflexState.stance'), 'CLIMB');
 });
+
+// ---------- an escape that keeps failing ----------
+// The 2026-11-05 soak: one zombie, unarmed, no breath, FLEE 35 times in 33 minutes and never away.
+// snap.escapeFails is the tally from ReflexLog.tally: tries in a row that ended with a chaser still there.
+
+const bare = { armed: false, weaponScore: 0, reach: 0 };
+const sideFence = (extra = {}) => ({ kind: 'fence', dx: 0, dy: 1.5, d: 1.5, nx: 0, ny: 1, ...extra });
+const wlines = [{ dx: -1, dy: 0, dir: 5 }, { dx: -1, dy: 1, dir: 4 }, { dx: 0, dy: 1, dir: 3 }];
+
+test('stuck: the first tries run as ever, the third failed one stops repeating them', () => {
+  for (const fails of [0, 1, 2]) {
+    const a = decide({ ...bare, endurance: 0.9, escapeFails: fails, zombies: [zed(5.3)] });
+    assert.deepEqual(pick(a, ['kind', 'why', 'stuck']), { kind: 'break', why: 'unarmed' }, `fails ${fails}`);
+  }
+  const a = decide({ ...bare, endurance: 0.9, escapeFails: 3, zombies: [zed(5.3)] });
+  assert.deepEqual(pick(a, ['kind', 'why', 'stance', 'stuck', 'index']), { kind: 'hold', why: 'stuck:unarmed', stance: 'HOLD', stuck: 3, index: 1 });
+  assert.equal(a.handoff, undefined, 'it has a plan of its own, no need for the brain yet');
+});
+
+test('stuck: a lone chaser, unarmed, with breath and health: stand, and shove it when it arrives', () => {
+  const stand = decide({ ...bare, endurance: 0.4, escapeFails: 4, zombies: [zed(7)] });
+  assert.equal(stand.kind, 'hold');
+  // On her, the old rule shoves, loop or not.
+  const shove = decide({ ...bare, endurance: 0.4, escapeFails: 4, zombies: [zed(1.0)] });
+  assert.deepEqual(pick(shove, ['kind', 'why']), { kind: 'shove', why: 'unarmed' });
+});
+
+test('stuck: no breath, hurt or bleeding means no shoving, so walk on another way and ask the brain', () => {
+  for (const extra of [{ endurance: 0 }, { endurance: 0.2 }, { hp: 40 }, { bleeding: 1 }, { panic: 3 }]) {
+    const a = decide({ ...bare, escapeFails: 3, zombies: [zed(5.3)], lines: wlines, ...extra });
+    assert.equal(a.kind === 'flee' || a.kind === 'break', true, `${JSON.stringify(extra)} runs, got ${a.kind}`);
+    assert.equal(a.why, 'stuck:unarmed', JSON.stringify(extra));
+    assert.equal(a.handoff, true, JSON.stringify(extra));
+    assert.equal(a.stuck, 3);
+  }
+});
+
+test('stuck: the walk on takes another heading than the run that did not work', () => {
+  const base = { ...bare, endurance: 0, escapeFails: 3, zombies: [zed(5.3)], lines: wlines };
+  const first = decide(base);
+  assert.deepEqual([first.dx, first.dy], [-1, 0], 'straight away when nothing was tried');
+  const second = decide({ ...base, lastDir: 5 });
+  assert.ok(second.dx < 0 && second.dy > 0, `turns off the west line, got ${second.dx},${second.dy}`);
+});
+
+test('stuck: a fence that leads sideways is climbed, which the first tries would not', () => {
+  const base = { ...bare, endurance: 0, zombies: [zed(5.3)], barriers: [sideFence()] };
+  assert.notEqual(decide({ ...base, escapeFails: 2 }).kind, 'climb', 'sideways is no good for a normal escape');
+  const a = decide({ ...base, escapeFails: 3 });
+  assert.deepEqual(pick(a, ['kind', 'stance', 'why', 'target']), { kind: 'climb', stance: 'CLIMB', why: 'stuck:unarmed', target: 1 });
+  assert.equal(a.handoff, undefined);
+  // Back toward the chaser is still no good, and neither is one tried lately.
+  assert.equal(decide({ ...base, escapeFails: 3, barriers: [sideFence({ nx: 1, ny: 0, dx: 1.5, dy: 0 })] }).kind, 'flee');
+  assert.equal(decide({ ...base, escapeFails: 3, barriers: [sideFence({ failed: true })] }).kind, 'flee');
+  assert.equal(decide({ ...base, escapeFails: 3, flags: { climb: false } }).kind, 'flee');
+});
+
+test('stuck: only a small chase. Two chasers get no fight, a pack gets the normal escape', () => {
+  const two = decide({ ...bare, endurance: 1, escapeFails: 3, zombies: [zed(5), zed(6, { dy: 2 })] });
+  assert.equal(two.why, 'stuck:unarmed');
+  assert.equal(two.handoff, true, 'two is too many to shove');
+  assert.equal(two.kind, 'break');
+  const pack = decide({ ...bare, endurance: 1, escapeFails: 9, zombies: [zed(4), zed(5, { dy: 1 }), zed(6, { dy: -1 })] });
+  assert.equal(pack.why, 'pack');
+  assert.equal(pack.stuck, undefined);
+});
+
+test('stuck: an armed survivor gated by her load stands too, and one who may fight just fights', () => {
+  const heavy = decide({ endurance: 1, heavy: 2, escapeFails: 3, zombies: [zed(6)] });
+  assert.deepEqual(pick(heavy, ['kind', 'why']), { kind: 'hold', why: 'stuck:heavy' });
+  const fresh = decide({ endurance: 1, escapeFails: 3, zombies: [zed(1.3)] });
+  assert.equal(fresh.kind, 'swing', 'the tally changes nothing for a fight she takes');
+});
+
+test('stuck: Stance.params carries the new numbers', () => {
+  const n = lua.call('LocalSurvivor.Stance.params', 'normal');
+  assert.equal(n.ESCAPE_TRIES, 3);
+  assert.equal(n.STUCK_MAX, 2);
+  assert.equal(n.END_SHOVE, 0.3);
+});
+
+test('a new walking order with a chaser in range is the brain\'s way out: the flee lets it run', () => {
+  const h = body();
+  h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  for (const x of [13, 14, 15]) addZombie(h, x, 10, false);
+  h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  assert.equal(survive(h), true, 'the first look only remembers the order number');
+  assert.equal(h.get('LocalSurvivor.hudData.action'), 'BREAK CONTACT (reflex)');
+  // The bridge hands the turn back and the brain sends ENTER.
+  h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "ENTER"');
+  h.run('ISTimedActionQueue.clear(__players[0]); ISTimedActionQueue.add(ISWalkToTimedAction:new(__players[0], {}))');
+  assert.equal(survive(h), false);
+  assert.deepEqual(queue(h), ['ISWalkToTimedAction'], 'the brain\'s walk is not cut');
+  assert.ok(h.get('LocalSurvivor.reflexState.handBackUntil') > 110);
+  // The window ends.
+  h.run('LocalSurvivor.tick = 110 + LocalSurvivor.Reflex.HANDBACK_TICKS + 5');
+  assert.equal(survive(h), true);
+});
+
+test('a zombie on her ends the hand-back window, and a WAIT or a posture does not start one', () => {
+  const h = body();
+  h.run('__squares["0,10,0"] = { isFree = function() return true end }');
+  for (const x of [13, 14, 15]) addZombie(h, x, 10, false);
+  h.run('LocalSurvivor.tick = 100; LocalSurvivor.lastSeq = 5');
+  survive(h);
+  h.run('LocalSurvivor.tick = 110; LocalSurvivor.lastSeq = 6; LocalSurvivor.result.verb = "WAIT"');
+  assert.equal(survive(h), true, 'a WAIT leaves the reflex in charge');
+  assert.equal(h.get('LocalSurvivor.reflexState.handBackUntil'), undefined);
+  h.run('LocalSurvivor.tick = 120; LocalSurvivor.lastSeq = 7; LocalSurvivor.result.verb = "GOTO"');
+  assert.equal(survive(h), false, 'GOTO starts the window');
+  addZombie(h, 11.5, 10, false);
+  h.run('LocalSurvivor.tick = 130');
+  assert.equal(survive(h), true, 'one within 2 tiles gets the reflex back at once');
+});
+
+test('the snapshot carries the tally, and a loop turns into a stand in the game-facing side', () => {
+  const h = body({ ENDURANCE: 0.9 });
+  h.run('__players[0].primary = nil; __players[0].isMeleeWeaponEquipped = function() return false end');
+  addZombie(h, 15.3, 10, false);
+  h.run('LocalSurvivor.tick = 100');
+  assert.equal(h.run('return LocalSurvivor.Reflex.snapshot(__players[0]).escapeFails'), 0);
+  h.run('LocalSurvivor.reflexLog.fails = 3');
+  const snap = h.run('local s = LocalSurvivor.Reflex.snapshot(__players[0]); return { f = s.escapeFails, armed = s.armed }');
+  assert.deepEqual(snap, { f: 3, armed: false });
+  survive(h);
+  assert.equal(h.get('LocalSurvivor.hudData.action'), 'HOLD (reflex)');
+  assert.match(h.get('LocalSurvivor.hudData.thought'), /Standing to shove/);
+});

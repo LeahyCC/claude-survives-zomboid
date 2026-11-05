@@ -159,6 +159,45 @@ export function reflexByStance(lines) {
   return [...rows.values()].sort((a, b) => b.calls - a.calls || a.stance.localeCompare(b.stance));
 }
 
+// Escape loops that hit their limit, and the turns the reflex handed back to the brain
+// (docs/combat.md, "Stuck in a chase"). A loop-limit call is a reflex call line whose why starts
+// with "stuck"; its act says what she did next: climb, hold (stand and shove) or a walk on while
+// the brain was asked. Its out line, five seconds on, says whether that got her away. A hand-back
+// is a decision line with a handback field; its own outcome says whether the order worked.
+export function stuckInChase(lines, records) {
+  const list = Array.isArray(lines) ? lines : [];
+  const outs = new Map();
+  for (const l of list) if (isObj(l) && l.t === 'reflex' && l.kind === 'out') outs.set(l.id, l);
+  const next = new Map();
+  let limit = 0;
+  for (const l of list) {
+    if (!isObj(l) || l.t !== 'reflex' || l.kind !== 'call' || !String(l.why || '').startsWith('stuck')) continue;
+    limit += 1;
+    const what = l.act === 'climb' ? 'climbed' : l.act === 'hold' ? 'stood and shoved' : 'walked on and asked the brain';
+    const row = next.get(what) || { what, n: 0, outs: 0, escaped: 0 };
+    row.n += 1;
+    const o = outs.get(l.id);
+    if (o) {
+      row.outs += 1;
+      if (o.escaped) row.escaped += 1;
+    }
+    next.set(what, row);
+  }
+  const back = (Array.isArray(records) ? records : []).filter((r) => r.handback);
+  const verbs = new Map();
+  const result = { done: 0, failed: 0, other: 0 };
+  let lost = 0;
+  for (const r of back) {
+    const v = r.sent ? r.verb : 'nothing sent';
+    verbs.set(v, (verbs.get(v) || 0) + 1);
+    const res = r.outcome && r.outcome.result;
+    if (res === 'done' || res === 'failed') result[res] += 1;
+    else if (r.sent) result.other += 1;
+    lost += harm(r);
+  }
+  return { limit, next: [...next.values()].sort((a, b) => b.n - a.n), back: { n: back.length, verbs, result, lost } };
+}
+
 // How the outcomes of a set of decisions went. Failures count orders that reported; damage, chasing
 // and death count orders whose follow-up window has closed, because only those have an `after`.
 function outcomeTally(recs) {
@@ -248,11 +287,29 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
 
   line();
   line('Reflex by stance (escaped: nothing chasing within 10 and nothing within 3, five seconds on)');
-  const stances = reflexByStance((Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && since(l.at, fromMs)));
+  const inRange = (Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && since(l.at, fromMs));
+  const stances = reflexByStance(inRange);
   if (!stances.length) line('  No reflex lines logged.');
   for (const r of stances) {
     const why = [...r.why].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${w} ${n}`).join(', ');
     line(`  ${r.stance}: ${r.calls} calls (${why || '-'}); escaped ${r.escaped} of ${r.outs} (${pct(r.escaped, r.outs)}), ${r.hits} hits, ${Math.round(r.hpLost)} hp lost, ${r.kills} kills`);
+  }
+
+  line();
+  line('Stuck in a chase (an escape loop hit its limit, or the reflex held the brain off for a minute)');
+  const stuck = stuckInChase(inRange, records);
+  if (!stuck.limit) {
+    line('  No escape loop hit its limit.');
+  } else {
+    const then = stuck.next.map((r) => `${r.what} ${r.n} (escaped ${r.escaped} of ${r.outs})`).join(', ');
+    line(`  Loop limit hit ${stuck.limit} times. Then: ${then}.`);
+  }
+  if (!stuck.back.n) {
+    line('  The brain was never handed a turn back.');
+  } else {
+    const b = stuck.back;
+    const verbs = [...b.verbs].sort((x, y) => y[1] - x[1]).map(([v, n]) => `${v} ${n}`).join(', ');
+    line(`  Turns handed back to the brain ${b.n}: ${verbs}. Orders done ${b.result.done}, failed ${b.result.failed}, replaced or unfinished ${b.result.other}; ${Math.round(b.lost)} hp lost during and after.`);
   }
 
   line();

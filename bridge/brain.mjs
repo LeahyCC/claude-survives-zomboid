@@ -2,6 +2,8 @@
 // this decides who gets the turn and what the order line says.
 //
 //   hold     a chaser inside 10 or a seen zombie inside 3: the reflex owns it, no order
+//   handback the reflex has held it too long without getting away (chase.mjs): the model
+//            picks from a short escape menu instead of the hold
 //   asleep   no order, a MOVE or GOTO would wake him into the dark
 //   pending  the last order is not picked up yet
 //   skill    a long job is running and nothing that matters changed
@@ -10,7 +12,7 @@
 
 import { holdReason, running, needs, chasing, isAsleep } from './senses.mjs';
 import { memoryStats } from './memory.mjs';
-import { buildOptions, optionLines, runningKey } from './options.mjs';
+import { buildOptions, escapeOptions, optionLines, runningKey } from './options.mjs';
 import { decidePolicy } from './policy.mjs';
 import { selectRules } from './playbook.mjs';
 import { activeLessons } from './lessons.mjs';
@@ -63,6 +65,7 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   const blocked = extra.blocked || [];
   if (blocked.length) parts.push(`NOT ON THE MENU NOW:\n${blocked.map((r) => `- ${r}`).join('\n')}`);
   if (extra.pattern) parts.push(extra.pattern);
+  if (extra.escape) parts.push(extra.escape);
   if (voice && voice.length) {
     parts.push(`A voice only you can hear says: ${voice.map((v) => `"${String(v).slice(0, 200)}"`).join(' ')} Answer it in the thought, one short sentence.`);
   }
@@ -74,18 +77,22 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
 // ctx: { now, last (a snapshot), pending ({ seq, at }), voice (lines), history (the tracker's orders
 //        with their results), run (the stats run id, so another character's orders are left out),
 //        plan (the planner's), lessons (every stored lesson), nudges (indexed past nudges, or
-//        nothing to leave the examples out) }
+//        nothing to leave the examples out),
+//        handBack ({ why, ms } from chase.mjs: the reflex has had this chase too long) }
 export function planTurn(p, mem, ctx = {}) {
   const now = ctx.now ?? Date.now();
   if (!p) return { kind: 'none', why: 'no senses' };
   if (p.dead) return { kind: 'dead', why: 'dead' };
   const hold = holdReason(p);
-  if (hold) return { kind: 'hold', why: hold };
+  // A hand-back only means something while the hold is on.
+  const back = hold && ctx.handBack ? ctx.handBack : null;
+  if (hold && !back) return { kind: 'hold', why: hold };
   if (isAsleep(p, mem)) return { kind: 'asleep', why: 'asleep' };
   const pending = ctx.pending;
   if (pending && num(p.lastSeq) < pending.seq && now - pending.at < PENDING_MS) {
     return { kind: 'pending', why: `order ${pending.seq} not picked up yet` };
   }
+  if (back) return planHandBack(p, mem, ctx, now, hold, back);
   const options = buildOptions(p, mem, { now, plan: ctx.plan });
   const busy = running(p);
   const voice = ctx.voice || [];
@@ -124,11 +131,29 @@ export function planTurn(p, mem, ctx = {}) {
     user: userMessage(p, mem, options, rules, voice, react.recent, withExamples(options)) };
 }
 
+// The turn the reflex handed back (chase.mjs). The menu is the escape menu. The policy is
+// skipped, because a need does not end a chase. A running job does not end the turn either: it
+// is what the flee keeps cancelling, so a pick that matches it is sent again (force).
+function planHandBack(p, mem, ctx, now, hold, back) {
+  const options = escapeOptions(p, mem, { now });
+  const react = reactionContext({ history: ctx.history, mem, p, now, run: ctx.run, options });
+  const secs = Math.round(num(back.ms) / 1000);
+  const escape = `The reflex has had this chase for ${secs} seconds (${hold}) and running is not shaking it. Pick a way to end it.`;
+  const extra = { plan: ctx.plan, lessons: [], blocked: [], pattern: '', escape, examples: [] };
+  return {
+    kind: 'ask', why: `hand-back: ${back.why}`, handBack: { why: back.why, ms: num(back.ms) }, force: true,
+    options, rules: [], lessons: [],
+    user: userMessage(p, mem, options, [], ctx.voice || [], react.recent, extra),
+  };
+}
+
 // The option a decided turn sends, or null when the running job should go on. Sending the
-// running job again would restart a skill, so the same job counts as "keep".
-export function resolveChoice(p, mem, options, id) {
+// running job again would restart a skill, so the same job counts as "keep". force skips that:
+// a handed-back turn restarts the walk on purpose.
+export function resolveChoice(p, mem, options, id, force = false) {
   const option = options.find((o) => o.id === id);
   if (!option || !option.verb) return null;
+  if (force) return option;
   const busy = running(p);
   if (!busy) return option;
   const job = runningKey(p, mem, options);
@@ -139,7 +164,7 @@ export function resolveChoice(p, mem, options, id) {
 export function orderLine(seq, option, thought, say = '') {
   return intentLine(seq, {
     type: option.verb, dx: option.a ?? 0, dy: option.b ?? 0, say, thought, goal: option.label, target: option.target || '',
-    // An option may carry a fight posture for the reflex. None sets one yet: that is its own card.
+    // An option may carry a fight posture for the reflex. Only the escape menu sets one (options.mjs).
     posture: option.posture || '',
   });
 }
