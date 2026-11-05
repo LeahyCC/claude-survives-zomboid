@@ -121,6 +121,31 @@ With examples on (the default, `PZ_EXAMPLES=0` turns them off), up to two of you
 
 The screenshot is taken from the screen, so anything on top of the game window shows up in it.
 
+## Streaming with the inner voice
+
+The inner voice shows in the game for viewers, so they do not need the /mind page.
+
+1. Start the bridge as usual. The inner voice model runs on the CPU and a line comes about every 30 seconds at most.
+2. Start the game. Her voice shows as a teal bubble over her head and in the "Inner voice" panel, top right (last 3 lines, newest on top).
+3. In OBS, capture the game window as usual. The panel is drawn by the game, so it is in the capture. Nothing else to add.
+4. Before going live, make the filter file in the Lua folder, next to `local_intent.txt`:
+
+```
+New-Item "$env:USERPROFILE/Zomboid/Lua/ls_voice_clean.txt" -ItemType File
+```
+
+Slurs and the worst words are starred in the game display from then on. Delete the file to turn it off. It takes effect within a second, no restart. Check a few lines yourself: it is a short list.
+
+Switches:
+
+| What | How |
+|---|---|
+| Hide or show bubble and panel | `;` in the game |
+| Hide both for good | make `ls_voice_off.txt` in the Lua folder |
+| Star out slurs | make `ls_voice_clean.txt` in the Lua folder |
+
+The panel sits at the top right. If your overlay covers that corner, change `Voice.MARGIN` or move the overlay.
+
 ## Live runs, 2026-11-04
 
 Four runs of about six minutes each with the menu brain on gemma4:12b. Same PC, frame cap 240.

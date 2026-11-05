@@ -94,8 +94,16 @@ function ISUIElement:new(x, y, w, h)
 end
 function ISUIElement:initialise() end
 function ISUIElement:addToUIManager() self.added = true end
+function ISUIElement:setX(v) self.x = v end
+function ISUIElement:setWidth(v) self.width = v end
+function ISUIElement:setHeight(v) self.height = v end
 for _, name in ipairs({ "drawText", "drawTextRight", "drawRect", "drawRectBorder" }) do
   ISUIElement[name] = function() end
+end
+
+-- Text is 9 pixels a character at any size, so a test can predict where a line wraps.
+function getTextManager()
+  return { MeasureStringX = function(_, _, s) return #s * 9 end, getFontHeight = function() return 20 end }
 end
 
 function getCore()
