@@ -20,6 +20,12 @@ soak test: 2 to 3 hours unattended, auto respawn on death
 
 This loop comes first. Features we guess at come after it.
 
+## Where it stands, 2026-11-05
+
+Feature freeze for the first soak test (`node tools/soak.mjs`, 3 hours, normal loot). Built since the plan above: decision log and nudge panel, night fast forward, rich loot for test runs, a death recorder with causes, reactions (the brain sees how its last choices went), a reflex rebuilt around stances with its own log, loot order and guns as gear, a bigger planner on the CPU, pepe as her inner voice, and the Jev critic. Most of the newest pieces have passed their tests but have not yet seen a real fight or death. Known gap: the reflex probably cannot make her sprint (the game resets it from the keyboard).
+
+Next: read the soak report, fix the top 2 killers, run again.
+
 ## Order of work
 
 1. Decision log with outcomes, and the nudge panel on /mind (card in progress).
