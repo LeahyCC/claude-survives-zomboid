@@ -70,6 +70,7 @@ CharacterStat = nameTable()
 Fluid = nameTable()
 IsoFlagType = nameTable()
 MoodleType = nameTable()
+ItemBodyLocation = nameTable()
 ItemTag = nameTable()
 BodyPartType = { ToString = function(t) return tostring(t) end }
 
@@ -111,7 +112,8 @@ end
 for _, name in ipairs({
   "ISWalkToTimedAction", "ISEatFoodAction", "ISDrinkFluidAction", "ISEquipWeaponAction",
   "ISInventoryTransferAction", "ISOpenCloseDoor", "ISSmashWindow", "ISClimbThroughWindow",
-  "ISOpenCloseCurtain",
+  "ISOpenCloseCurtain", "ISTakeWaterAction", "ISApplyBandage", "ISDisinfect", "ISWearClothing",
+  "ISUnequipAction", "ISRemoveGlass", "ISSitOnGround", "ISLockDoor", "ISOpenCloseWindow", "ISToggleLightAction",
 }) do actionClass(name) end
 
 ISTimedActionQueue = {}
@@ -129,8 +131,64 @@ function ISTimedActionQueue.clear(p)
   ISTimedActionQueue.getTimedActionQueue(p).queue = {}
 end
 
-luautils = { walkAdj = function() end }
-function instanceof() return false end
+luautils = { walkAdj = function() return true end }
+-- A stub object says what it is with __class. Anything else is no Java class.
+function instanceof(o, name) return type(o) == "table" and o.__class == name end
+
+AdjacentFreeTileFinder = {
+  isTileOrAdjacent = function(a, b)
+    if not a or not b then return false end
+    return math.abs(a:getX() - b:getX()) <= 1 and math.abs(a:getY() - b:getY()) <= 1 and a:getZ() == b:getZ()
+  end,
+}
+
+-- Vanilla menu handlers. Each records the call in __menuCalls and queues a stand-in action, the
+-- way the real ones walk there and queue the action. A test object with a field the handler
+-- changes (open, curtainOpen, on, lockedKey) is changed at once, as if the action had run.
+__menuCalls = {}
+local function menuCall(name, pn, ...)
+  table.insert(__menuCalls, { name = name, args = { ... } })
+  local p = getSpecificPlayer(pn)
+  if p then ISTimedActionQueue.add({ Type = "Menu:" .. name, args = { p } }) end
+end
+ISWorldObjectContextMenu = {
+  onDrink = function(_, obj, pn) menuCall("onDrink", pn, obj) end,
+  onTakeWater = function(_, obj, list, _, pn) menuCall("onTakeWater", pn, obj, list) end,
+  onOpenCloseDoor = function(_, door, pn) door.open = false; menuCall("onOpenCloseDoor", pn, door) end,
+  onOpenCloseCurtain = function(_, c, pn) c.open = false; c.curtainOpen = false; menuCall("onOpenCloseCurtain", pn, c) end,
+  onOpenCloseWindow = function(_, w, pn) w.open = false; menuCall("onOpenCloseWindow", pn, w) end,
+  onLockDoor = function(_, pn, door) door.lockedKey = true; menuCall("onLockDoor", pn, door) end,
+  onToggleLight = function(_, l, pn) l.on = false; menuCall("onToggleLight", pn, l) end,
+  onSleepWalkToComplete = function(pn, bed)
+    table.insert(__menuCalls, { name = "onSleepWalkToComplete", args = { bed } })
+    local p = getSpecificPlayer(pn)
+    if p and __sleepAllowed then p.asleep = true end
+  end,
+}
+ISInventoryPaneContextMenu = {
+  eatItem = function(item, pct, pn, recipe, eatPct) menuCall("eatItem", pn, item, pct, recipe, eatPct) end,
+  wearItem = function(item, pn) menuCall("wearItem", pn, item) end,
+  OnNewCraft = function(item, recipe, pn, all) menuCall("OnNewCraft", pn, item, recipe) end,
+  getEatingMask = function() return false end,
+  transferIfNeeded = function() end,
+  getContainers = function() return {} end,
+}
+
+-- Craft recipes by name, and which ones the game would let him do now.
+__recipes = {}
+__canCraft = {}
+function getScriptManager()
+  return { getCraftRecipe = function(_, name) return __recipes[name] end }
+end
+HandcraftLogic = {
+  new = function()
+    local logic = {}
+    function logic:setContainers() return true end
+    function logic:setRecipeFromContextClick(r) self.recipe = r end
+    function logic:canPerformCurrentRecipe() return self.recipe ~= nil and __canCraft[self.recipe.name] == true end
+    return logic
+  end,
+}
 
 -- ---------- world ----------
 __zombies = {}
@@ -186,7 +244,9 @@ function __makePlayer(opts)
   function p:getZ() return self.z end
   function p:isDead() return self.dead end
   function p:Say(text) table.insert(self.said, text) end
-  function p:getInventory() return { getItems = function() return self.__items end } end
+  function p:getInventory()
+    return { getItems = function() return self.__items end, haveThisKeyId = function() return nil end }
+  end
   function p:setSneaking(v) self.sneaking = v end
   function p:isOutside() return true end
   function p:getSquare() return opts.square end
@@ -194,6 +254,8 @@ function __makePlayer(opts)
     return {
       get = function(_, stat) return (opts.stats or {})[stat] or 0 end,
       getNumVisibleZombies = function() return opts.visible or 0 end,
+      getNumChasingZombies = function() return opts.chasing or 0 end,
+      getNumVeryCloseZombies = function() return 0 end,
     }
   end
   function p:getBodyDamage()
@@ -217,6 +279,12 @@ function __makePlayer(opts)
   function p:isMeleeWeaponEquipped() return false end
   function p:faceLocation() end
   function p:faceThisObject() end
+  function p:isAsleep() return self.asleep or false end
+  function p:setVariable() end
+  function p:getLastHourSleeped() return opts.lastSlept or -100 end
+  function p:getCurrentSquare() return opts.square end
+  function p:isSitOnGround() return self.sitting or false end
+  function p:isEquippedClothing() return false end
   return p
 end
 
@@ -252,6 +320,16 @@ function __makeItem(opts)
   function it:getAlcoholPower() return opts.alcoholPower or 0 end
   function it:IsInventoryContainer() return opts.items ~= nil end
   function it:getInventory() return { getItems = function() return __javaList(opts.items or {}) end } end
+  function it:getType() return (it:getFullType():gsub("^.-%.", "")) end
+  function it:getID() return opts.id or 0 end
+  function it:getBandagePower() return opts.power or 0 end
+  function it:isWorn() return opts.worn or false end
+  function it:getCapacity() return opts.cap or 0 end
+  function it:getWeightReduction() return opts.red or 0 end
+  function it:canBeEquipped() return opts.back and ItemBodyLocation.BACK or nil end
+  function it:getOffAgeMax() return opts.offMax or 1000000000 end
+  function it:getAge() return opts.age or 0 end
+  function it:isFrozen() return opts.frozen or false end
   function it:getFluidContainer()
     local f = opts.fluid
     if not f then return nil end
@@ -259,6 +337,8 @@ function __makeItem(opts)
     return {
       isEmpty = function() return amount <= 0 end,
       isInputLocked = function() return f.locked or false end,
+      isFull = function() return amount >= (f.cap or 1) end,
+      canAddFluid = function() return not f.locked end,
       contains = function(_, fluid)
         if fluid == "Water" then return (f.water or 0) > 0 and not f.tainted end
         if fluid == "TaintedWater" then return f.tainted or false end
@@ -300,6 +380,7 @@ function __makeBodyPart(opts)
   function b:haveGlass() return opts.glass or false end
   function b:bandaged() return opts.bandaged or false end
   function b:isBandageDirty() return opts.dirty or false end
+  function b:getAlcoholLevel() return opts.alcohol or 0 end
   return b
 end
 
@@ -351,7 +432,7 @@ function __makeBuilding(opts)
   function def:getRooms()
     local defs = {}
     for _, r in ipairs(opts.rooms or {}) do
-      table.insert(defs, { getIsoRoom = function() return r end })
+      table.insert(defs, { getIsoRoom = function() return r end, getZ = function() return 0 end })
     end
     return __javaList(defs)
   end
