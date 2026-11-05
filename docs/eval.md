@@ -300,7 +300,7 @@ Why the old guess said `unknown`: the mod's dead percept was rarely seen. The ne
 
 Without a record (an old mod, or the bridge started late) the same guesser reads the bridge's own last 10 percepts. That source is thinner: no reflex mode, no infection. `death.source` says which one: `mod` or `bridge`.
 
-A zombie was on her when one was within 3 tiles in any of the last 5 samples, or when a chaser was about and she lost 10 hp or more in those 5 seconds. Checked in this order:
+A zombie was on her when one was within 3 tiles in any of the last 5 samples, or when a chaser was about and she lost 10 hp or more in those 5 seconds, or when a chaser was inside 10 tiles and she lost 5 hp or more across the whole ring (a bite that keeps bleeding after the zombie is behind her). Checked in this order:
 
 ```
 fell                                 z dropped and 10 hp went with it, no zombie on her
@@ -310,10 +310,11 @@ a zombie was on her:
   bitten in a fight                    the reflex fought in the last 3 samples
   bitten while busy                    no reflex, and the job was SEARCH, LOOT, DRINK, EAT, SLEEP, ...
   bitten                               none of those
-infection                            the infection flag is set and no zombie was on her
+infection                            the infection flag is set, no zombie was on her and nothing was bleeding
+                                     (the flag is set by the first bite and never clears, so it is the last resort)
 thirst                               thirst 0.95 or more
 starved                              hunger 0.95 or more
-bled out                             bleeding in the last 5 samples
+bled out                             bleeding in the last 5 samples (also when the infection flag is set)
 unknown                              nothing fits, or there were no samples
 ```
 
