@@ -46,7 +46,7 @@ None of the verbs read `A`, `B` or `TARGET` yet.
 
 ### DRINK
 
-1. A carried bottle with clean water (bags too): drink with `ISDrinkFluidAction`. The amount is vanilla's thirst x 2 litres, rounded up to a quarter, half or all of the bottle. A face mask comes off first and goes back on after (`getEatingMask`).
+1. A carried bottle with at least `Core.WATER_MIN` (0.05 L) of clean water (bags too): drink with `ISDrinkFluidAction`. A cup with a few drops left is not water. If the drink ends and nothing left the container, DRINK fails `nothing came out of <bottle>`, and the brain keeps DRINK off the menu for 5 minutes. Before this she sipped an empty cup over and over. The amount is vanilla's thirst x 2 litres, rounded up to a quarter, half or all of the bottle. A face mask comes off first and goes back on after (`getEatingMask`).
 2. No bottle: the nearest clean water source in this building, through `ISWorldObjectContextMenu.onDrink`. It walks there, takes the mask off and drinks with `ISTakeWaterAction`.
 
 Sources come from the place scan (`bldgMemo[id].waterObjs`). Before the scan reaches the building, squares within 8 tiles in the same building are read. A source needs 1 unit or more and `isTaintedWater()` false. Tainted water is never used.
@@ -54,6 +54,7 @@ Sources come from the place scan (`bldgMemo[id].waterObjs`). Before the scan rea
 | status | why |
 |---|---|
 | done | `drank from <bottle>` or `drank from the tap` |
+| failed | `nothing came out of <bottle>` |
 | failed | `no water`, `cannot reach water` |
 
 ### FILL

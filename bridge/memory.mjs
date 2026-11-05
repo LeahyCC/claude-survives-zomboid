@@ -157,7 +157,9 @@ export function updateMemory(mem, p, now = Date.now()) {
 export function blockedWhy(mem, key, now = Date.now()) {
   const f = mem.fails[key];
   if (!f) return '';
-  const wait = RETRY_MS[f.why] ?? DEFAULT_RETRY_MS;
+  // The mod names the container in this why ("nothing came out of Mug"), so match its start.
+  const dry = String(f.why || '').startsWith('nothing came out') ? 5 * 60_000 : undefined;
+  const wait = RETRY_MS[f.why] ?? dry ?? DEFAULT_RETRY_MS;
   if (now - num(f.at) < wait) return f.why || 'failed';
   delete mem.fails[key];
   return '';

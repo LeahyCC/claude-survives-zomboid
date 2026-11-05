@@ -29,7 +29,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `zDir` | string | Compass direction to it (`N`, `SE`, `HERE`, `-`). | same |
 | `zdx` `zdy` | int | Offset to it. +x is east, +y is south. | same |
 | `foods` | int | Edible food in the main inventory (not in bags). Sealed cans do not count. | `Core.isEdible` |
-| `waters` | int | Containers of clean water in the main inventory. | `Core.isWaterItem` |
+| `waters` | int | Containers holding at least 0.05 L of clean water in the main inventory. | `Core.isWaterItem` |
 | `bldgDir` `bldgDist` | string, int | Direction and Manhattan distance to the nearest building square within 20 tiles. `none` and -1 if none. Refreshed every 120 ticks. | `Sense.scanBuildings` |
 | `weapon` | string | Melee weapon in the main hand, or `none`. A pen, fork or broken weapon reads `none`: it is not a weapon. | `p:getPrimaryHandItem()` |
 | `items` | string | Names of the first 12 inventory items. | `getDisplayName()` |

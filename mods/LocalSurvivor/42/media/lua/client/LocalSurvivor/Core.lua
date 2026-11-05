@@ -186,10 +186,14 @@ function Core.isFoodItem(it)
   if not food then pcall(function() if it:getCategory() == "Food" then food = true end end) end
   return food
 end
+-- Under this a container is as good as empty. A cup with a few drops left used to count as
+-- water, so the thirst rule had her sip it over and over without her thirst going down.
+Core.WATER_MIN = 0.05
 function Core.isWaterItem(it)
   local ok, water = pcall(function()
     local fc = it:getFluidContainer()
-    if fc and (not fc:isEmpty()) and fc:contains(Fluid.Water) and not fc:contains(Fluid.TaintedWater) then return true end
+    if fc and fc:getSpecificFluidAmount(Fluid.Water) >= Core.WATER_MIN and fc:contains(Fluid.Water)
+      and not fc:contains(Fluid.TaintedWater) then return true end
     return false
   end)
   return ok and water or false

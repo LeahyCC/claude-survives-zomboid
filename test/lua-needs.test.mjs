@@ -675,3 +675,19 @@ test('REST with a zombie chasing fails', () => {
   order(lua, '1|REST|0|0|||');
   assert.equal(result(lua).why, 'zombie');
 });
+
+test('a cup with a few drops left is not water', () => {
+  const lua = body('items = { __makeItem({ type = "Base.Mugl", name = "Mug", fluid = { water = 0.01 } }) }');
+  order(lua, '1|DRINK|0|0|||');
+  assert.deepEqual(result(lua), { seq: 1, verb: 'DRINK', status: 'failed', why: 'no water' });
+});
+
+test('a drink that takes nothing out of the cup fails instead of reporting done', () => {
+  const lua = body('items = { __makeItem({ type = "Base.Mugl", name = "Mug", fluid = { water = 0.3, dry = true } }) }');
+  order(lua, '1|DRINK|0|0|||');
+  assert.deepEqual(queue(lua), ['ISDrinkFluidAction']);
+  finish(lua);
+  step(lua);
+  step(lua);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'DRINK', status: 'failed', why: 'nothing came out of Mug' });
+});

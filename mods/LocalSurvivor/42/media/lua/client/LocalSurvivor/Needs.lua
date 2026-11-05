@@ -846,6 +846,8 @@ local skills = Needs.skills
 
 skills.DRINK = function(p, job)
   if job.drank then return Needs.done(job, job.drank) end
+  -- The drink ended but nothing left the container: say so, so the brain stops sending DRINK.
+  if job.dry then return Needs.fail(job, job.dry) end
   local pn = playerNum(p)
   local bottle = Needs.waterBottle(p)
   if bottle then
@@ -858,7 +860,12 @@ skills.DRINK = function(p, job)
     if mask then ISTimedActionQueue.add(ISWearClothing:new(p, mask, 50)) end
     local label = "drank from " .. itemName(bottle)
     aim(job, itemName(bottle))
-    if Needs.queued(p, job, nil, function() job.drank = label end) then
+    local function finished()
+      local after = amount
+      pcall(function() after = bottle:getFluidContainer():getAmount() end)
+      if after < amount - 0.001 then job.drank = label else job.dry = "nothing came out of " .. itemName(bottle) end
+    end
+    if Needs.queued(p, job, nil, finished) then
       think(job, "Water. Drinking.")
       return
     end

@@ -359,3 +359,11 @@ test('the menu with the new options stays legal, short and ends in wait', () => 
   for (const o of opts) assert.equal('d' in o, false, 'no scratch fields leak into the menu');
   assert.equal(planTurn(busy.percept, busy.memory, { now: NOW, plan: busy.plan }).policy.rule, 'bleeding');
 });
+
+test('a dry drink keeps DRINK off the menu for 5 minutes', async () => {
+  const { emptyMemory, blockedWhy } = await import('./memory.mjs');
+  const mem = emptyMemory();
+  mem.fails.DRINK = { why: 'nothing came out of Mug', at: 0 };
+  assert.equal(blockedWhy(mem, 'DRINK', 4 * 60_000), 'nothing came out of Mug');
+  assert.equal(blockedWhy(mem, 'DRINK', 6 * 60_000), '');
+});

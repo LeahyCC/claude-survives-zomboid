@@ -381,6 +381,7 @@ function __makeItem(opts)
   function it:getOffAgeMax() return opts.offMax or 1000000000 end
   function it:getAge() return opts.age or 0 end
   function it:isFrozen() return opts.frozen or false end
+  it.__fluid = opts.fluid
   function it:getFluidContainer()
     local f = opts.fluid
     if not f then return nil end
@@ -572,6 +573,12 @@ end
 -- (the last walk wins), then the queue empties.
 function __arrive(p)
   for _, a in ipairs(ISTimedActionQueue.getTimedActionQueue(p).queue) do
+    -- A finished drink takes water out, as in the game. fluid.dry = true models a drink that
+    -- takes nothing out.
+    if a.Type == "ISDrinkFluidAction" and type(a.args[2]) == "table" and a.args[2].__fluid then
+      local f = a.args[2].__fluid
+      if not f.dry then f.water = math.max(0, (f.water or 0) - (tonumber(a.args[3]) or 1) * (f.water or 0)) end
+    end
     if a.Type == "ISWalkToTimedAction" and type(a.args[2]) == "table" then
       local sq = a.args[2]
       p.x, p.y, p.z, p.sq = sq:getX() + 0.5, sq:getY() + 0.5, sq:getZ(), sq
