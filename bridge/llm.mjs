@@ -26,6 +26,10 @@ const FORMAT = {
 export const BACKEND = (env.PZ_BACKEND || 'ollama').toLowerCase();
 export const MODEL = env.PZ_MODEL || env.OLLAMA_MODEL || 'gemma4:12b';
 const TIMEOUT = Number(env.PZ_TIMEOUT || 60000);
+// One context size for every call. Ollama reloads the model when num_ctx changes between
+// requests, so the planner and the menu turns using different sizes cost a reload each switch.
+// 8192 fits the planner's prompt plus its thinking.
+const NUM_CTX = Number(env.PZ_NUM_CTX || 8192);
 const BASE = () => env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // Unloading and reloading a 12B model costs seconds the game does not wait for.
 export const KEEP_ALIVE = env.PZ_KEEP_ALIVE || '30m';
@@ -68,9 +72,10 @@ export function parseChoice(raw, ids) {
   return { choice, thought };
 }
 
-async function postJSON(url, body, label) {
+async function postJSON(url, body, label, timeout = TIMEOUT, cancel = null) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), TIMEOUT);
+  const timer = setTimeout(() => ctl.abort(), timeout);
+  if (cancel) cancel.addEventListener('abort', () => ctl.abort(), { once: true });
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -92,18 +97,44 @@ async function callOllama(prompt, model) {
     think: false,
     format: FORMAT,
     keep_alive: KEEP_ALIVE,
-    options: { temperature: 0.2, num_predict: 280, num_ctx: 4096 },
+    options: { temperature: 0.2, num_predict: 280, num_ctx: NUM_CTX },
     messages: [{ role: 'user', content: prompt }],
   }, 'ollama');
   const msg = data.message || {};
   return msg.content || msg.thinking || '';
 }
 
+// How many in-game choices are waiting on Ollama right now. The planner and the death review
+// look at this before they start, so a slow thought never queues in front of a tactical turn.
+let tacticalCalls = 0;
+export const tacticalBusy = () => tacticalCalls > 0;
+
+// The plan in progress, if any. A menu turn that arrives during a plan waits up to
+// PLAN_GRACE_MS for it, then cancels it, so a slow plan never holds a turn for long. A warm plan
+// on gemma4:12b takes 4 to 6 seconds, so most finish inside the grace; cancelling at once would
+// cut nearly every plan, since menu turns come every few seconds. A cancelled plan is asked again
+// after the usual gap.
+export const PLAN_GRACE_MS = Number(env.PZ_PLAN_GRACE || 15000);
+let planCancel = null;
+let graceTimer = null;
+function startTactical() {
+  tacticalCalls += 1;
+  const cancel = planCancel;
+  if (cancel && !graceTimer) {
+    graceTimer = setTimeout(() => { graceTimer = null; cancel.abort(); }, PLAN_GRACE_MS);
+  }
+}
+
 export async function callLLM(prompt, model = MODEL) {
   if (BACKEND !== 'ollama') {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
-  return callOllama(prompt, model);
+  startTactical();
+  try {
+    return await callOllama(prompt, model);
+  } finally {
+    tacticalCalls -= 1;
+  }
 }
 
 // One menu turn. Returns the raw reply and Ollama's own timings for the /mind page.
@@ -112,15 +143,21 @@ export async function callChoice(user, ids, model = MODEL) {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
   const started = Date.now();
-  const data = await postJSON(BASE() + '/api/chat', {
-    model,
-    stream: false,
-    think: false,
-    format: choiceSchema(ids),
-    keep_alive: KEEP_ALIVE,
-    options: { temperature: 0.2, num_predict: 96, num_ctx: 4096 },
-    messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
-  }, 'ollama');
+  startTactical();
+  let data;
+  try {
+    data = await postJSON(BASE() + '/api/chat', {
+      model,
+      stream: false,
+      think: false,
+      format: choiceSchema(ids),
+      keep_alive: KEEP_ALIVE,
+      options: { temperature: 0.2, num_predict: 96, num_ctx: NUM_CTX },
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
+    }, 'ollama');
+  } finally {
+    tacticalCalls -= 1;
+  }
   const msg = data.message || {};
   return {
     raw: msg.content || msg.thinking || '',
@@ -128,4 +165,61 @@ export async function callChoice(user, ids, model = MODEL) {
     promptTokens: Number(data.prompt_eval_count) || 0,
     outTokens: Number(data.eval_count) || 0,
   };
+}
+
+// The slow layer: the day plan and the death review. Its own model, token budget and timeout,
+// because a thought here may run for tens of seconds and the in-game choice must never wait
+// for it to be short.
+export const PLANNER_MODEL = env.PZ_PLANNER_MODEL || MODEL;
+const PLANNER_TIMEOUT = Number(env.PZ_PLANNER_TIMEOUT || 120000);
+const PLANNER_PREDICT = Number(env.PZ_PLANNER_PREDICT || 1500);
+// auto: ask for thinking and fall back for a model that refuses. off: never think.
+const PLANNER_THINK = (env.PZ_PLANNER_THINK || 'auto').toLowerCase();
+// Models Ollama said cannot think. Asked once, remembered, so the next plan does not fail twice.
+const cannotThink = new Set();
+
+export const thinkRefused = (msg) => /think/i.test(String(msg)) && /not support|unsupported|does not/i.test(String(msg));
+
+export async function callPlanner({ system, user, schema, model = PLANNER_MODEL, timeout = PLANNER_TIMEOUT }) {
+  if (BACKEND !== 'ollama') {
+    throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
+  }
+  const started = Date.now();
+  const cancel = new AbortController();
+  planCancel = cancel;
+  const send = (think) => postJSON(BASE() + '/api/chat', {
+    model,
+    stream: false,
+    think,
+    format: schema,
+    keep_alive: KEEP_ALIVE,
+    options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: NUM_CTX },
+    messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+  }, 'ollama', timeout, cancel.signal);
+  let think = PLANNER_THINK !== 'off' && !cannotThink.has(model);
+  let data;
+  try {
+    data = await send(think);
+  } catch (err) {
+    if (cancel.signal.aborted) throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true });
+    if (!think || !thinkRefused(err && err.message)) throw err;
+    cannotThink.add(model);
+    think = false;
+    try {
+      data = await send(false);
+    } catch (err2) {
+      if (cancel.signal.aborted) throw Object.assign(new Error('plan cut short by a menu turn'), { preempted: true });
+      throw err2;
+    }
+  } finally {
+    if (planCancel === cancel) {
+      planCancel = null;
+      if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
+    }
+  }
+  const msg = data.message || {};
+  // Never fall back to msg.thinking: that is reasoning text, not the JSON the schema asked for.
+  const raw = msg.content || '';
+  if (!raw) throw new Error(think ? 'empty reply (the thinking may have used up num_predict)' : 'empty reply');
+  return { raw, ms: Date.now() - started, thought: !!msg.thinking, think };
 }

@@ -8,11 +8,13 @@
 //   policy   a need that cannot wait picks the option, no model call
 //   ask      the model picks one id from the menu
 
-import { holdReason, running, needs, zombies } from './senses.mjs';
+import { holdReason, running, needs, chasing } from './senses.mjs';
 import { memoryStats } from './memory.mjs';
 import { buildOptions, optionLines, runningKey } from './options.mjs';
 import { decidePolicy } from './policy.mjs';
 import { selectRules } from './playbook.mjs';
+import { activeLessons } from './lessons.mjs';
+import { planLines } from './planner.mjs';
 import { digest } from './digest.mjs';
 import { intentLine } from './decide.mjs';
 
@@ -22,9 +24,7 @@ export const WAIT_RECHECK_MS = 8_000;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
-export function chasing(p) {
-  return zombies(p).filter((z) => z.chase).length || num(p && p.zChasing);
-}
+export { chasing };
 
 // What a busy turn compares against, saved whenever the brain decides.
 export function snapshot(p, now) {
@@ -43,9 +43,16 @@ function changedSince(p, last, now, voice, recheck = RECHECK_MS) {
   return fresh ? `new need: ${fresh}` : '';
 }
 
-export function userMessage(p, mem, options, rules, voice, recent) {
+// extra: { plan (the planner's), lessons (the ones whose trigger holds now) }
+export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   const parts = [`SITUATION:\n${digest(p, memoryStats(mem))}`];
-  if (rules.length) parts.push(`RULES FOR NOW:\n${rules.map((r) => `- ${r.text}`).join('\n')}`);
+  const plan = planLines(extra.plan);
+  if (plan) parts.push(plan);
+  const lessons = extra.lessons || [];
+  if (rules.length || lessons.length) {
+    const lines = [...rules.map((r) => r.text), ...lessons.map((l) => `Lesson from a past run: ${l.text}`)];
+    parts.push(`RULES FOR NOW:\n${lines.map((t) => `- ${t}`).join('\n')}`);
+  }
   if (recent && recent.length) parts.push(`RECENT CHOICES:\n${recent.map((r) => `- ${r}`).join('\n')}`);
   if (voice && voice.length) {
     parts.push(`A voice only you can hear says: ${voice.map((v) => `"${String(v).slice(0, 200)}"`).join(' ')} Answer it in the thought, one short sentence.`);
@@ -55,7 +62,8 @@ export function userMessage(p, mem, options, rules, voice, recent) {
   return parts.join('\n\n');
 }
 
-// ctx: { now, last (a snapshot), pending ({ seq, at }), voice (lines), recent (short strings) }
+// ctx: { now, last (a snapshot), pending ({ seq, at }), voice (lines), recent (short strings),
+//        plan (the planner's), lessons (every stored lesson) }
 export function planTurn(p, mem, ctx = {}) {
   const now = ctx.now ?? Date.now();
   if (!p) return { kind: 'none', why: 'no senses' };
@@ -67,7 +75,7 @@ export function planTurn(p, mem, ctx = {}) {
   if (pending && num(p.lastSeq) < pending.seq && now - pending.at < PENDING_MS) {
     return { kind: 'pending', why: `order ${pending.seq} not picked up yet` };
   }
-  const options = buildOptions(p, mem, { now });
+  const options = buildOptions(p, mem, { now, plan: ctx.plan });
   const busy = running(p);
   const voice = ctx.voice || [];
   let reason = '';
@@ -80,6 +88,8 @@ export function planTurn(p, mem, ctx = {}) {
     if (!reason) return { kind: 'skill', why: 'waiting, as chosen', options };
   }
   const rules = selectRules(p, mem);
+  const lessons = activeLessons(ctx.lessons, p, mem);
+  const extra = { plan: ctx.plan, lessons };
   const policy = decidePolicy(p, mem, options);
   if (policy) {
     if (busy && policy.option.verb === busy.verb) {
@@ -88,16 +98,16 @@ export function planTurn(p, mem, ctx = {}) {
     if (voice.length) {
       // The policy still decides; the model only gets a one-item menu so it can answer.
       const only = [policy.option];
-      return { kind: 'ask', why: 'policy, voice answered by the model', options: only, offered: options, rules, policy,
-        user: userMessage(p, mem, only, rules, voice, ctx.recent) };
+      return { kind: 'ask', why: 'policy, voice answered by the model', options: only, offered: options, rules, policy, lessons,
+        user: userMessage(p, mem, only, rules, voice, ctx.recent, extra) };
     }
     return { kind: 'policy', why: policy.rule, options, rules, policy };
   }
   if (busy && options.length === 1 && !voice.length) {
     return { kind: 'skill', why: `${busy.verb} running, nothing worth stopping it for`, options, touch: true };
   }
-  return { kind: 'ask', why: reason || 'free choice', options, rules,
-    user: userMessage(p, mem, options, rules, voice, ctx.recent) };
+  return { kind: 'ask', why: reason || 'free choice', options, rules, lessons,
+    user: userMessage(p, mem, options, rules, voice, ctx.recent, extra) };
 }
 
 // The option a decided turn sends, or null when the running job should go on. Sending the
