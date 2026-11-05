@@ -15,7 +15,7 @@ fast   chooser         every few seconds, one menu id
 body   Lua skills and the reflex
 ```
 
-The slow layer never blocks the fast one. It runs in the background of the bridge. It only starts when no menu turn is waiting on Ollama and no fight is on. If a menu turn needs Ollama while a plan is being written, it waits up to `PZ_PLAN_GRACE` (default 15 seconds), then the plan is cancelled. A warm plan on gemma4:12b took 3.5 to 5.3 seconds on this PC, so most finish inside the grace. Cancelling at once would cut nearly every plan, since menu turns come every few seconds. A cancelled plan is not a planner failure: the events stay pending and the plan is asked again after the usual 30 second gap.
+The slow layer holds up the fast one for 15 seconds at most. It runs in the background of the bridge. It only starts when no menu turn is waiting on Ollama and no fight is on. If a menu turn needs Ollama while a plan is being written, it waits up to `PZ_PLAN_GRACE` (default 15 seconds), then the plan is cancelled. A warm plan on gemma4:12b took 3.5 to 5.3 seconds on this PC, so most finish inside the grace. Cancelling at once would cut nearly every plan, since menu turns come every few seconds. A cancelled plan is not a planner failure: the events stay pending and the plan is asked again after the usual 30 second gap.
 
 ## The plan
 
