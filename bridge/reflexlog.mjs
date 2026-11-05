@@ -10,10 +10,13 @@ import fs from 'node:fs';
 import { parseLines } from './jsonl.mjs';
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+// call and out are a stance and what came of it. count is the crowd growing during a fight
+// (ReflexLog.countRise): the death that cost 95 hp had 35 seconds with no line at all.
+const COPIED = new Set(['call', 'out', 'count']);
 
-// One mod line as a decisions.jsonl line. The mod's t (call or out) becomes kind.
+// One mod line as a decisions.jsonl line. The mod's t (call, out or count) becomes kind.
 export function toLogLine(line, now = Date.now()) {
-  if (!isObj(line) || (line.t !== 'call' && line.t !== 'out')) return null;
+  if (!isObj(line) || !COPIED.has(line.t)) return null;
   const { t, ...rest } = line;
   return { t: 'reflex', kind: t, at: new Date(now).toISOString(), ...rest };
 }
