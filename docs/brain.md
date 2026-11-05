@@ -337,7 +337,7 @@ What the model is sent each time, kept small because it runs on a CPU:
 - The voice's own last 4 lines, so the thought carries on.
 - The order or the moment, and her state line.
 
-The summary and the 4 lines are cleared when the stats run id changes (a new character), or when the hours or kills counter goes back.
+The summary and the 4 lines are cleared when the stats run id changes (a new character), or when the hours or kills counter goes back. The moment watcher starts over too, and the old character's finds are not counted again for the new one. A death line said after the respawn speaks from the dead character's last look and lines, takes along only what happened before the death, and is not kept as the new character's memory.
 
 How it stays out of the way:
 
@@ -371,7 +371,7 @@ bridge --> Lua/local_voice.txt --> Voice.lua (twice a second, only when the text
 
 The mod shows the voice's half of the line (after the bar). The brain's half stays on /mind and in the HUD.
 
-- **Bubble.** `addLineChatElement` on the player, in teal. It is overhead text only: no chat window entry and no world sound. Shout and Callout are never used, those draw zombies. If the game fades the bubble before 7 seconds, it is said again until the hold is over. Lines over 140 characters are cut for the bubble. No bubble once she is dead.
+- **Bubble.** `addLineChatElement` on the player, in teal. It is overhead text only: no chat window entry and no world sound. Shout and Callout are never used, those draw zombies. Each line is said once and the game decides how long the bubble stays (ChatElement is not open to Lua in 42.21, so it cannot be asked); the panel keeps the line on screen. Lines over 140 characters are cut for the bubble. No bubble once she is dead.
 - **Panel.** Titled "Inner voice", top right, medium font, a dark half clear background, word wrapped, the newest line white and the older two dimmer. It draws nothing until the first line arrives. The HUD is bottom left, so they do not overlap.
 - **First read.** The first read only learns what the file already held, so a line left from the last run is not shown.
 - **Off.** `;` toggles both. A file named `Zomboid/Lua/ls_voice_off.txt` (any content) turns both off and wins over the key. Default on. The HUD key line shows the state.

@@ -229,6 +229,6 @@ The mod also reads `local_voice.txt` (the inner voice, one line, written by the 
 
 ## Checked and unchecked
 
-The voice display calls (`addLineChatElement`, `getChatElement`, `IsSpeaking`, `getTextManager`, `MeasureStringX`, `getFontHeight`, `Keyboard.KEY_SEMICOLON`) were checked the same way. How long the game keeps its own bubble is not checked yet.
+The voice display calls (`addLineChatElement`, `getTextManager`, `MeasureStringX`, `getFontHeight`, `Keyboard.KEY_SEMICOLON`) were checked the same way. `getChatElement():IsSpeaking()` looked fine in the jar but throws in game: ChatElement is not exposed to Lua.
 
 Every Java method above was checked against the 42.21 jar with `node tools/pz-api.mjs`, and enum names with `node tools/pz-consts.mjs`. What they return in a live game (for example whether `getBuildingList()` covers every loaded building, or whether `getWaterSources()` lists every sink) is not checked yet.

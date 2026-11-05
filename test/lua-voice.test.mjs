@@ -153,19 +153,17 @@ test('a new line makes one bubble, in the voice colour call, not a shout', () =>
   assert.deepEqual(lua.run('return __players[0].said'), [], 'no Say, which could log or carry');
 });
 
-test('the bubble is said again if the game faded it before about 7 seconds', () => {
+test('each line is said once: the game cannot be asked whether its bubble is still up', () => {
   const lua = setup();
   primed(lua);
+  lua.run('__players[0].getChatElement = function() error("ChatElement is not a Lua table in 42.21") end');
   file(lua, 'hold me');
   poll(lua, 30);
   assert.equal(bubbles(lua).length, 1);
-  poll(lua, 60); // still speaking
-  assert.equal(bubbles(lua).length, 1);
   lua.run('__players[0].speaking = false');
   poll(lua, 90);
-  assert.equal(bubbles(lua).length, 2, 'faded early, said again');
-  poll(lua, 30 + lua.get(`${V}.HOLD`)); // the hold is over
-  assert.equal(bubbles(lua).length, 2, 'not after the hold');
+  poll(lua, 30 + lua.get(`${V}.HOLD`));
+  assert.equal(bubbles(lua).length, 1, 'never said again');
 });
 
 test('the bubble hold is 6 to 8 seconds of 60 a second ticks', () => {

@@ -180,15 +180,9 @@ local function bubbleText(st)
   return shortBubble(text)
 end
 
--- The game decides how long its own bubble lives. If it faded before our hold is over, say it
--- again, so the line stays up for about HOLD ticks. A longer game bubble is left alone.
-local function keepBubble(p, tick)
-  local st = LS.voice
-  if st.bubble == "" or tick >= st.bubbleUntil then return end
-  local speaking = nil
-  pcall(function() speaking = p:getChatElement():IsSpeaking() end)
-  if speaking == false then showBubble(p, bubbleText(st)) end
-end
+-- The game decides how long its own bubble lives, and it cannot be asked: ChatElement is not
+-- exposed to Lua in 42.21 (IsSpeaking threw "index of non-table" on every poll in the first
+-- live run). So each line is said once, and the corner panel keeps it on screen.
 
 -- ---------- the poll ----------
 
@@ -219,7 +213,6 @@ function Voice.poll(p, tick)
   else
     st.primed = true
   end
-  if Voice.visible() and p then keepBubble(p, tick) end
 end
 
 -- ---------- the panel ----------
