@@ -63,7 +63,17 @@ Two runs per scenario is a small sample. A single scenario flipping between runs
 - Jev is shown the situation text the critic sends (the digest and her last orders), not the playbook rules, the day plan, the lessons or the examples from nudges. So this scores the outside view, not the whole prompt. A lower score than gemma4:12b can mean the missing rules, not a weaker judge.
 - It costs about 470 input tokens a call, at $0.042 per million. A full run at `--n 3` is under a cent.
 - A call that fails or returns a reply that fails the checks counts as a bad reply.
-- There is no run of it in this file yet. The first one is for after the key is set on this PC.
+
+First run, 2026-11-05, `--backend jev --n 2`, 39 scenarios, against gemma4:12b's run on the same scenarios:
+
+```
+                accepted   wrong   other   mean
+gemma4:12b      43 / 48      2       3     450 ms
+Jev (1.14)      35 / 48      9       4     116 ms
+```
+
+- Jev is about 4 times faster and less accurate. It sees only the critic's situation text, not the playbook rules or the blocked options, so it went back to failed houses (`retry-failed-house`, `two-houses-failed-pick-third`).
+- It got two of gemma's standing misses right: `winded-no-chase` (rest) and `can-with-opener`. They are wrong in different places, which is what the critic needs. gemma stays the brain.
 
 ## Latest run: gemma4:12b, 39 scenarios, guns and a hand-picked weapon
 
