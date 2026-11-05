@@ -119,6 +119,8 @@ let planCancel = null;
 let graceTimer = null;
 function startTactical() {
   tacticalCalls += 1;
+  // The peanut gallery is the lowest priority there is: it stops the moment a menu turn needs the model.
+  cancelCommentary();
   const cancel = planCancel;
   if (cancel && !graceTimer) {
     graceTimer = setTimeout(() => { graceTimer = null; cancel.abort(); }, PLAN_GRACE_MS);
@@ -287,6 +289,7 @@ async function planWith({ system, user, schema, model = PLANNER_MODEL, timeout =
   const started = Date.now();
   const cancel = new AbortController();
   planCancel = cancel;
+  cancelCommentary();
   const send = async (think) => {
     try {
       const data = await postJSON(BASE() + '/api/chat', {
@@ -330,5 +333,74 @@ async function planWith({ system, user, schema, model = PLANNER_MODEL, timeout =
       planCancel = null;
       if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
     }
+  }
+}
+
+// The commentary model (bridge/commentator.mjs). Meme lines for the log and a panel on /mind, never
+// an input to the brain. It runs on the CPU, with the shared num_ctx, so it takes no VRAM from the
+// game and does not make Ollama reload the menu model. One call at a time; a menu turn or a plan
+// aborts it (startTactical and planWith call cancelCommentary).
+export const DEFAULT_PEPE_MODEL = 'pepe-8b_abliterated_pc:latest';
+export const PEPE_ENABLED = env.PZ_PEPE !== '0';
+export const PEPE_MODEL = env.PZ_PEPE_MODEL || DEFAULT_PEPE_MODEL;
+const PEPE_TIMEOUT = Number(env.PZ_PEPE_TIMEOUT || 60000);
+const PEPE_PREDICT = Number(env.PZ_PEPE_PREDICT || 80);
+const PEPE_KEEP_ALIVE = env.PZ_PEPE_KEEP_ALIVE || '10m';
+// 0 is a real value (all CPU), so only a number that parses overrides it.
+export const PEPE_GPU_LAYERS = parseGpuLayers(env.PZ_PEPE_GPU_LAYERS) ?? 0;
+
+export function pepeOptions() {
+  return { temperature: 0.9, num_predict: PEPE_PREDICT, num_ctx: NUM_CTX, num_gpu: PEPE_GPU_LAYERS };
+}
+
+let commentCancel = null;
+export const commentBusy = () => commentCancel !== null;
+export function cancelCommentary() {
+  if (commentCancel) commentCancel.abort();
+}
+
+export async function callCommentary({ system, user, model = PEPE_MODEL }) {
+  if (BACKEND !== 'ollama') throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
+  if (commentCancel) throw new Error('a comment is already being written');
+  const started = Date.now();
+  const cancel = new AbortController();
+  commentCancel = cancel;
+  try {
+    const data = await postJSON(BASE() + '/api/chat', {
+      model,
+      stream: false,
+      think: false,
+      keep_alive: PEPE_KEEP_ALIVE,
+      options: pepeOptions(),
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+    }, 'ollama', PEPE_TIMEOUT, cancel.signal);
+    const msg = data.message || {};
+    // Never fall back to message.thinking: that is reasoning text, not a line to show.
+    return { raw: msg.content || '', ms: Date.now() - started };
+  } catch (err) {
+    if (cancel.signal.aborted && !isMissingModel(err && err.message)) throw Object.assign(new Error('comment cut short'), { preempted: true });
+    throw err;
+  } finally {
+    if (commentCancel === cancel) commentCancel = null;
+  }
+}
+
+// True or false when Ollama answers, null when it cannot be asked (not up yet). Used once at start
+// so a machine without the model never makes a request for it.
+export async function modelInstalled(model = PEPE_MODEL) {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const res = await fetch(BASE() + '/api/tags', { signal: ctl.signal });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const want = model.includes(':') ? model : model + ':latest';
+      return (Array.isArray(data.models) ? data.models : []).some((m) => m && (m.name === want || m.model === want));
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
   }
 }

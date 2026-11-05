@@ -56,6 +56,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `decisions.mjs` | The decision log: decision, outcome and after lines, and the join between them. It also keeps the last 12 orders with their results in memory (`history()`). See `docs/eval.md`. | service |
 | `death.mjs` | Why she died: the cause and its facts, from the mod's death record. See `docs/eval.md`. | service |
 | `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
+| `commentator.mjs` | The peanut gallery: spots moments, rate limits, asks the meme model for a line. Commentary only. See "Peanut gallery". | service |
 | `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
 | `pz-bridge.mjs` | Reads the percept, runs the loop, writes the order, serves `/mind`. | I/O |
@@ -267,6 +268,40 @@ It also keeps the last 12 orders sent (seq, verb, key, building), the fails with
 `http://localhost:8799/mind` shows the options offered (the chosen one marked), the choice, who decided (policy and its rule, the model, waiting on a skill, the reflex, asleep), the model time, the playbook rules used, the map memory size, and the Reactions strip (see "Reactions"). `PZ_LUA_DIR` and `PZ_STATE_FILE` point the bridge at other files, for a page check without the game.
 
 The Nudge panel on the same page lets you pick the option you would have chosen. See "Nudges" in `docs/eval.md`. A model thought that was still running when you pressed "Do it now" is dropped when it finishes, so it cannot overwrite your order.
+
+## Peanut gallery
+
+A second local model, `pepe-8b_abliterated_pc:latest`, reacts to what happens, for fun. It is commentary only. It never decides anything, never writes an order, and nothing it says goes into the brain's prompt, the planner's prompt or the order line. Its lines go to `bridge/pepe.log` and to the Peanut gallery panel on /mind, which shows the last 10, newest first. The panel is filled from the log when the bridge starts, so it survives a page refresh and a restart.
+
+```
+percept, order history, plan --> moments --> pending
+pending --> one line at most every 30 s, only when nothing else needs Ollama --> pepe.log + panel
+```
+
+What it notices: a kill, losing 8 or more HP at once, starting to bleed, HP falling to 25 or below, a clearly better weapon in hand (hands empty to anything, or a score 1.25 times higher), walking into a building, locking one up, a failed order, a flee and re-enter loop, the planner's new plan, and death. When several land together the heaviest is spoken and up to two others ride along in the prompt. A moment older than 45 seconds is dropped. Death is always spoken, never rate limited, and waits for a free model.
+
+How it stays out of the way:
+
+- CPU only (`num_gpu` 0), the shared `num_ctx`, `num_predict` 80, thinking off. It takes no VRAM and does not make Ollama reload the menu model.
+- It does not start while a menu turn, a plan, the death review or a menu turn's whole think-and-send is running.
+- A menu turn or a plan that starts while it is writing cancels it at once. The moment goes back in the queue and does not use up the 30 seconds.
+- One comment at a time. A moment that arrives during one waits for the next slot.
+
+The only changes to what the model says are a length cap (240 characters) and control characters turned into spaces. The log is capped at 1 MB and rolls to `pepe.log.1`.
+
+Switches: `PZ_PEPE=0` turns it off. `PZ_PEPE_MODEL` picks another model. `PZ_PEPE_GPU_LAYERS` (default 0), `PZ_PEPE_PREDICT` (80), `PZ_PEPE_TIMEOUT`, `PZ_PEPE_KEEP_ALIVE` (10m), `PZ_PEPE_FILE` and `PZ_PEPE_LOG_MAX` (bytes) tune it. It is on by default when Ollama lists the model. If the model is not installed, or a call gets a 404, it logs one line and turns itself off for the session.
+
+Measured on this PC on 2026-11-05 with the game running (`node bridge/tools/try-pepe.mjs`, `gemma4:12b` as the menu model, 5 runs):
+
+| | time |
+|---|---|
+| first line, model loading | 11.7 s |
+| warm line | 1.8 to 4.0 s, median 2.7 s |
+| menu turn alone | 355 to 485 ms, median 392 ms |
+| menu turn fired 0.7 s into a comment | 471 to 552 ms, median 518 ms, the comment cut every time |
+| lines through the real bridge, with its own menu turns and plans running | 2.2 s, 4.2 s, 11.8 s |
+
+A menu turn that lands in the middle of a comment costs about 120 ms more than one on a quiet model, because the CPU is still winding down. It stayed under 600 ms in all five runs.
 
 ## Examples from your nudges
 
