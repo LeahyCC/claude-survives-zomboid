@@ -213,6 +213,20 @@ local function think(job, text)
   if job and LS.tick ~= job.startTick and text and text ~= "" then LS.hudData.thought = text end
 end
 
+-- Name what the job works on. It shows in res.target, and a repeated order for the same job
+-- puts it back (Needs.start).
+local function aim(job, text)
+  job.what = text
+  LS.aim(job.seq, text)
+end
+
+-- "water 10,12" for a fixture the job walks to.
+local function spotText(kind, obj)
+  local text = kind
+  pcall(function() local sq = obj:getSquare(); text = kind .. " " .. sq:getX() .. "," .. sq:getY() end)
+  return text
+end
+
 function Needs.done(job, why)
   LS.setResult(job.seq, job.verb, "done", why or "")
   if LS.needsJob == job then LS.needsJob = false end
@@ -254,6 +268,7 @@ function Needs.start(p, args, verb)
   if job and job.verb == verb then
     job.seq = args.seq
     job.lastUpdate = LS.tick
+    LS.aim(job.seq, job.what)
     return
   end
   job = { verb = verb, seq = args.seq, startTick = LS.tick, lastUpdate = LS.tick, lastActed = -99999,
@@ -453,6 +468,34 @@ local function isWorn(p, it)
   return worn
 end
 
+-- Something he could rip into a bandage: a sheet, or cotton clothing that is not worn, and the
+-- craft recipe the game would let him do on it now. { item, recipe } or nil.
+function Needs.ripSource(p)
+  for _, it in ipairs(Sense.carriedItems(p)) do
+    local recipeName = nil
+    if hasTag(it, "SHEET") then recipeName = "RipSheets"
+    elseif hasTag(it, "RIP_CLOTHING_COTTON") and not isWorn(p, it) then recipeName = "RipClothing" end
+    if recipeName then
+      local r = Needs.craftRecipe(p, recipeName, it)
+      if r then return { item = it, recipe = r } end
+    end
+  end
+  return nil
+end
+
+-- For inv.canRip in the percept: would BANDAGE find something to rip. The same check as
+-- kit.rip, kept for RIP_CACHE ticks because the percept asks once a second and the recipe
+-- check is the slow part.
+Needs.RIP_CACHE = 300
+if LS.ripCache == nil then LS.ripCache = false end
+function Needs.canRip(p)
+  local cache = LS.ripCache
+  if cache and LS.tick - cache.tick < Needs.RIP_CACHE then return cache.value end
+  local value = Needs.ripSource(p) ~= nil
+  LS.ripCache = { tick = LS.tick, value = value }
+  return value
+end
+
 -- What he carries for wounds. Ripping is only looked for when there is no bandage, because
 -- the recipe check is the slow part.
 function Needs.medKit(p)
@@ -479,17 +522,7 @@ function Needs.medKit(p)
   end
   local i = Needs.bestBandage(bandages)
   if i then kit.bandage = refs[i] end
-  if not kit.bandage then
-    for _, it in ipairs(Sense.carriedItems(p)) do
-      local recipeName = nil
-      if hasTag(it, "SHEET") then recipeName = "RipSheets"
-      elseif hasTag(it, "RIP_CLOTHING_COTTON") and not isWorn(p, it) then recipeName = "RipClothing" end
-      if recipeName then
-        local r = Needs.craftRecipe(p, recipeName, it)
-        if r then kit.rip = { item = it, recipe = r }; break end
-      end
-    end
-  end
+  if not kit.bandage then kit.rip = Needs.ripSource(p) end
   return kit
 end
 
@@ -604,7 +637,58 @@ end
 function Needs.secureBegin(p, scope)
   local sec = { counts = {}, skipped = 0, targets = {}, seen = {}, i = 1 }
   sec.squares, sec.scope = Needs.secureSquares(p, scope)
+  pcall(function() sec.building = p:getSquare():getBuilding() end)
   return sec
+end
+
+-- A square of the building he is sweeping, with a roof and walls around it. The squares next
+-- to a door or window on the outer wall are outside, and these are the ones to stay off.
+local function insideSquare(sq, building)
+  local ok, inside = pcall(function() return sq ~= nil and building ~= nil and sq:getBuilding() == building and sq:getRoom() ~= nil end)
+  return ok and inside
+end
+
+local function onSquare(p, sq)
+  local same = false
+  pcall(function()
+    same = math.floor(p:getX()) == sq:getX() and math.floor(p:getY()) == sq:getY() and math.floor(p:getZ()) == sq:getZ()
+  end)
+  return same
+end
+
+-- Where to stand to work a target: the square on its inside side, or nil when only the outside
+-- side is open to him. Vanilla's own walk (luautils.walkAdjWindowOrDoor) takes the nearer side
+-- unless he already stands in the room of the inside one, so a door in a south or east wall,
+-- which sits on the outside square, sent him out. Standing here first makes the vanilla handler
+-- keep to this side. need is what the target still needs (a door can need its curtain shut).
+function Needs.standSquare(p, t, need, building)
+  local o = t.obj
+  local own = nil
+  pcall(function() own = o:getSquare() end)
+  local cands = {}
+  if t.kind == "door" and need == "curtain" then
+    -- The sheet hangs on one side of the door, and vanilla walks to that side.
+    pcall(function() table.insert(cands, o:getSheetSquare()) end)
+  elseif t.kind == "window" or t.kind == "door" then
+    table.insert(cands, own)
+    pcall(function()
+      local north = o:getNorth()
+      table.insert(cands, own:getAdjacentSquare(north and IsoDirections.N or IsoDirections.W))
+    end)
+  else
+    -- A curtain hangs inside and vanilla walks onto its square. A light is worked from its own.
+    table.insert(cands, own)
+  end
+  local best, bestD = nil, nil
+  for _, sq in ipairs(cands) do
+    local standable = false
+    pcall(function() standable = sq:canStand() end)
+    if standable and insideSquare(sq, building) then
+      local d = distTo(p, sq:getX() + 0.5, sq:getY() + 0.5, sq:getZ())
+      if not bestD or d < bestD then best, bestD = sq, d end
+    end
+  end
+  return best
 end
 
 local function addTarget(sec, kind, o)
@@ -679,9 +763,12 @@ function Needs.doTarget(p, t, need)
   elseif need == "light" then ISWorldObjectContextMenu.onToggleLight(nil, o, pn) end
 end
 
--- One step of a sweep. Returns "scan" (more to do next step), "busy" (an action is queued)
--- or "done".
+-- One step of a sweep. Returns "scan" (more to do next step), "busy" (an action is queued),
+-- "done", or "outside" (he is no longer in the building).
 function Needs.secureStep(p, job, sec)
+  -- Pushed out of the building (a flee, a long detour): the sweep is over, it never goes looking
+  -- for a way back in.
+  if sec.building and not insideSquare(p:getSquare(), sec.building) then return "outside" end
   if sec.i <= #sec.squares then
     local last = math.min(#sec.squares, sec.i + Needs.N.SCAN_PER_STEP - 1)
     for k = sec.i, last do Needs.collectTargets(sec.squares[k], sec) end
@@ -709,18 +796,42 @@ function Needs.secureStep(p, job, sec)
       end
     end
   end
-  local i = Needs.pickTarget(rows)
-  if not i then return "done" end
-  local t, need = pick[i].t, pick[i].need
+  -- Stay with the target once chosen. A walk changes which one is nearest, and picking again
+  -- after every walk could send him back and forth between two.
+  local t, need = nil, nil
+  if sec.cur and not sec.cur.skip then
+    t, need = sec.cur, Needs.targetNeed(p, sec.cur)
+  end
+  if not need then
+    t = nil
+    local i = Needs.pickTarget(rows)
+    if not i then return "done" end
+    t, need = pick[i].t, pick[i].need
+  end
+  sec.cur = t
+  local function giveUp()
+    t.skip, sec.cur = true, nil
+    sec.skipped = sec.skipped + 1
+    return "scan"
+  end
+  local stand = Needs.standSquare(p, t, need, sec.building)
+  if not stand then return giveUp() end
+  if not onSquare(p, stand) then
+    t.walks = (t.walks or 0) + 1
+    if t.walks > 2 then return giveUp() end
+    ISTimedActionQueue.clear(p)
+    ISTimedActionQueue.add(ISWalkToTimedAction:new(p, stand))
+    if Needs.queued(p, job) then return "busy" end
+    return giveUp()
+  end
   ISTimedActionQueue.clear(p)
   Needs.doTarget(p, t, need)
   if Needs.queued(p, job) then
     sec.last = { t = t, need = need }
+    sec.cur = nil
     return "busy"
   end
-  t.skip = true
-  sec.skipped = sec.skipped + 1
-  return "scan"
+  return giveUp()
 end
 
 -- ---------- skills ----------
@@ -742,6 +853,7 @@ skills.DRINK = function(p, job)
     ISTimedActionQueue.add(ISDrinkFluidAction:new(p, bottle, Needs.drinkPercent(stat(p, "THIRST"), amount)))
     if mask then ISTimedActionQueue.add(ISWearClothing:new(p, mask, 50)) end
     local label = "drank from " .. itemName(bottle)
+    aim(job, itemName(bottle))
     if Needs.queued(p, job, nil, function() job.drank = label end) then
       think(job, "Water. Drinking.")
       return
@@ -751,6 +863,7 @@ skills.DRINK = function(p, job)
   if not src then return Needs.fail(job, "no water") end
   ISTimedActionQueue.clear(p)
   ISWorldObjectContextMenu.onDrink(nil, src.obj, pn)
+  aim(job, spotText("water", src.obj))
   if Needs.queued(p, job, nil, function() job.drank = "drank from the tap" end) then
     think(job, "Tap still runs. Drinking.")
     return
@@ -775,6 +888,7 @@ skills.FILL = function(p, job)
   if (job.rounds or 0) >= 3 then return Needs.done(job, "filled " .. count) end
   ISTimedActionQueue.clear(p)
   ISWorldObjectContextMenu.onTakeWater(nil, src.obj, empties, nil, playerNum(p))
+  aim(job, spotText("water", src.obj))
   job.rounds = (job.rounds or 0) + 1
   if Needs.queued(p, job, nil, function() for _, it in ipairs(empties) do job.filled[tostring(it)] = true end end) then
     think(job, "Filling bottles while the water runs.")
@@ -816,6 +930,7 @@ skills.EAT = function(p, job)
     ISInventoryPaneContextMenu.eatItem(it, 1, playerNum(p))
   end
   local label = (kind == "can" and "opened and ate " or "ate ") .. itemName(it)
+  aim(job, itemName(it))
   if Needs.queued(p, job, nil, function() job.ate = label end) then
     think(job, "Eating " .. itemName(it) .. ".")
     return
@@ -839,6 +954,7 @@ skills.SLEEP = function(p, job)
     local block = Needs.sleepBlock(p)
     if block == "unsafe: panic" or block == "unsafe: pain" then return Needs.fail(job, block) end
     job.bed = Needs.findBed(p)
+    aim(job, job.bed and spotText("bed", job.bed) or "floor")
     job.phase, job.walks = "walk", 0
     think(job, job.bed and "Bed. Shut the room first." or "No bed. The floor will do.")
   end
@@ -854,7 +970,9 @@ skills.SLEEP = function(p, job)
     job.phase, job.sec = "secure", Needs.secureBegin(p, "room")
   end
   if job.phase == "secure" then
-    if Needs.secureStep(p, job, job.sec) ~= "done" then return end
+    local state = Needs.secureStep(p, job, job.sec)
+    if state == "outside" then return Needs.fail(job, "not inside") end
+    if state ~= "done" then return end
     job.phase, job.walks = "lie", 0
   end
   if job.bed and not Needs.nextTo(p, job.bed) and job.walks < 2 then
@@ -895,6 +1013,7 @@ skills.BANDAGE = function(p, job)
   local stepName = Needs.treatStep(f, { bandage = kit.bandage ~= nil, disinfect = kit.disinfect ~= nil, rip = kit.rip ~= nil })
   if stepName == "keep" then job.skipParts[f.part] = true; return end
   if stepName == "none" then return Needs.fail(job, why("no bandage")) end
+  aim(job, f.part)
   local key = f.part .. ":" .. stepName
   job.tries[key] = (job.tries[key] or 0) + 1
   if job.tries[key] > 2 then
@@ -962,6 +1081,7 @@ skills.WEARBAG = function(p, job)
   ISTimedActionQueue.clear(p)
   ISInventoryPaneContextMenu.wearItem(refs[i], playerNum(p))
   local bag = refs[i]
+  aim(job, itemName(bag))
   if Needs.queued(p, job, nil, function() job.target = bag end) then
     think(job, "Bag on. Hands free.")
     return
@@ -973,9 +1093,13 @@ skills.SECURE = function(p, job)
   if not job.sec then
     job.sec = Needs.secureBegin(p, "building")
     if #job.sec.squares == 0 then return Needs.fail(job, "not inside") end
+    local _, m = Sense.currentBuilding(p)
+    aim(job, m and m.id or "")
     think(job, "Shutting the place up.")
   end
-  if Needs.secureStep(p, job, job.sec) == "done" then
+  local state = Needs.secureStep(p, job, job.sec)
+  if state == "outside" then return Needs.fail(job, "not inside") end
+  if state == "done" then
     Needs.done(job, Needs.secureSummary(job.sec.counts, job.sec.skipped))
   end
 end

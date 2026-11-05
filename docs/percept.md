@@ -44,6 +44,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 |---|---|---|---|
 | `v` | int | Percept version, 2. | |
 | `panic01` | number | Panic on 0 to 1, so it matches the other stats. | `PANIC / 100` |
+| `asleep` | bool | The survivor is asleep, by the game's own state. | `p:isAsleep()` |
 | `kills` | int | Zombies killed. | `p:getZombieKills()` |
 | `hoursAlive` | number | In-game hours survived. | `p:getHoursSurvived()` |
 | `moodle` | object | Moodle levels 0 to 4: `endurance tired panic pain heavy hungry thirsty`. 0 is none. | `p:getMoodles():getMoodleLevel(MoodleType.X)` with `ENDURANCE TIRED PANIC PAIN HEAVY_LOAD HUNGRY THIRST` |
@@ -57,12 +58,12 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `zVisible` | int | Zombies the survivor can see. The game's own count. | `getStats():getNumVisibleZombies()` |
 | `zDowned` | int | Living zombies within 3 tiles that are on the floor or knocked down. A free stomp. | `isOnFloor()` `isKnockedDown()` |
 | `zList` | list | The 6 nearest living zombies within 25 tiles: `{dx, dy, d, chase, down, crawl}`. | `getTarget()` `isOnFloor()` `isKnockedDown()` `isCrawling()` |
-| `inBldg` | object or null | The building the survivor stands in: `{id, rooms, explored, water, room}`. | see below |
+| `inBldg` | object or null | The building the survivor stands in: `{id, rooms, roomsLeft, explored, water, room}`. | see below |
 | `water` | object or null | Nearest clean water source in this building: `{x, y, z, d}`. | see below |
 | `bed` | object or null | Nearest bed in this building: `{x, y, z, d}`. | see below |
 | `buildings` | list | Up to 6 nearest buildings within 40 tiles. | see below |
 | `dark` | bool | Night, or the square is darker than 0.43 (vanilla's too-dark-to-read line). | `getGameTime():isNight()` `square:getLightLevel(p:getPlayerNum())` |
-| `res` | object | What the last order did: `{seq, verb, status, why}`. `status` is `idle`, `running`, `done` or `failed`. Each verb's reasons are in `docs/skills.md` and `docs/needs.md`. | `LocalSurvivor.result` |
+| `res` | object | What the last order did: `{seq, verb, status, why, target}`. `status` is `idle`, `running`, `done` or `failed`. `target` is what the job works on, or `""` when there is none (see below). Each verb's reasons are in `docs/skills.md` and `docs/needs.md`. | `LocalSurvivor.result` |
 
 Distances `d` are straight-line tiles. `dx` and `dy` are offsets, +x east and +y south. Object keys print in sorted order.
 
@@ -77,6 +78,7 @@ Counts everything carried, one level into bags. `foods` above does not.
 | `canOpener` | bool | An item tagged `base:canopener`. Some cans also open with a knife; this does not check that. |
 | `waterL` | number | Litres of clean water in containers. Tainted or poisonous containers do not count. `FluidContainer:getSpecificFluidAmount(Fluid.Water)`. |
 | `emptyBottles` | int | Empty fluid containers that take input. |
+| `canRip` | bool | BANDAGE could rip a bandage from what he carries: a sheet, or cotton clothing that is not worn, with the craft recipe the game allows now. The same check as `kit.rip` in `Needs.medKit` (`Needs.ripSource`). Only asked when `bandages` is 0, otherwise false, as `medKit` does. Kept for 300 ticks because the recipe check is slow. BANDAGE with no bandage and `canRip` false fails `no bandage`. |
 | `bandages` | int | `isCanBandage()` items that are not tagged `base:canbewashed`. Bandages and ripped sheets count, dirty ones do not. |
 | `disinfectant` | int | Vanilla's health panel rule: a fluid container over 0.15 L that is at least 40% alcohol, or a drainable with alcohol power 4 (alcohol wipes). |
 | `painkillers` | int | `Base.Pills`. There is no tag for it. |
@@ -100,6 +102,24 @@ Each entry has `part` (`BodyPartType.ToString`, like `Hand_L`) and only the flag
 
 Worst first: bite, then bleeding, deep, glass, then cuts and scratches.
 
+### res.target
+
+Set when the order starts, kept when it ends `done` or `failed`, cleared by the next order. The same verb again keeps the job and puts its target back under the new seq. A brain that restarts mid-job reads it from here.
+
+| Verb | `target` |
+|---|---|
+| `ENTER` | building id |
+| `GOTO` | `x,y` in whole tiles |
+| `SEARCH`, `LOOT` | building id of the place searched, empty for a loose container |
+| `SECURE` | building id |
+| `DRINK` | the bottle name, or `water x,y` for a tap |
+| `FILL` | `water x,y` |
+| `EAT` | the food name |
+| `SLEEP` | `bed x,y`, or `floor` |
+| `BANDAGE` | the body part being treated, like `Hand_L` |
+| `WEARBAG` | the bag name |
+| others | `""` |
+
 ### Buildings, water and beds
 
 A place scan runs in slices, one per tick, from `Sense.step` in the tick loop. It starts every 120 ticks, after the survivor moves 4 tiles, or when the building underfoot changes. A scan takes about 10 to 20 ticks.
@@ -116,14 +136,14 @@ publish copy into LocalSurvivor.seen
 Facts that do not change (bounds, doors, beds) are kept by building id in `LocalSurvivor.bldgMemo`. Water amounts are read again on every scan.
 
 - `id` is `BuildingDef:getIDString()`. `getID()` is a Java long, which Lua holds as a double.
-- `inBldg.rooms` is `BuildingDef:getRoomsNumber()`. `explored` is `BuildingDef:isAllExplored()`: the game's flag that every room has had its loot spawned. It does not mean the survivor searched them. `water` is `IsoBuilding:hasWater()`. `room` is the room name, as in `room`.
+- `inBldg.rooms` is `BuildingDef:getRoomsNumber()`. `explored` is `BuildingDef:isAllExplored()`: the game's flag that every room has had its loot spawned. It does not mean the survivor searched them. `water` is `IsoBuilding:hasWater()`. `room` is the room name, as in `room`. `roomsLeft` is how many of the building's rooms SEARCH has not finished: the rooms of `BuildingDef:getRooms()` that are not in `LocalSurvivor.searched[id]` (`Act.roomsLeft`). It equals `rooms` before any SEARCH and is 0 when every room is done. A room that was not loaded when SEARCH came by stays counted.
 - `water` takes objects from `IsoRoom:getWaterSources()` plus any room object where `hasWater()` is true at scan time. It is offered when `getFluidAmount() >= 1` (the same line vanilla uses for water menus) and not `isTaintedWater()`. Once the water shuts off, sinks drop out.
 - `bed` is an object whose properties have `IsoFlagType.bed`, as vanilla checks in `ISWorldObjectContextMenu`. A double bed shows as two squares.
 - `buildings` entries are `{id, dx, dy, d, res, shop, door, visited}`. `dx dy d` go to the nearest wall, so 0 means inside. `res` is `isResidential()`, `shop` is `isShop()`. `door` is the nearest exterior ground-floor door `{x, y}`, or null before the door search reaches it or when none was found. `visited` means the survivor has stood inside it this session. Alarm flags and container contents are left out on purpose: a player cannot see them.
 
 ## Size
 
-About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.1 KB.
+About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.3 KB.
 
 ## Checked and unchecked
 

@@ -632,8 +632,11 @@ end
 function Sense.inBuilding(p, roomName)
   local b, m = Sense.currentBuilding(p)
   if not m then return nil end
-  local out = { id = m.id, rooms = 0, explored = false, water = false, room = roomName or "" }
+  local out = { id = m.id, rooms = 0, roomsLeft = 0, explored = false, water = false, room = roomName or "" }
   pcall(function() out.rooms = m.def:getRoomsNumber() end)
+  -- Rooms SEARCH has not finished. All of them until it has been through the building.
+  out.roomsLeft = out.rooms
+  pcall(function() out.roomsLeft = LS.Act.roomsLeft(m) end)
   pcall(function() out.explored = m.def:isAllExplored() end)
   pcall(function() out.water = b:hasWater() end)
   return out
@@ -727,6 +730,7 @@ function Sense.perceptV2(p, px, py, room)
     return fallback
   end
 
+  add("asleep", try(function() return p:isAsleep() == true end, false))
   add("kills", try(function() return p:getZombieKills() end, 0))
   add("hoursAlive", try(function() return math.floor(p:getHoursSurvived() * 100 + 0.5) / 100 end, 0))
   add("moodle", Sense.moodles(p))
@@ -743,6 +747,9 @@ function Sense.perceptV2(p, px, py, room)
     if ok and d then table.insert(descs, d) end
   end
   local carried = Sense.summarizeInventory(descs)
+  -- Only worth asking with no bandage in hand, as Needs.medKit does. The recipe check is slow,
+  -- so the answer is kept for a few seconds.
+  carried.inv.canRip = carried.inv.bandages == 0 and try(function() return LS.Needs.canRip(p) end, false) or false
   add("weapons", carried.weapons)
   add("inv", carried.inv)
 
@@ -782,7 +789,8 @@ function Sense.perceptV2(p, px, py, room)
   end, false))
 
   local r = LS.result or {}
-  add("res", { seq = r.seq or 0, verb = r.verb or "", status = r.status or "idle", why = r.why or "" })
+  add("res", { seq = r.seq or 0, verb = r.verb or "", status = r.status or "idle", why = r.why or "",
+    target = r.target or "" })
   return table.concat(parts)
 end
 

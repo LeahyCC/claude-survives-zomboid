@@ -4,11 +4,13 @@ What each order does, when it is done, and why it fails. Code is the truth: `mod
 
 ```
 order line   SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
-result       res = {seq, verb, status, why} in the percept
+result       res = {seq, verb, status, why, target} in the percept
 status       running -> done | failed
 ```
 
 Every order sets `running` when it starts. The verbs below then set `done` or `failed` with a short `why`. The older one-shot verbs (`EAT DRINK EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`) stay `running`, or `failed` with the old message like `eat: no food`.
+
+`target` is what the order works on: the building id for ENTER, SEARCH and LOOT, `x,y` for GOTO. It is set when the order starts and kept on `done` or `failed` (`docs/percept.md`).
 
 A failure also sets `err` in the percept to `verb: why`, for example `enter: locked`. The v1 brain only reads `err`. The v2 brain reads `res` and keeps a failed order off its menu for a while (`docs/brain.md`).
 
@@ -81,7 +83,7 @@ No arguments. Searches the building the survivor stands in.
 - Walks next to each container (`AdjacentFreeTileFinder.Find`) and takes what the loot table wants (below), inside the weight budget.
 - Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`).
 - A transfer that did not happen (the reflex clears the queue when it fights or flees) gets one more try.
-- Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them.
+- Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them. The percept shows how many are left as `inBldg.roomsLeft` (`Act.roomsLeft`).
 - Done when every room is searched or the weight reaches 85% of `getMaxWeight()`. `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
 - Failed: `not inside`, `nothing left` (every room was already searched), `full` (at 85% before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
 

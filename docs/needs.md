@@ -15,7 +15,7 @@ a step           read the world again
 ```
 
 - Each step reads the world fresh. A paused job picks up where it is, not where it was.
-- The result record goes `running`, then `done` or `failed` with a short `why`. The percept carries it as `res`.
+- The result record goes `running`, then `done` or `failed` with a short `why`. The percept carries it as `res`, with a `target` that names what the job works on (the table is in `docs/percept.md`).
 - A new order with a different verb drops the job. The same verb again, as when the bridge repeats an order, keeps the job and takes the new seq.
 - The vanilla menu handlers do the walking. A handler that finds no way there queues nothing, and the step reads that as a failure.
 
@@ -108,6 +108,8 @@ then                   the best bandage (ISApplyBandage)
 no bandage             rip cotton clothing that is not worn, or a sheet, then bandage
 ```
 
+The percept's `inv.canRip` is the same ripping check (`Needs.ripSource`), asked without starting a job.
+
 - The best bandage is the highest `getBandagePower()` that is not tagged `base:canbewashed`. On a tie, an alcohol one.
 - Disinfectant is vanilla's health panel rule (see `docs/percept.md`, inv). A part counts as disinfected when `getAlcoholLevel() > 0`.
 - Ripping uses the craft recipes `RipClothing` (tag `base:ripclothingcotton`, not worn) and `RipSheets` (tag `base:sheet`), through `ISInventoryPaneContextMenu.OnNewCraft`. Only when the recipe check passes.
@@ -132,7 +134,11 @@ Wears the best carried bag on the back through `ISInventoryPaneContextMenu.wearI
 
 ### SECURE
 
-A sweep of the building: every room on his floor, or only the current room when the floor has more than 10 rooms. The squares one east and one south of each room square are read too, because a wall sits on the north or west edge of a square.
+A sweep of the building: every room on his floor, or only the current room when the floor has more than 10 rooms. The squares one east and one south of each room square are read too, because a wall sits on the north or west edge of a square. Those squares are often outside the building, and a door or window on a south or east wall is stored on the outside one.
+
+It works every target from the inside (`Needs.standSquare`). The inside side is the object's own square or the one across its wall (`getNorth()` says which) that is in this building, in a room, and can be stood on. He walks onto it first, then calls the vanilla handler. The order matters: vanilla's walk (`luautils.walkAdjWindowOrDoor`) only prefers the inside side when he already stands in that room, and otherwise takes the nearer side, which for a south or east wall is the outside. A door whose sheet hangs outside, a curtain or porch light on an outside square, or any target with no inside square to stand on counts as out of reach, and he does not walk. If he ends up outside the building, the job fails `not inside`.
+
+He sticks to one target until it is done or given up, so a walk does not swap him between two.
 
 What it does, nearest first, a door before a window or curtain before a light (`Needs.pickTarget`):
 

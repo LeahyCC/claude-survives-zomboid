@@ -69,6 +69,7 @@ UIFont = nameTable()
 CharacterStat = nameTable()
 Fluid = nameTable()
 IsoFlagType = nameTable()
+IsoDirections = nameTable()
 MoodleType = nameTable()
 ItemBodyLocation = nameTable()
 ItemTag = nameTable()
@@ -274,6 +275,7 @@ function __makePlayer(opts)
   function p:isOutside() return true end
   -- opts.live: the square under the player follows x, y, z through __squares.
   function p:getSquare()
+    if self.sq then return self.sq end
     if opts.square then return opts.square end
     if opts.live then return __squares[math.floor(self.x) .. "," .. math.floor(self.y) .. "," .. math.floor(self.z)] end
     return nil
@@ -311,7 +313,6 @@ function __makePlayer(opts)
   function p:isAsleep() return self.asleep or false end
   function p:setVariable() end
   function p:getLastHourSleeped() return opts.lastSlept or -100 end
-  function p:getCurrentSquare() return opts.square end
   function p:isSitOnGround() return self.sitting or false end
   function p:isEquippedClothing() return false end
   return p
@@ -456,6 +457,10 @@ function __makeSquare(opts)
   function sq:isFree() return not opts.blocked end
   function sq:canStand() return not opts.blocked end
   function sq:canReachTo() return true end
+  -- opts.flags: set of IsoFlagType names the square has, like exterior.
+  function sq:has(flag) return (opts.flags or {})[flag] == true end
+  -- opts.around: direction name ("N" or "W") -> the square next to this one that way.
+  function sq:getAdjacentSquare(dir) return (opts.around or {})[dir] end
   -- opts.walls: set of "x,y" neighbours a wall separates this square from.
   function sq:isBlockedTo(other)
     local w = opts.walls or {}
@@ -538,6 +543,18 @@ function __take(p, c)
   for _, a in ipairs(q) do
     if a.Type == "ISInventoryTransferAction" and a.args[3] == c then
       for i, x in ipairs(c.items) do if x == a.args[2] then table.remove(c.items, i); break end end
+    end
+  end
+  ISTimedActionQueue.clear(p)
+end
+
+-- Finish the queued walks the way a real one would: the player ends on the square it goes to
+-- (the last walk wins), then the queue empties.
+function __arrive(p)
+  for _, a in ipairs(ISTimedActionQueue.getTimedActionQueue(p).queue) do
+    if a.Type == "ISWalkToTimedAction" and type(a.args[2]) == "table" then
+      local sq = a.args[2]
+      p.x, p.y, p.z, p.sq = sq:getX() + 0.5, sq:getY() + 0.5, sq:getZ(), sq
     end
   end
   ISTimedActionQueue.clear(p)
