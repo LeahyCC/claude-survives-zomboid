@@ -54,8 +54,9 @@ The home building gets the tag `your planned home` on the menu. It goes first in
 
 | Variable | Default | Use |
 |---|---|---|
-| `PZ_PLANNER_MODEL` | `PZ_MODEL` | The model for plans and death reviews. |
-| `PZ_PLANNER_THINK` | `auto` | `auto` asks Ollama to think and falls back once for a model that cannot. `off` never thinks. |
+| `PZ_PLANNER_MODEL` | `qwen3.6-35b_abliterated_pc:latest` | The model for plans and death reviews. If the default is not installed (Ollama says 404), the planner uses `PZ_MODEL` from then on. |
+| `PZ_PLANNER_GPU_LAYERS` | `0` for the default model, else unset | Layers of the planner model kept on the GPU. `0` is all CPU. Unset or `auto` leaves it to Ollama. |
+| `PZ_PLANNER_THINK` | `off` for the default model, else `auto` | `auto` asks Ollama to think and falls back once for a model that cannot. `off` never thinks. |
 | `PZ_PLANNER_PREDICT` | `1500` | Token budget. Thinking uses it too. When thinking uses it all and no answer comes back, the plan is asked once more without thinking. |
 | `PZ_PLANNER_TIMEOUT` | `120000` | Milliseconds before the call is given up. |
 
@@ -122,6 +123,81 @@ Deleting `pz-state.json` does not touch lessons. That is on purpose.
 
 ## Check it
 
-`npm test` covers the events, plan parsing, lesson parsing, dedupe, the cap, trigger matching, the run flag, the planner's wait for a free model, and a menu turn cutting a plan short. The model is mocked. Nothing tests a real model's plans or lessons yet. Read the first few from a live run before trusting them.
+`npm test` covers the events, plan parsing, lesson parsing, dedupe, the cap, trigger matching, the run flag, the planner's wait for a free model, and a menu turn cutting a plan short. The model is mocked. Nothing in it tests a real model's plans or lessons. `bridge/tools/planner-bench.mjs` runs the planner prompt against Ollama for timing and shape (see the last section). Read the first few plans from a live run before trusting them.
+
+The last two defaults go with the default model only. Set `PZ_PLANNER_MODEL` and the planner runs as before: Ollama places the model and thinking is on auto. An explicit `PZ_PLANNER_GPU_LAYERS` or `PZ_PLANNER_THINK` always wins.
 
 Every call to Ollama, menu turns and the planner alike, uses one context size, `PZ_NUM_CTX` (default 8192). Ollama reloads the model whenever `num_ctx` changes between requests, so two sizes would cost a reload at each switch.
+
+## Which model plans
+
+Measured with `node bridge/tools/planner-bench.mjs <model>` on 2026-11-04. The card is an RTX 5080 with 16 GB and the PC has 135 GB of RAM. **Project Zomboid was running** (ProjectZomboid64.exe up, the card at 14.7 to 15.7 GB used before any model). Other programs were calling Ollama for part of the time, so the slow outliers below are not clean.
+
+### The risk was the wrong one
+
+The worry was that a big planner would push the menu model out of VRAM, so the next menu turn would pay a load. It never happened. After every plan the menu model (`gemma4:12b`) was still loaded in `/api/ps`. The game already holds most of the card, so Ollama only gives a big model 4 to 5 GB of it and runs the rest on the CPU. `gemma4:12b` itself keeps only 8 of its 31 layers on the GPU while the game runs (Ollama's log), which is why a menu turn is 0.3 to 0.5 s here.
+
+What does cost time is the planner sharing compute. A thinking plan on a model split across the GPU and CPU ran for over 2 minutes, and menu turns around it took up to 4.6 s. Putting the whole planner on the CPU with `num_gpu: 0` leaves the GPU to the menu model. A request with a different `num_gpu` reloads only the planner model. The shared `num_ctx` rule below is unchanged.
+
+### Results
+
+Each row is the real planner prompt, `PLAN_SYSTEM` and `planSchema()` through `callPlanner` on four fixtures (night outside, bleeding, searched house, fresh start). The baseline had 3 runs of each. The others had 1 to 3, because a thinking plan on a big model takes minutes. One menu turn on `gemma4:12b` is timed right after each plan. The menu baseline was 0.3 to 0.5 s when the machine was quiet. "Real home" is a plan whose `home` is a building id from that fixture. "Dropped" counts plans after which `gemma4:12b` was gone from `/api/ps`.
+
+| planner | placement | thinking | plans | parsed | real home | plan time (cold / warm median) | menu after plan (median / max) | dropped |
+|---|---|---|---|---|---|---|---|---|
+| gemma4:12b (baseline) | Ollama | auto | 12 | 11 | 11 | - / 5.8 s | 0.8 s / 1.1 s | 0 of 12 |
+| gemma4-26b | Ollama | auto | 5, one timed out at 200 s | 4 | 4 | over 200 s / 143 s | 2.9 s / 4.6 s | 0 of 5 |
+| gemma4-26b | Ollama | off | 4 | 4 | 4 | 11 s / 4.9 s | 0.6 s / 0.8 s | 0 of 4 |
+| gemma4-26b | num_gpu 0 | auto | 2 | 2 | 2 | - / 148 s | 0.4 s / 0.4 s | 0 of 2 |
+| gemma4-26b | num_gpu 0 | off | 4 | 4 | 4 | - / 8.6 s | 0.4 s / 6.2 s | 0 of 4 |
+| qwen3.6-35b | Ollama | off | 4 | 4 | 4 | - / 5.5 s | 0.4 s / 0.6 s | 0 of 4 |
+| qwen3.6-35b | num_gpu 0 | auto | 2 | 2 | 2 | - / 115 s | 0.4 s / 0.4 s | 0 of 2 |
+| **qwen3.6-35b** | **num_gpu 0** | **off** | 12 | 12 | 12 | 31 s / 6.2 s | 0.4 s / 0.4 s | 0 of 12 |
+| qwen3.6-27b | num_gpu 0 | off | 4 | 4 | 4 | 54 s / 34 s | 0.5 s / 0.6 s | 0 of 4 |
+
+Names are the installed tags without `_abliterated_pc:latest`. The 6.2 s menu turn in the `gemma4-26b` CPU row came while other programs were calling Ollama. It was not repeated. The menu turns in the 12B rows ran slower (0.8 s) than in the later rows (0.4 s) with nothing changed on the menu side, so part of that gap is the state of the PC and not the planner. The 12B's one parse failure was a reply the JSON reader could not find an object in.
+
+The chosen row again, with a menu turn fired 1.5 s into each plan (8 plans): the menu turn during the plan took 0.46 to 0.48 s, and after it 0.37 to 0.44 s.
+
+Cold start of the chosen model: the first plan after Ollama unloaded it took 31 s. That is longer than `PZ_PLAN_GRACE` (15 s), so a menu turn arriving meanwhile cuts the plan short. Ollama still finishes the load. In a test with a menu turn every 3 s, the first plan was cut at 18 s, the retry took 6 s, and menu turns stayed at 0.36 to 0.41 s during the load. So the first plan of a session is lost and the second works. With `keep_alive` at 30 minutes the model stays loaded between plans.
+
+Not run: `qwen3.8-27b` (the same class as `qwen3.6-27b`, and another program had it loaded), `qwen3.8-27b-coder` (a coding model is not a sensible planner) and the small 4B to 12B variants.
+
+### The rule
+
+Pick the largest installed model that meets all of these:
+
+1. A menu turn right after a plan, and during one, stays under about 1 second.
+2. A plan takes under about 60 seconds when warm.
+3. Every plan parses and names a real home.
+
+Thinking is off for the pick. On the 35B it added about 110 seconds per plan on the CPU and the plans were no better. A reply that only has to fill a small schema does not need much thought.
+
+Of the rows above, the 35B on the CPU with thinking off is the largest that passes. The 27B passes too, at 34 s warm. The 26B is a close second. A thinking plan on any of the big models fails rule 2.
+
+### What the plans look like
+
+`gemma4:12b` (thinking, 5 s) against `qwen3.6-35b` (CPU, no thinking, 6 s). Same fixture, one run each.
+
+| fixture | gemma4:12b | qwen3.6-35b |
+|---|---|---|
+| night outside | Secure house 4060 and rest for the night. Move to house 4060 and enter; eat food, drink water; rest and treat wounds. | Drink water, eat food, and reach the nearby house before night fully sets in. Drink 0.5L water and eat a meal; walk north to house 4060 (9 tiles); enter and sleep in the bed. |
+| bleeding | Treat hand wounds, hydrate, and find a can opener. Bandage the left hand; fill bottles at the tap; search the rest of 4021. | Treat hand, fill water, then search nearby house 4022. Treat the left hand bleed with a bandage; fill bottles at the kitchen tap; walk to 4022 and search. |
+| searched house | Eat food and scavenge building 4022 for a can opener. Eat; travel to and search 4022; return to 4021. | Open the sealed can and eat lunch before heading to the nearby shop. Open the can with the knife; eat; travel to building 4022 (14 tiles east). |
+
+Both are sound. The 35B uses more of the numbers in the situation (litres of water, tiles to walk). It also invents small things now and then ("equip bag", "ammo"). Over 12 plans it never missed the JSON, where the 12B gave one reply the parser could not read in 12. Four fixtures cannot show that it plays better. Read a few plans from a live run before believing it is smarter.
+
+### Choice
+
+Default: `qwen3.6-35b_abliterated_pc:latest`, `PZ_PLANNER_GPU_LAYERS=0`, thinking off. These are set in `bridge/llm.mjs` and apply while `PZ_PLANNER_MODEL` is unset. Menu turns stay at about 0.4 s next to it, and a warm plan takes about 6 s, the same as the 12B.
+
+To go back to the old behaviour: `$env:PZ_PLANNER_MODEL = "gemma4:12b"`.
+
+### Run it yourself
+
+```
+node bridge/tools/planner-bench.mjs qwen3.6-35b_abliterated_pc:latest --gpu 0 --runs 3
+node bridge/tools/planner-bench.mjs gemma4:12b --during --out results.jsonl
+```
+
+`PZ_PLANNER_THINK=off` in the shell turns thinking off for the run. A big model can take minutes per plan with thinking on, so run one fixture at a time (`--fixtures bleeding --runs 1`). Without `--gpu` the bench lets Ollama place the model. It needs Ollama running and loads models, so it is not part of `npm test`.

@@ -39,13 +39,13 @@ $env:PZ_MODEL = "qwen3.5:9b"
 node pz-bridge.mjs
 ```
 
-`gemma4:12b` also fits. The 27B and 35B names on this machine only keep a few layers on the GPU, so a thought takes long enough that the reflex is doing all the surviving. Use those when you want a smarter plan and can stand the wait (`$env:PZ_TIMEOUT = "120000"`).
+`gemma4:12b` also fits. As the menu model, the bigger names on this machine only keep a few layers on the GPU, so each turn takes long enough that the reflex is doing all the surviving. The planner is different: it runs rarely, so a big model is fine there (see below).
 
 `bridge/pz-state.json` is the memory, the map memory and the current day plan included. Delete it for a fresh mind.
 
 `bridge/lessons.json` holds the lessons written after each death, and the run record that checks them. It is kept apart so a fresh mind still remembers what past deaths taught. Delete it, or press delete on a lesson at `/mind`, to forget. Both files are ignored by git.
 
-A slower planner writes a short day plan and a death review writes lessons (`docs/planner.md`). It uses `PZ_PLANNER_MODEL`, which defaults to `PZ_MODEL`.
+A slower planner writes a short day plan and a death review writes lessons (`docs/planner.md`). It uses `PZ_PLANNER_MODEL`. On this PC the default is `qwen3.6-35b_abliterated_pc:latest`, run on the CPU with thinking off: a plan takes about 6 seconds and the menu model stays fast beside it, game running or not. If that model is not installed the planner falls back to `PZ_MODEL`. Set `PZ_PLANNER_MODEL` to pick your own, which then runs the old way (Ollama places it, thinking on auto). `PZ_PLANNER_GPU_LAYERS` sets how many layers go on the GPU, and `node bridge/tools/planner-bench.mjs <model>` measures a planner. The table is in `docs/planner.md`.
 
 `node bridge/tools/try-brain.mjs` runs the test percepts through the real model and prints each choice and its time.
 

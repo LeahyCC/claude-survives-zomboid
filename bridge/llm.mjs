@@ -170,17 +170,69 @@ export async function callChoice(user, ids, model = MODEL) {
 // The slow layer: the day plan and the death review. Its own model, token budget and timeout,
 // because a thought here may run for tens of seconds and the in-game choice must never wait
 // for it to be short.
-export const PLANNER_MODEL = env.PZ_PLANNER_MODEL || MODEL;
+// The planner measured on the 16 GB card with the game running (docs/planner.md). The game holds
+// most of the VRAM, so a big model given the GPU only squeezes the menu model's compute. Run on
+// the CPU with thinking off, the 35B mixture-of-experts model writes a plan in about 6 seconds
+// and a menu turn right after it still takes about 0.4 seconds. Thinking only added about 110
+// seconds and no better plan. These three defaults go together and only apply while
+// PZ_PLANNER_MODEL is unset: a model you pick yourself keeps the old defaults (Ollama places
+// it, thinking on auto). Each can still be set by hand.
+export const DEFAULT_PLANNER_MODEL = 'qwen3.6-35b_abliterated_pc:latest';
+const PLANNER_PINNED = !!env.PZ_PLANNER_MODEL;
+export const PLANNER_MODEL = env.PZ_PLANNER_MODEL || DEFAULT_PLANNER_MODEL;
 const PLANNER_TIMEOUT = Number(env.PZ_PLANNER_TIMEOUT || 120000);
 const PLANNER_PREDICT = Number(env.PZ_PLANNER_PREDICT || 1500);
+
+// Layers of the planner model to keep on the GPU. Unset leaves it to Ollama. 0 is a real value
+// (all CPU), so unset is told apart from 0.
+export function parseGpuLayers(v) {
+  if (v == null || String(v).trim() === '' || String(v).trim().toLowerCase() === 'auto') return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+const ENV_GPU_LAYERS = parseGpuLayers(env.PZ_PLANNER_GPU_LAYERS);
+const ENV_THINK = (env.PZ_PLANNER_THINK || '').toLowerCase();
+
+// Whether this model gets the tuned defaults above.
+const tuned = (model) => !PLANNER_PINNED && model === DEFAULT_PLANNER_MODEL;
+export const plannerGpuLayers = (model) => (ENV_GPU_LAYERS != null ? ENV_GPU_LAYERS : tuned(model) ? 0 : null);
 // auto: ask for thinking and fall back for a model that refuses. off: never think.
-const PLANNER_THINK = (env.PZ_PLANNER_THINK || 'auto').toLowerCase();
+export const plannerThinkMode = (model) => ENV_THINK || (tuned(model) ? 'off' : 'auto');
+export const PLANNER_GPU_LAYERS = plannerGpuLayers(PLANNER_MODEL);
+
+// The options block for a plan request. num_ctx is the shared one on purpose (see NUM_CTX).
+export function plannerOptions(gpuLayers = PLANNER_GPU_LAYERS) {
+  const o = { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: NUM_CTX };
+  const layers = parseGpuLayers(gpuLayers);
+  if (layers != null) o.num_gpu = layers;
+  return o;
+}
+
+// The default planner is a custom tag that only some machines have. Ollama answers a missing
+// model with a 404, and then the plan falls back to the menu model for good.
+export const isMissingModel = (msg) => /404/.test(String(msg)) && /not found/i.test(String(msg));
+let defaultMissing = false;
+
 // Models Ollama said cannot think. Asked once, remembered, so the next plan does not fail twice.
 const cannotThink = new Set();
 
 export const thinkRefused = (msg) => /think/i.test(String(msg)) && /not support|unsupported|does not/i.test(String(msg));
 
-export async function callPlanner({ system, user, schema, model = PLANNER_MODEL, timeout = PLANNER_TIMEOUT }) {
+// gpuLayers: leave undefined for the default, pass null to let Ollama place the model.
+export async function callPlanner(req) {
+  const useDefault = !req.model;
+  if (useDefault && defaultMissing) return planWith({ ...req, model: MODEL });
+  try {
+    return await planWith(req);
+  } catch (err) {
+    if (!useDefault || PLANNER_PINNED || MODEL === PLANNER_MODEL || !isMissingModel(err && err.message)) throw err;
+    defaultMissing = true;
+    return planWith({ ...req, model: MODEL });
+  }
+}
+
+async function planWith({ system, user, schema, model = PLANNER_MODEL, timeout = PLANNER_TIMEOUT, gpuLayers }) {
+  const layers = gpuLayers === undefined ? plannerGpuLayers(model) : gpuLayers;
   if (BACKEND !== 'ollama') {
     throw new Error(`backend ${BACKEND} is not wired here. This bridge talks to Ollama.`);
   }
@@ -195,7 +247,7 @@ export async function callPlanner({ system, user, schema, model = PLANNER_MODEL,
         think,
         format: schema,
         keep_alive: KEEP_ALIVE,
-        options: { temperature: 0.4, num_predict: PLANNER_PREDICT, num_ctx: NUM_CTX },
+        options: plannerOptions(layers),
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       }, 'ollama', timeout, cancel.signal);
       // Never fall back to message.thinking: that is reasoning text, not the JSON the schema asked for.
@@ -206,7 +258,7 @@ export async function callPlanner({ system, user, schema, model = PLANNER_MODEL,
       throw err;
     }
   };
-  let think = PLANNER_THINK !== 'off' && !cannotThink.has(model);
+  let think = plannerThinkMode(model) !== 'off' && !cannotThink.has(model);
   try {
     let reply;
     try {
