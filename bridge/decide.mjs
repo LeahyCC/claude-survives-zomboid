@@ -66,7 +66,9 @@ export function normalize(out) {
 
 export function intentLine(seq, decision) {
   const goalField = clip(decision.subtask || decision.goal, 90);
-  return `${seq}|${decision.type}|${decision.dx}|${decision.dy}|${decision.say}|${decision.thought}|${goalField}`;
+  // The 8th field names what a verb acts on. Nothing fills it yet, and the mod reads a missing one as empty.
+  const targetField = clip(decision.target, 90);
+  return `${seq}|${decision.type}|${decision.dx}|${decision.dy}|${decision.say}|${decision.thought}|${goalField}|${targetField}`;
 }
 
 const BUILDING_STEP = {

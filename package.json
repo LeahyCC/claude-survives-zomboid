@@ -1,0 +1,13 @@
+{
+  "name": "local-survives-zomboid",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint:lua": "node tools/lua-check.mjs",
+    "test": "node tools/lua-check.mjs && node --test bridge/decide.test.mjs \"test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "fengari": "^0.1.5",
+    "luaparse": "^0.3.1"
+  }
+}
