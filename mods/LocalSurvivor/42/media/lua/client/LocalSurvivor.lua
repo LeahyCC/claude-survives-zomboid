@@ -46,7 +46,7 @@ function LS.onTick()
   -- A slice of the place scan every tick, in manual mode too, so the percept stays current.
   pcall(function() LS.Sense.step(p) end)
 
-  if not LS.manualMode and not LS.Needs.holdsSpot(p) then LS.Reflex.releaseDoor(p) end
+  if not LS.manualMode then LS.Reflex.releaseDoor(p) end
 
   if LS.manualMode then
     local qlen = Core.queueLength(p)

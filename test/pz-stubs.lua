@@ -264,7 +264,11 @@ function __makePlayer(opts)
   function p:isDead() return self.dead end
   function p:Say(text) table.insert(self.said, text) end
   function p:getInventory()
-    return { getItems = function() return self.__items end, haveThisKeyId = function() return nil end }
+    -- self.keys: key ids he carries (a loose key or one on a ring), id -> true.
+    return {
+      getItems = function() return self.__items end,
+      haveThisKeyId = function(_, id) return (self.keys or {})[id] and {} or nil end,
+    }
   end
   function p:setSneaking(v) self.sneaking = v end
   function p:isOutside() return true end

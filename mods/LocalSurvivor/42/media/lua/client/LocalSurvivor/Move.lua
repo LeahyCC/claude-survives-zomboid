@@ -9,10 +9,10 @@ LS.Move = LS.Move or {}
 local Move = LS.Move
 local Core = LS.Core
 
--- Unstick fires seen from here, newest last: { tick, x, y, walk }.
+-- Unstick fires seen from here, newest last: { tick, x, y }.
 if LS.unstickLog == nil then LS.unstickLog = {} end
--- The reflex's last unstick deadline we saw, and the head of the queue on the tick before.
-if LS.moveWatch == nil then LS.moveWatch = { seenUntil = 0, head = "" } end
+-- The reflex's last unstick deadline we saw.
+if LS.moveWatch == nil then LS.moveWatch = { seenUntil = 0 } end
 
 Move.NO_PROGRESS = 300       -- ticks without moving half a tile while a walk is queued (~5 s)
 Move.UNSTICK_WINDOW = 1800   -- ~30 s
@@ -162,6 +162,13 @@ function Move.headType(p)
   return head
 end
 
+-- True when the action at the head of the queue is a walk. Only a walk can be stuck on a door:
+-- an eat, a transfer or a smash stands still on purpose.
+function Move.headIsWalk(p)
+  local head = Move.headType(p)
+  return head == "ISWalkToTimedAction" or head == "ISPathFindAction"
+end
+
 -- seq is the brain order behind the walk, nil for a reflex flee. Only a brain MOVE routes
 -- around walls and can be reported as failed.
 function Move.doMove(p, dx, dy, seq)
@@ -220,9 +227,7 @@ function Move.resetProgress(t)
 end
 
 -- Called every tick. The reflex's unstick helper (Reflex.releaseDoor) pushes unstickUntil out
--- each time it fires. It runs earlier in the tick and clears the queue, so the queue head seen
--- on the previous tick says whether it cut a walk or something else (a transfer, a smash).
--- Returns true on the tick a fire is logged.
+-- each time it fires, and it only fires on a stuck walk. Returns true on the tick a fire is logged.
 function Move.watchUnstick(p)
   local w = LS.moveWatch
   local R = LS.reflexState
@@ -233,26 +238,24 @@ function Move.watchUnstick(p)
     if untilTick > LS.tick then
       local x, y = R.stuckX, R.stuckY
       if x == nil then x, y = math.floor(p:getX()), math.floor(p:getY()) end
-      table.insert(LS.unstickLog, { tick = LS.tick, x = x, y = y,
-        walk = w.head == "ISWalkToTimedAction" or w.head == "ISPathFindAction" })
+      table.insert(LS.unstickLog, { tick = LS.tick, x = x, y = y })
       fired = true
     end
   end
   local log = LS.unstickLog
   while #log > 0 and LS.tick - log[1].tick > Move.UNSTICK_WINDOW do table.remove(log, 1) end
-  w.head = Move.headType(p)
   return fired
 end
 
--- Three walk fires within the window on the tile of the newest one, counting only fires at
--- or after since.
+-- Three fires within the window on the tile of the newest one, counting only fires at or
+-- after since.
 function Move.stuckHere(since)
   local log = LS.unstickLog
   local last = log[#log]
-  if not last or not last.walk then return false end
+  if not last then return false end
   local n = 0
   for _, e in ipairs(log) do
-    if e.walk and e.tick >= (since or 0) and e.x == last.x and e.y == last.y
+    if e.tick >= (since or 0) and e.x == last.x and e.y == last.y
       and LS.tick - e.tick <= Move.UNSTICK_WINDOW then n = n + 1 end
   end
   return n >= Move.UNSTICK_LIMIT

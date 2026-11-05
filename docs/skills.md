@@ -32,7 +32,7 @@ Walking for a skill goes through the game's pathfinder (`ISWalkToTimedAction`). 
 - `unreachable`: the walk ends twice without getting a tile closer.
 - `stuck`: a walk is queued but the body has not moved half a tile in 300 ticks (about 5 seconds).
 
-The reflex's unstick helper (`Reflex.releaseDoor`) firing 3 times within 1800 ticks (about 30 seconds) on one tile, while a walk was queued, is also `stuck`. Fires that cut something other than a walk (a transfer, a smash) do not count.
+The reflex's unstick helper (`Reflex.releaseDoor`) firing 3 times within 1800 ticks (about 30 seconds) on one tile is also `stuck`. The helper only fires on a stuck walk, so every fire counts. It never touches a transfer, a smash or any other action done in place (see `docs/combat.md`).
 
 ## MOVE
 
@@ -65,7 +65,8 @@ nearest door  ->  locked?  ->  next door or window (quiet, up to 4 tries)
 ```
 
 - Ways in are the building's exterior ground-floor doors (from the place scan) and windows (read from the footprint once).
-- At a door: an open door is walked through. A closed one is opened (`ISOpenCloseDoor`), then walked through. A locked or boarded door is skipped. Lock state is only read once the body is at the door.
+- At a door: an open door is walked through. A closed one is opened (`ISOpenCloseDoor`), then walked through. A locked door is unlocked first when he carries its key (see below). Any other locked or boarded door is skipped. Lock state is only read once the body is at the door.
+- Keys: the test is the one vanilla makes in `ISLockDoor:isValid`, `getInventory():haveThisKeyId(door:checkKeyId())`. A door he holds the key to is tried before any window, however far. At the door he queues `ISLockDoor:new(p, door, false)` (the vanilla unlock), then opens and walks in. If the door still does not let him in, the next way is tried.
 - At a window: a smashed one has its glass cleared first (`ISRemoveBrokenGlass`), then climbed (`ISClimbThroughWindow`). A closed unlocked one is opened (`ISOpenCloseWindow`) and climbed. A locked one is noted for smashing.
 - Smashing (`ISSmashWindow`, then `ISRemoveBrokenGlass`, then the climb) happens only when no quiet way is left, or 4 quiet ways failed and a locked window is known.
 - Done when the square under the survivor belongs to the building. `why` is `in by a door`, `in through a window`, `in through a smashed window (loud)` or `already inside`.
@@ -79,7 +80,7 @@ No arguments. Searches the building the survivor stands in.
 - Containers are `IsoRoom:getContainer()`. If that is empty, the room squares are read for objects with containers.
 - Walks next to each container (`AdjacentFreeTileFinder.Find`) and takes what the loot table wants (below), inside the weight budget.
 - Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`).
-- A transfer that did not happen (the unstick helper clears the queue) gets one more try.
+- A transfer that did not happen (the reflex clears the queue when it fights or flees) gets one more try.
 - Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them.
 - Done when every room is searched or the weight reaches 85% of `getMaxWeight()`. `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
 - Failed: `not inside`, `nothing left` (every room was already searched), `full` (at 85% before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.

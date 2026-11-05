@@ -25,10 +25,10 @@ LocalSurvivor/
                                     and pure summarisers (summarizeWounds, summarizeZombies, ...)
   Move.lua      LocalSurvivor.Move  canStand stepWalk queuedWalkOnly doMove momentum, lineClear,
                                     progress and the unstick watch the skills share
-  Act.lua       LocalSurvivor.Act   the doX actions, manageLight, execIntent, pollIntent, the verbs,
+  Act.lua       LocalSurvivor.Act   the doEquip, doCloseDoor, doConceal and doBreakin actions, manageLight, execIntent, pollIntent, the verbs,
                                     the skills (GOTO ENTER SEARCH LOOT), update, the loot table
   Reflex.lua    LocalSurvivor.Reflex fleeVector nearestZombie engage reflex survive releaseDoor manageSpeed
-  Needs.lua     LocalSurvivor.Needs start update holdsSpot, the needs verbs and their jobs (docs/needs.md)
+  Needs.lua     LocalSurvivor.Needs start update, the needs verbs and their jobs (docs/needs.md)
   HUD.lua       LocalSurvivor.HUD   start, onKeyPressed (and the LocalHUD panel class)
 ```
 
@@ -48,8 +48,8 @@ State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick
 `LocalSurvivor.onTick` runs every game tick. Order inside it is fixed.
 
 ```
-every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode,
-             not while a needs job acts in place)
+every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode;
+             it acts only on a stuck walk)
              manual mode: write percept each 60, stand down until idle 600 ticks, return
 %5           Reflex.survive          fight or flee; if it acted, skip momentum, glance and poll
 every tick   Act.update              the running skill takes a step, or waits while the reflex acts

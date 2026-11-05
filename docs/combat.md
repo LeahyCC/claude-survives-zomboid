@@ -114,6 +114,19 @@ When he is inside and a zombie chasing him is outside, the snapshot looks for a 
 
 He stands one tile in from the tile just inside the opening. A zombie that climbs in falls on that tile, next to him, and gets stomped. If it is in reach while still climbing, he swings. If a zombie is already inside and close, it is a normal fight. The spot is looked up again once a second. After 30 seconds with nothing within 3 tiles he gives the spot up for 30 seconds.
 
+## Getting off a stuck door
+
+A walk can stand on one tile and try the same door forever. `Reflex.releaseDoor` runs every tick (not in manual mode) and fires when all of these hold:
+
+- A walk or pathfind action (`ISWalkToTimedAction`, `ISPathFindAction`) is at the head of the queue.
+- He has stayed on one tile for 90 ticks.
+- No zombie is within 2 tiles, and the last fire was more than 150 ticks ago.
+
+It then clears the queue and queues a one-tile step to a neighbour that is not across a door. If every neighbour was tried, it opens an unlocked shut door next to him instead.
+
+- Anything else at the head of the queue (eating, drinking, a transfer, bandaging, a window smash, sleeping) is never cleared, however long it takes. The 90 tick clock restarts when a walk begins.
+- It never unlocks anything. A locked door he cannot open makes the walk fail, and the skill (ENTER) picks another way, a window if there is one.
+
 ## HUD text
 
 | action | HUD action | thought |

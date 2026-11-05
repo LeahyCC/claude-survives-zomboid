@@ -180,28 +180,13 @@ test('MOVE fails stuck when the unstick helper fires three times on one tile', (
   assert.equal(lua.get('LocalSurvivor.travel.active'), false);
 });
 
-test('fires on different tiles, or cutting a transfer, do not count as stuck', () => {
+test('fires on different tiles do not count as stuck', () => {
   const lua = world('__floor(8, 8, 30, 12)');
   order(lua, '1|MOVE|16|0|||');
   tick(lua);
   fireUnstick(lua, 10, 10);
   fireUnstick(lua, 11, 10);
   fireUnstick(lua, 12, 10);
-  assert.equal(result(lua).status, 'running');
-  lua.run('LocalSurvivor.unstickLog = {}');
-  lua.run('ISTimedActionQueue.clear(P); ISTimedActionQueue.add(ISInventoryTransferAction:new(P))');
-  tick(lua);
-  for (let i = 0; i < 3; i++) {
-    lua.run(`
-      LocalSurvivor.tick = LocalSurvivor.tick + 200
-      LocalSurvivor.reflexState.unstickUntil = LocalSurvivor.tick + 150
-      LocalSurvivor.reflexState.stuckX, LocalSurvivor.reflexState.stuckY = 10, 10
-      LocalSurvivor.Act.update(P, false)
-      ISTimedActionQueue.add(ISInventoryTransferAction:new(P))
-      LocalSurvivor.tick = LocalSurvivor.tick + 1
-      LocalSurvivor.Act.update(P, false)
-    `);
-  }
   assert.equal(result(lua).status, 'running');
 });
 
@@ -338,8 +323,9 @@ test('a MOVE in the middle of a grab waits for the transfers', () => {
 // ---------- ENTER ----------
 // A building at x 30..34, y 10..14. The door is in the west wall at (30, 12): the square
 // outside is (29, 12). A window in the north wall at (32, 10): outside is (32, 9).
-function enterWorld(door = {}, win = null) {
+function enterWorld(door = {}, win = null, at = [25.5, 12.5], keys = []) {
   return world(`
+    P.keys = { ${keys.map((k) => `[${k}] = true`).join(', ')} }
     B = __makeBuilding({ id = "B2", x = 30, y = 10, x2 = 34, y2 = 14 })
     ROOM = __makeRoom({ name = "hall", x = 30, y = 10, x2 = 34, y2 = 14 })
     __floor(30, 10, 34, 14, { building = B, room = ROOM })
@@ -351,7 +337,8 @@ function enterWorld(door = {}, win = null) {
     DOOR = {
       isExterior = function() return true end, getNorth = function() return false end,
       IsOpen = function() return d.open or false end, isLocked = function() return d.locked or false end,
-      isLockedByKey = function() return false end, isBarricaded = function() return d.barricaded or false end,
+      isLockedByKey = function() return d.locked or false end, isBarricaded = function() return d.barricaded or false end,
+      checkKeyId = function() return d.keyId or -1 end,
     }
     __squares["30,12,0"].opts.door = DOOR
     ${win ? `
@@ -369,7 +356,7 @@ function enterWorld(door = {}, win = null) {
       return nil
     end
     LocalSurvivor.Sense.memoFor(B)
-  `, 25.5, 12.5);
+  `, at[0], at[1]);
 }
 function luaTable(obj) {
   return '{ ' + Object.entries(obj).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ') + ' }';
@@ -402,6 +389,46 @@ test('ENTER tries a window that opens when the door is locked', () => {
   moveTo(lua, 32.5, 10.5);
   tick(lua);
   assert.deepEqual(result(lua), { seq: 1, verb: 'ENTER', status: 'done', why: 'in through a window' });
+});
+
+test('ENTER unlocks a locked door with the key that fits, then walks in', () => {
+  const lua = enterWorld({ locked: true, keyId: 7 }, {}, [25.5, 12.5], [7]);
+  order(lua, '1|ENTER|0|0||||B2');
+  tick(lua);
+  moveTo(lua, 29.5, 12.5);
+  tick(lua, 2);
+  assert.deepEqual(queue(lua), ['ISLockDoor', 'ISOpenCloseDoor', 'ISWalkToTimedAction']);
+  const unlock = lua.run('local a = ISTimedActionQueue.getTimedActionQueue(P).queue[1] return { door = a.args[2] == DOOR, lock = a.args[3] }');
+  assert.deepEqual(unlock, { door: true, lock: false });
+  moveTo(lua, 30.5, 12.5);
+  tick(lua);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'ENTER', status: 'done', why: 'in by a door' });
+});
+
+test('ENTER goes for the door it has the key to even when a window is nearer', () => {
+  const noKey = enterWorld({ locked: true, keyId: 7 }, {}, [32.5, 8.5]);
+  order(noKey, '1|ENTER|0|0||||B2');
+  tick(noKey);
+  assert.equal(walkTarget(noKey), '32,9');
+  const withKey = enterWorld({ locked: true, keyId: 7 }, {}, [32.5, 8.5], [7]);
+  order(withKey, '1|ENTER|0|0||||B2');
+  tick(withKey);
+  assert.equal(walkTarget(withKey), '29,12');
+});
+
+test('ENTER with no key, or the wrong one, leaves a locked door and falls back to the window', () => {
+  for (const keys of [[], [8]]) {
+    const lua = enterWorld({ locked: true, keyId: 7 }, {}, [25.5, 12.5], keys);
+    order(lua, '1|ENTER|0|0||||B2');
+    tick(lua);
+    moveTo(lua, 29.5, 12.5);
+    tick(lua, 3);
+    assert.equal(walkTarget(lua), '32,9');
+    assert.equal(lua.run('return LocalSurvivor.skill.way.kind'), 'window');
+    moveTo(lua, 32.5, 9.5);
+    tick(lua, 2);
+    assert.deepEqual(queue(lua), ['ISOpenCloseWindow', 'ISClimbThroughWindow']);
+  }
 });
 
 test('ENTER smashes a window only when every quiet way is locked, and says it was loud', () => {

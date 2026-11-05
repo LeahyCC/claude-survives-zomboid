@@ -610,18 +610,21 @@ function Reflex.manageSpeed(p)
 end
 
 -- A pathfind that is stuck plays the open-door animation and never ends. Step to a
--- neighbour that is not across a door. If every neighbour failed, open the door directly.
+-- neighbour that is not across a door. If every neighbour failed, open an unlocked door directly.
+-- A locked door is left alone: the walk fails and the skill picks another way in.
+-- Only a walk can be stuck. Anything else at the head of the queue (eating, a transfer, a smash,
+-- bandaging, sleeping) stands still on purpose and is never cleared here.
 function Reflex.releaseDoor(p)
   if LS.tick < R.unstickUntil then return end
   local z, nd = Reflex.nearestZombie(p:getX(), p:getY(), 3)
   if z and nd <= 2 then return end
   local x, y = math.floor(p:getX()), math.floor(p:getY())
-  if x ~= R.stuckX or y ~= R.stuckY then
+  if x ~= R.stuckX or y ~= R.stuckY or not Move.headIsWalk(p) then
+    -- The clock restarts when a walk begins, so a long action in place does not count against the next walk.
     R.stuckX, R.stuckY, R.stuckSince = x, y, LS.tick
     return
   end
   if (LS.tick - R.stuckSince) < 90 then return end
-  if Core.queueLength(p) == 0 then return end
   pcall(function() p:getPathFindBehavior2():cancel(); p:setPath2(nil) end)
   ISTimedActionQueue.clear(p)
   R.closingIn = false
@@ -651,8 +654,9 @@ function Reflex.releaseDoor(p)
             for i = 0, objs:size() - 1 do
               local o = objs:get(i)
               if instanceof(o, "IsoDoor") then
-                pcall(function() if o.isLocked and o:isLocked() then o:setLocked(false) end end)
-                pcall(function() if not o:IsOpen() then o:ToggleDoor(p) end end)
+                local locked = false
+                pcall(function() locked = o:isLocked() or o:isLockedByKey() end)
+                pcall(function() if not locked and not o:IsOpen() then o:ToggleDoor(p) end end)
               end
             end
           end
