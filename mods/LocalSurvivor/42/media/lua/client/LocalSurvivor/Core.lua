@@ -386,6 +386,7 @@ Core.LOOT = {
   GUN_BARE = 56,      -- a gun with no ammo found yet: worth a kilo and a half, not a place over medicine
   FRESH_SOON = 36,    -- food that spoils soon, taken when she will be hungry within the day
   WEAPON_MIN = 8,     -- the least melee score worth carrying: a saucepan (9) yes, a plunger (6) no
+  WEAPON_MIN_BARE = 6.5, -- the same with no weapon at all: a pan, rolling pin or kitchen knife (about 9 new) still passes at 60% wear, a plunger (6.3) does not
   BAG_GAIN = 1.5,     -- a worn bag is only replaced by one with this much more room
   KEEP_DAYS = 14,     -- food with fewer days left than this is "fresh": it spoils soon
   HUNGRY = 0.25,      -- hunger now
@@ -424,7 +425,9 @@ function Core.lootKinds(d, ctx)
     local best = tonumber(ctx.weaponBest) or 0
     -- Over the floor, and a clear gain on the best carried: the same swap margin as EQUIP, so
     -- she never picks up what she would not wield.
-    if v >= L.WEAPON_MIN and (best <= 0 or v > best * Core.WEAPON.SWAP) then
+    -- With nothing real in the pack the floor drops: a worn pan is far better than bare hands.
+    local floor = best < Core.WEAPON.MIN_SCORE and L.WEAPON_MIN_BARE or L.WEAPON_MIN
+    if v >= floor and (best <= 0 or v > best * Core.WEAPON.SWAP) then
       add("weapon", V.weapon + math.min(v, 100) / 20)
     end
   end

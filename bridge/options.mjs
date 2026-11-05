@@ -209,7 +209,7 @@ function needOptions(p, mem, now) {
     const started = (bInfo && bInfo.partly) || (left !== null && rooms > left);
     const state = started ? 'partly searched' : 'not searched yet';
     const roomText = left !== null ? `${count(left, 'room')} left, ` : rooms > 0 ? `${count(rooms, 'room')}, ` : '';
-    add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})` });
+    add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})${weaponPoor(p) ? ', no real weapon yet: kitchen and garage first' : ''}` });
   }
   const bag = carriedBag(p);
   if (bag) add(7, { id: 'wearbag', verb: 'WEARBAG', key: 'WEARBAG', label: `put on the ${bag}` });

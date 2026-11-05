@@ -111,7 +111,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie within 8 |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
-| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie within 8. The label counts the rooms left: "2 rooms left, partly searched" |
+| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie within 8. The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first" |
 | `wearbag` | WEARBAG | no bag worn and a bag in the item names |
 | `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00. With no real weapon, houses come before shops and an unsearched house says "no real weapon yet, look here" |
 | `home` | GOTO | the plan's home is a building the map knows, with a door on record, but the percept does not list it, within 120 tiles, path clear. It goes to that door, and ENTER takes over once the building is listed. It leads the menu from 17:00 or when she needs shelter, and sits low by day. At night outside it is left off when a listed house is nearer |
@@ -147,6 +147,7 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 | `night-outside` | 21:00 to 06:00 and outside | the nearest house on the menu (`ENTER`) |
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
+| `find-weapon` | bare hands (weapon `none`, no gun in hand, no real weapon in the `weapons` list), inside, no chaser, and `search` is on the menu (so the building is not done, she is not heavy and no zombie is within 8) | `search` |
 | `overloaded` | heavy, no chaser (and `drop` is on the menu, so no zombie within 8) | `drop` |
 
 `equip` is kept off the menu for 45 seconds after it is sent. EQUIP never reports done while the weapon is still being raised, so without that the rule would send it again on every look. A `done` result lifts the block at once, and a failed `drop` or `equip` stays off longer (`not heavy` 3 minutes, `nothing to drop` and `equip: no weapon` 10).

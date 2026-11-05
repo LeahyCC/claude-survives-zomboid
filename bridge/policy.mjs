@@ -2,7 +2,7 @@
 // model is not asked. Each rule picks from the same option list the model would see, so the
 // policy can never send an order the options builder thinks is illegal.
 
-import { needs, isNight, inside, zombies, heavy, chasing, betterWeapon } from './senses.mjs';
+import { needs, isNight, inside, zombies, heavy, chasing, betterWeapon, bareHanded } from './senses.mjs';
 import { securedThisVisit } from './memory.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -69,6 +69,18 @@ export const POLICY_RULES = [
       if (!n.has('exhausted') && !safeNight) return null;
       if (zombies(p).some((z) => z.chase)) return null;
       return [opts.find((o) => o.id === 'sleep'), 'Worn out and safe inside. Sleeping.'];
+    },
+  },
+  {
+    id: 'find-weapon',
+    pick(p, mem, opts) {
+      // Bare hands are the top reason the reflex runs from a fight (soak 2026-11-05), and a brain
+      // that says it needs a weapon still picks ENTER or WAIT. So inside a building with rooms
+      // left, she searches. The SEARCH option is only on the menu when the building is not done,
+      // she is not too heavy and no zombie is within 8 tiles, and the mod looks in the kitchen,
+      // garage and sheds first.
+      if (!bareHanded(p) || !inside(p) || chasing(p) > 0) return null;
+      return [opts.find((o) => o.id === 'search'), 'No weapon yet. Searching this building, kitchen and garage first.'];
     },
   },
   {

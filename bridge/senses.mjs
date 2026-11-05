@@ -185,6 +185,15 @@ export function weaponPoor(p) {
   return known.length > 0 && Math.max(...known) < WEAK_WEAPON;
 }
 
+// True when she has nothing to fight with at all: empty hands, no gun, nothing real in the bag.
+// A saucepan is a weak weapon (weaponPoor) but not this. The policy only takes the choice away from
+// the model for this case.
+export function bareHanded(p) {
+  if (!p || heldGun(p)) return false;
+  const list = Array.isArray(p.weapons) ? p.weapons : [];
+  return String(p.weapon || 'none') === 'none' && !list.length;
+}
+
 // Used only when the percept has no asleep flag. A SLEEP that reported "asleep" with fatigue
 // still up is taken as asleep. The memory caps it so a missed wake does not freeze the brain.
 export function sleptJustNow(p) {

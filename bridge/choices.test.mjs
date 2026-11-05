@@ -9,7 +9,7 @@ import { decidePolicy, POLICY_RULES } from './policy.mjs';
 import { planTurn, resolveChoice } from './brain.mjs';
 import { selectRules } from './playbook.mjs';
 import { updateMemory, recordOrder, blockedWhy, building } from './memory.mjs';
-import { running, LONG_VERBS, isAsleep, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
+import { running, LONG_VERBS, isAsleep, canTreat, betterWeapon, weaponPoor, bareHanded } from './senses.mjs';
 
 const NOW = 1_000_000;
 const ids = (opts) => opts.map((o) => o.id);
@@ -156,7 +156,7 @@ test('policy: eat when hungry and food is ready', () => {
 
 test('policy: bleeding stays first, then thirst, then hunger', () => {
   const ruleIds = POLICY_RULES.map((r) => r.id);
-  assert.deepEqual(ruleIds, ['bleeding', 'thirst', 'hunger', 'equip', 'night-outside', 'night-secure', 'sleep', 'overloaded']);
+  assert.deepEqual(ruleIds, ['bleeding', 'thirst', 'hunger', 'equip', 'night-outside', 'night-secure', 'sleep', 'find-weapon', 'overloaded']);
   const all = moment({
     ...INSIDE, bleeding: 1, wounds: [{ part: 'Hand_L', bleed: true }], thirst: 0.8, moodle: { thirsty: 3, hungry: 3, heavy: 2 }, hunger: 0.8, weight: 8,
   }, INSIDE_MEM);
@@ -421,4 +421,63 @@ test('heavy matches the mod: 60% of the limit with no bag, 85% with one', async 
   assert.equal(heavy(p(5.0, 'none')), false);
   assert.equal(heavy(p(7.3, 'School Bag')), false);
   assert.equal(heavy(p(7.8, 'School Bag')), true);
+});
+
+// ---------- bare hands: search for a weapon ----------
+// The soak of 2026-11-05 had her unarmed in 57 percent of her decisions, saying "I need a weapon"
+// while the model picked ENTER or WAIT. Inside a building with rooms left, bare hands now search.
+const BARE = { ...INSIDE, weapon: 'none', weaponScore: 0, weapons: [] };
+
+test('bareHanded: empty hands, no gun, nothing real in the bag, and nothing else', () => {
+  assert.equal(bareHanded(moment({ weapon: 'none', weapons: [] }).percept), true);
+  assert.equal(bareHanded(moment({ weapon: 'none', weapons: [{ n: 'Bat', score: 34 }] }).percept), false, 'one in the bag is not bare');
+  assert.equal(bareHanded(moment({ weapon: 'Saucepan', weaponScore: 12, weapons: [] }).percept), false, 'a saucepan in hand is weak, not bare');
+  assert.equal(bareHanded(moment({ weapon: 'none', heldGun: 'Pistol', weapons: [] }).percept), false, 'a gun in hand is not bare');
+});
+
+test('policy: bare hands inside a building with rooms left search it', () => {
+  const m = moment(BARE, INSIDE_MEM);
+  const got = policy(m);
+  assert.equal(got.rule, 'find-weapon');
+  assert.equal(got.option.verb, 'SEARCH');
+  assert.match(got.option.label, /no real weapon yet: kitchen and garage first/);
+});
+
+test('policy: find-weapon waits for what is more urgent, and for a safe moment', () => {
+  // Bleeding, thirst and the rest still come first.
+  assert.equal(policy(moment({ ...BARE, thirst: 0.8, moodle: { thirsty: 3 }, inv: { ...moment().percept.inv, waterL: 1 } }, INSIDE_MEM)).rule, 'thirst');
+  // A zombie close enough that the menu has no SEARCH: nothing is forced.
+  const close = moment({ ...BARE, zList: [{ d: 5, dx: 5, dy: 0, chase: false }] }, INSIDE_MEM);
+  assert.equal(byId(menu(close), 'search'), undefined);
+  assert.equal(policy(close), null);
+  // A chaser: the reflex has it.
+  assert.equal(policy(moment({ ...BARE, zChasing: 1, zList: [{ d: 12, dx: 12, dy: 0, chase: true }] }, INSIDE_MEM)), null);
+  // Outside, there is no building to search.
+  assert.equal(policy(moment({ ...BARE, outside: true, inBldg: null }, HOME_MEM)), null);
+});
+
+test('policy: find-weapon is not for anyone with something in hand, a gun or a weapon in the bag', () => {
+  const saucepan = { n: 'Saucepan', cond: 0.7, dmg: 0.7, reach: 1, score: 12 };
+  const weak = moment({ ...BARE, weapon: 'Saucepan', weaponScore: 12, weapons: [saucepan] }, INSIDE_MEM);
+  assert.notEqual(policy(weak) && policy(weak).rule, 'find-weapon', 'a weak weapon stays the model call');
+  assert.match(byId(menu(weak), 'search').label, /kitchen and garage first/, 'but the menu still says where to look');
+  const gun = moment({ ...BARE, heldGun: 'Pistol' }, INSIDE_MEM);
+  assert.equal(policy(gun), null);
+  const bagged = moment({ ...BARE, weapons: [saucepan] }, INSIDE_MEM);
+  assert.equal(policy(bagged).rule, 'equip', 'a weapon in the bag is held first');
+});
+
+test('policy: a SEARCH that failed is not forced again', () => {
+  const m = moment(BARE, INSIDE_MEM);
+  recordOrder(m.memory, 9, { verb: 'SEARCH', key: 'SEARCH:4021' }, m.percept, NOW);
+  updateMemory(m.memory, { ...m.percept, res: { seq: 9, verb: 'SEARCH', status: 'failed', why: 'zombie' } }, NOW);
+  assert.equal(byId(menu(m), 'search'), undefined);
+  assert.equal(policy(m), null);
+});
+
+test('policy: night shelter and securing still come before the weapon search', () => {
+  const night = moment({ ...BARE, hour: 23 }, { current: '4021', buildings: { 4021: { visited: true, res: true, enteredAt: 38 } } });
+  assert.equal(policy(night).rule, 'night-secure');
+  const secured = moment({ ...BARE, hour: 23 }, INSIDE_MEM);
+  assert.equal(policy(secured).rule, 'find-weapon');
 });
