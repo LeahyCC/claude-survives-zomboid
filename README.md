@@ -2,7 +2,7 @@
 
 A local model plays Project Zomboid. The body and the fight-or-flee reflex come from [claude-survives-zomboid](https://github.com/LeahyCC/claude-survives-zomboid). This project changes the brain: Ollama, a short prompt, and JSON mode, so an 8B model can answer before the reflex has to take over.
 
-What comes next, and why, is in `docs/roadmap.md`. Where the last session stopped is in `docs/handoff.md`.
+What comes next, and why, is in `docs/roadmap.md`. Where the last session stopped is in `docs/handoff.md`. What we borrow from the Bandits mod and the guides, set against the soak evidence, is in `docs/pro-rules.md`.
 
 ```
 Project Zomboid (LocalSurvivor mod)
