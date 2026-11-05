@@ -53,6 +53,10 @@ function armRespawn() {
 function launchGame() {
   log('launching the game (normal loot)');
   spawnSync('taskkill', ['/IM', 'ProjectZomboid64.exe', '/F'], { encoding: 'utf8' });
+  // Right after the kill the process is still closing and the percept is still fresh, and
+  // playtest.ps1 then reports "Already in game" for a game that is gone. Wait both out.
+  const waitUntil = Date.now() + 60_000;
+  while (Date.now() < waitUntil && (gameRunning() || perceptAgeMs() < 8000)) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},2000)']);
   const r = spawnSync('pwsh', ['-NoProfile', '-File', path.join(REPO, 'tools', 'playtest.ps1')], { encoding: 'utf8', timeout: 15 * 60_000 });
   log(`playtest.ps1: ${String(r.stdout || '').trim().split('\n').pop() || r.status}`);
   armRespawn();
