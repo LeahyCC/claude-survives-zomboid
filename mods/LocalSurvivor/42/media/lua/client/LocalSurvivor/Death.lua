@@ -23,16 +23,19 @@ Death.REFLEX_TICKS = 180
 LS.deathRing = LS.deathRing or {}
 if LS.deathDone == nil then LS.deathDone = false end
 
--- Reflex.perform kinds, grouped. Anything else (none, hold) is not a fight or a flight.
+-- Reflex.perform kinds, grouped. hold is its own reading, and hide and sneak (crouched, out of
+-- sight) are too. Anything else is none.
 local FIGHT = { swing = true, stomp = true, shove = true, close = true }
-local FLEE = { flee = true, backoff = true }
+local FLEE = { flee = true, backoff = true, ["break"] = true, climb = true, wait = true }
+local HIDE = { hide = true, sneak = true }
 
--- Pure. What the reflex was doing: "fight", "flee", "hold" or "none".
+-- Pure. What the reflex was doing: "fight", "flee", "hold", "hide" or "none".
 function Death.reflexMode(kind, ageTicks)
   if not kind or (ageTicks or 0) > Death.REFLEX_TICKS then return "none" end
   if FIGHT[kind] then return "fight" end
   if FLEE[kind] then return "flee" end
   if kind == "hold" then return "hold" end
+  if HIDE[kind] then return "hide" end
   return "none"
 end
 
@@ -74,6 +77,7 @@ function Death.makeSample(f)
   put("order", f.order)
   put("status", f.status)
   put("reflex", f.reflex)
+  put("stance", f.stance)
   return s
 end
 
@@ -144,6 +148,10 @@ function Death.gather(p)
   local r = LS.result or {}
   if r.verb and r.verb ~= "" then f.order, f.status = r.verb, r.status end
   f.reflex = Death.reflexMode(LS.reflexKind, (LS.tick or 0) - (LS.reflexKindTick or -99999))
+  -- The reflex stance behind it (docs/combat.md), while it is fresh.
+  if LS.reflexStance and (LS.tick or 0) - (LS.reflexStanceTick or -99999) <= Death.REFLEX_TICKS then
+    f.stance = LS.reflexStance
+  end
   return Death.makeSample(f)
 end
 

@@ -34,6 +34,12 @@ test('reflexMode groups the fight and the flight, and forgets an old action', ()
   assert.equal(mode('flee', 10), 'flee');
   assert.equal(mode('backoff', 10), 'flee');
   assert.equal(mode('hold', 10), 'hold');
+  // The stances added with the threat assessment (docs/combat.md).
+  assert.equal(mode('break', 10), 'flee');
+  assert.equal(mode('climb', 10), 'flee');
+  assert.equal(mode('wait', 10), 'flee');
+  assert.equal(mode('hide', 10), 'hide');
+  assert.equal(mode('sneak', 10), 'hide');
   assert.equal(mode('swing', 500), 'none');
   assert.equal(mode(null, 0), 'none');
 });
@@ -64,6 +70,7 @@ test('gather reads vitals, wounds, zombies, job and reflex from the live game', 
     LocalSurvivor.skill = { verb = "ENTER" }
     LocalSurvivor.setResult(9, "ENTER", "running", "", "B7")
     LocalSurvivor.reflexKind, LocalSurvivor.reflexKindTick = "flee", 990
+    LocalSurvivor.reflexStance, LocalSurvivor.reflexStanceTick = "BREAK", 990
     __players[0].infected = true`);
   const s = lua.run('return LocalSurvivor.Death.gather(__players[0])');
   assert.equal(s.hp, 63.5);
@@ -82,6 +89,9 @@ test('gather reads vitals, wounds, zombies, job and reflex from the live game', 
   assert.equal(s.order, 'ENTER');
   assert.equal(s.status, 'running');
   assert.equal(s.reflex, 'flee');
+  assert.equal(s.stance, 'BREAK');
+  lua.run('LocalSurvivor.tick = 1500');
+  assert.equal(lua.run('return LocalSurvivor.Death.gather(__players[0])').stance, undefined, 'an old stance is left out');
 });
 
 test('writePercept adds one sample a second while she lives, and none once she is dead', () => {

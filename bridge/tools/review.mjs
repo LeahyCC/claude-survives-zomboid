@@ -129,6 +129,35 @@ export function deathsByCause(lines) {
   return [...groups.values()].sort((a, b) => b.n - a.n || a.cause.localeCompare(b.cause));
 }
 
+// Reflex lines (the mod's call and out lines, copied in by reflexlog.mjs) grouped by stance:
+// how often it was taken, how often she got away within five seconds, and what it cost.
+// Most taken first. An out line names its stance, so a call whose out never came still counts.
+export function reflexByStance(lines) {
+  const rows = new Map();
+  const row = (stance) => {
+    const key = String(stance || 'NONE');
+    if (!rows.has(key)) rows.set(key, { stance: key, calls: 0, outs: 0, escaped: 0, chased: 0, hits: 0, hpLost: 0, kills: 0, why: new Map() });
+    return rows.get(key);
+  };
+  for (const l of Array.isArray(lines) ? lines : []) {
+    if (!isObj(l) || l.t !== 'reflex') continue;
+    const r = row(l.stance);
+    if (l.kind === 'call') {
+      r.calls += 1;
+      const why = l.why || '-';
+      r.why.set(why, (r.why.get(why) || 0) + 1);
+    } else if (l.kind === 'out') {
+      r.outs += 1;
+      if (l.escaped) r.escaped += 1;
+      if (l.chased) r.chased += 1;
+      r.hits += num(l.hits);
+      r.hpLost += num(l.hpLost);
+      r.kills += num(l.kills);
+    }
+  }
+  return [...rows.values()].sort((a, b) => b.calls - a.calls || a.stance.localeCompare(b.stance));
+}
+
 const since = (iso, from) => !from || (typeof iso === 'string' && Date.parse(iso) >= from);
 
 // decisions and nudges are the raw lines. from is a Date or null.
@@ -154,6 +183,15 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
     const avg = (v) => String(Math.round((10 * v) / g.n) / 10);
     const thin = g.mod < g.n ? ` (${g.n - g.mod} from the bridge's own guess)` : '';
     line(`  ${g.n}x ${g.cause}: doing ${jobs}; ${avg(g.close)} close and ${avg(g.chasing)} chasing at the end, ${avg(g.hp)} hp lost in the last 10 s${thin}`);
+  }
+
+  line();
+  line('Reflex by stance (escaped: nothing chasing within 10 and nothing within 3, five seconds on)');
+  const stances = reflexByStance((Array.isArray(decisions) ? decisions : []).filter((l) => isObj(l) && since(l.at, fromMs)));
+  if (!stances.length) line('  No reflex lines logged.');
+  for (const r of stances) {
+    const why = [...r.why].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${w} ${n}`).join(', ');
+    line(`  ${r.stance}: ${r.calls} calls (${why || '-'}); escaped ${r.escaped} of ${r.outs} (${pct(r.escaped, r.outs)}), ${r.hits} hits, ${Math.round(r.hpLost)} hp lost, ${r.kills} kills`);
   }
 
   line();

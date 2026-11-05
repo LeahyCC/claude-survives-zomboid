@@ -132,5 +132,7 @@ export function resolveChoice(p, mem, options, id) {
 export function orderLine(seq, option, thought, say = '') {
   return intentLine(seq, {
     type: option.verb, dx: option.a ?? 0, dy: option.b ?? 0, say, thought, goal: option.label, target: option.target || '',
+    // An option may carry a fight posture for the reflex. None sets one yet: that is its own card.
+    posture: option.posture || '',
   });
 }

@@ -4,6 +4,7 @@
 require "LocalSurvivor/Core"
 require "LocalSurvivor/Sense"
 require "LocalSurvivor/Move"
+require "LocalSurvivor/Stance"
 local LS = LocalSurvivor
 LS.Act = LS.Act or {}
 local Act = LS.Act
@@ -1480,7 +1481,11 @@ function Act.execIntent(p, line)
   local args = {
     seq = seq, action = action, a = parts[3], b = parts[4],
     say = parts[5] or "", thought = parts[6] or "", goal = parts[7] or "", target = parts[8] or "",
+    posture = parts[9] or "",
   }
+  -- The brain's fight posture for this order (avoid, clear). An older bridge sends no ninth
+  -- field, and that is the normal posture, the thresholds as they always were.
+  LS.posture = LS.Stance.posture(args.posture)
   if #args.say > 0 then pcall(function() p:Say(args.say) end) end
 
   -- Night fast forward only suits an order that stands still. Anything else may queue a walk,

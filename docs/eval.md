@@ -277,7 +277,7 @@ A run also ends when `hoursAlive` goes backwards by more than half an hour, whic
 
 `bridge/decisions.jsonl` gets one line for every turn the policy or the model decided. Turns that wait (the reflex, sleep, a running job) write nothing. The file is only ever appended to, and it is ignored by git. Past about 20 MB it moves to `decisions.jsonl.1` (the old `.1` is dropped) and a new file starts. `PZ_DECISIONS_FILE` and `PZ_LOG_MAX_BYTES` change the path and the cap.
 
-Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended.
+Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended. A fifth, `reflex`, is copied from the mod's reflex log by `bridge/reflexlog.mjs`.
 
 | `t` | Written | Fields |
 |---|---|---|
@@ -285,6 +285,7 @@ Every line has `t` and `id`. The three kinds of line for one decision share the 
 | `outcome` | when the order reports | `result` (`done` or `failed`), `why`, `verb`, `ms` (how long it ran), `hpDuring` (hp at the end minus hp at the start), `lostDuring` (hp lost along the way) |
 | `after` | when the follow-up closes | `hpAfter` and `lostAfter` (the 60 seconds after the order finished), `chased` (a zombie started chasing since the order was sent), `died` (she died within 5 minutes of the choice) |
 | `death` | when a run ends | `at`, `run` (the run's start, the same key the decision lines carry), `cause`, `day`, `hours`, `kills`, `job`, `order`, `status`, `zClose` (zombies within 3 tiles), `zNear` (within 10), `zChasing`, `hpLost10`, `inside`, `reflex`, `source` (`mod` or `bridge`), `text`. `id` starts with `death-` and no other line shares it. |
+| `reflex` | when the reflex takes a stance (`kind: call`) and 5 seconds later (`kind: out`) | the mod's own fields, see "The reflex log" in `docs/combat.md`. A call and its out share the `id`. `at` is when the bridge copied it. |
 
 Notes:
 

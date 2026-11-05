@@ -100,11 +100,22 @@ export function normalize(out) {
   };
 }
 
+// The fight postures the mod knows (Stance.POSTURE in the mod). Anything else is left off the line.
+export const POSTURES = ['normal', 'avoid', 'clear'];
+export function postureField(value) {
+  const p = String(value ?? '').trim().toLowerCase();
+  return POSTURES.includes(p) && p !== 'normal' ? p : '';
+}
+
 export function intentLine(seq, decision) {
   const goalField = clip(decision.subtask || decision.goal, 90);
   // The 8th field names what a verb acts on, like a building id for ENTER. The mod reads a missing one as empty.
   const targetField = clip(decision.target, 90);
-  return `${seq}|${decision.type}|${decision.dx}|${decision.dy}|${decision.say}|${decision.thought}|${goalField}|${targetField}`;
+  const line = `${seq}|${decision.type}|${decision.dx}|${decision.dy}|${decision.say}|${decision.thought}|${goalField}|${targetField}`;
+  // The 9th field is the reflex's fight posture (avoid, clear). Only written when set, so every
+  // other line stays as it was. The mod reads a missing one as normal (docs/combat.md).
+  const posture = postureField(decision.posture);
+  return posture ? `${line}|${posture}` : line;
 }
 
 const BUILDING_STEP = {

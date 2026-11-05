@@ -24,6 +24,7 @@ import { digest } from './digest.mjs';
 import { loadStats, observe as observeStats, observeDeath, takeEnded, saveable as saveableStats, summary as statsSummary } from './stats.mjs';
 import { createTracker } from './decisions.mjs';
 import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
+import { createReflexFollower } from './reflexlog.mjs';
 import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -34,6 +35,8 @@ const PERCEPT_FILE = path.join(LUA_DIR, 'local_percept.txt');
 const INTENT_FILE = path.join(LUA_DIR, 'local_intent.txt');
 // The mod writes this when she dies, and it stays until the next death (mods/.../Death.lua).
 const DEATH_FILE = path.join(LUA_DIR, 'local_death.txt');
+// Each reflex stance and what came of it (docs/combat.md). Copied into the decision log.
+const REFLEX_FILE = path.join(LUA_DIR, 'local_reflex.txt');
 const STATE_FILE = process.env.PZ_STATE_FILE || path.join(DIR, 'pz-state.json');
 const LESSONS_FILE = process.env.PZ_LESSONS_FILE || path.join(DIR, 'lessons.json');
 // Append-only logs of what she chose and what Colin would have chosen (docs/eval.md).
@@ -72,7 +75,8 @@ state.map = map;
 if (!Array.isArray(state.recent)) state.recent = [];
 const stats = loadStats(state.stats);
 const runId = () => (stats.run ? stats.run.start : null);
-const tracker = createTracker({ write: createAppender(DECISIONS_FILE, { maxBytes: LOG_MAX_BYTES }) });
+const appendDecisionLine = createAppender(DECISIONS_FILE, { maxBytes: LOG_MAX_BYTES });
+const tracker = createTracker({ write: appendDecisionLine });
 const appendNudge = createAppender(NUDGES_FILE, { maxBytes: LOG_MAX_BYTES });
 const EXAMPLES_ON = examplesEnabled();
 const pastNudges = readLog(NUDGES_FILE, { rotated: false });
@@ -177,6 +181,14 @@ function readDeath() {
   } catch { /* no file yet, or a partial write: try again next second */ }
 }
 setInterval(readDeath, 1000);
+
+// The reflex's calls and outcomes go into decisions.jsonl as reflex lines. Never stops her.
+const pollReflex = createReflexFollower({ file: REFLEX_FILE, write: appendDecisionLine });
+setInterval(() => {
+  try {
+    pollReflex();
+  } catch { /* disk */ }
+}, 1000);
 
 // The slow layer. tick() never blocks: it starts a plan in the background only when no
 // tactical turn is on the model and no fight is on, and the loop below does not wait for it.
