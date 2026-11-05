@@ -166,6 +166,8 @@ function body(stats = { ENDURANCE: 1 }) {
     local p = __makePlayer({ x = 10, y = 10, stats = ... })
     p.calls = {}
     function p:isMeleeWeaponEquipped() return true end
+    p.primary = __makeItem({ type = "Base.Crowbar", name = "Crowbar", melee = true, dmg = 1.15, crit = 20, range = 1.25,
+      swing = 3, twoHand = true, cls = { "BLUNT" }, weight = 2 })
     function p:isAttackStarted() return false end
     function p:isAuthorizeShoveStomp() return true end
     function p:setDoShove(v) table.insert(self.calls, "shove=" .. tostring(v)) end

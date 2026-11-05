@@ -102,12 +102,16 @@ test('summarizeInventory counts supplies and keeps the four best weapons', () =>
     { melee: { n: 'Pan', dmg: 0.8, cond: 1, reach: 1 } },
     { melee: { n: 'Pipe', dmg: 1.1, cond: 1, reach: 1.2 } },
     { melee: { n: 'Spoon', dmg: 0.1, cond: 1, reach: 0.5 } },
+    { melee: { n: 'Pen', dmg: 0.1, cond: 1, reach: 0.8 } },
   ]);
   assert.deepEqual(out.inv, {
     foodReady: 2, cans: 1, canOpener: true, waterL: 1.05, emptyBottles: 1, bandages: 1, disinfectant: 1,
     painkillers: 1, hammer: true, saw: false, screwdriver: false, lighter: true,
   });
-  assert.deepEqual(out.weapons.map((w) => w.n), ['Bat', 'Pipe', 'Pan', 'Knife']);
+  // Best score first. The worn Bat drops under the Pipe, and a Spoon and a Pen are not weapons.
+  assert.deepEqual(out.weapons.map((w) => w.n), ['Pipe', 'Bat', 'Pan', 'Knife']);
+  assert.ok(out.weapons.every((w, i) => i === 0 || out.weapons[i - 1].score >= w.score));
+  assert.ok(out.weapons.every((w) => w.score >= 5));
 });
 
 test('a bare player still gives a percept that parses, with v2 defaults', () => {
@@ -143,13 +147,17 @@ test('a rich player fills every v2 field from the game calls', () => {
     local wipes = __makeItem({ name = "Alcohol Wipes", drainable = true, alcoholPower = 4 })
     local booze = __makeItem({ name = "Disinfectant", fluid = { alcohol = 0.5 } })
     local pills = __makeItem({ type = "Base.Pills", name = "Painkillers" })
-    local hammer = __makeItem({ name = "Hammer", melee = true, dmg = 1, range = 1.1, cond = 8, condMax = 10, tags = { HAMMER = true } })
-    local axe = __makeItem({ name = "Axe", melee = true, dmg = 2, range = 1.2 })
+    local hammer = __makeItem({ name = "Hammer", melee = true, dmg = 1, crit = 20, range = 1.1, cond = 8, condMax = 10,
+      cls = { "SMALL_BLUNT" }, weight = 1.5, tags = { HAMMER = true } })
+    local axe = __makeItem({ name = "Axe", melee = true, dmg = 2, crit = 20, range = 1.2, twoHand = true,
+      cls = { "AXE" }, weight = 3 })
+    local pen = __makeItem({ name = "Pen", melee = true, dmg = 0.1, range = 0.8, swing = 2, cond = 2, condMax = 2,
+      cls = { "IMPROVISED" }, weight = 0.1 })
     local bag = __makeItem({ name = "School Bag", items = { axe, can } })
     local zombie = function(o) table.insert(__zombies, __makeZombie(o)) end
     local p = __makePlayer({
       x = 10, y = 10, kills = 3, hours = 5.5, weight = 7.25, maxWeight = 8, back = bag, visible = 2,
-      items = { apple, opener, bottle, dirtyBottle, empty, bandage, dirty, rag, wipes, booze, pills, hammer, bag },
+      items = { apple, opener, bottle, dirtyBottle, empty, bandage, dirty, rag, wipes, booze, pills, hammer, pen, bag },
       moodles = { THIRST = 2, TIRED = 1, PANIC = 3, HEAVY_LOAD = 1 },
       parts = { __makeBodyPart({ type = "Hand_R", scratched = true, bleeding = true }), __makeBodyPart({ type = "Head" }) },
     })
@@ -172,9 +180,11 @@ test('a rich player fills every v2 field from the game calls', () => {
   });
   assert.equal(p.foods, 1, 'the old field no longer counts the can');
   assert.deepEqual(p.weapons, [
-    { n: 'Axe', dmg: 2, cond: 1, reach: 1.2 },
-    { n: 'Hammer', dmg: 1, cond: 0.8, reach: 1.1 },
-  ]);
+    { n: 'Axe', dmg: 2, cond: 1, reach: 1.2, score: 51.3 },
+    { n: 'Hammer', dmg: 1, cond: 0.8, reach: 1.1, score: 16.5 },
+  ], 'best score first, and the pen is not listed');
+  assert.equal(p.weapon, 'none');
+  assert.equal(p.weaponScore, 0);
   assert.equal(p.bleeding, 1);
   assert.deepEqual(p.wounds.map((w) => w.part), ['Hand_R']);
   assert.equal(p.zChasing, 2);
@@ -356,7 +366,7 @@ test('a busy worst case stays under about 3.3 KB', () => {
   lua.run(`
     local items, parts = {}, {}
     for i = 1, 20 do
-      table.insert(items, __makeItem({ name = "Very Long Item Name Number " .. i, melee = i <= 6, dmg = i / 10, range = 1.15 }))
+      table.insert(items, __makeItem({ name = "Very Long Item Name Number " .. i, melee = i <= 6, dmg = 0.6 + i / 10, range = 1.15 }))
     end
     for i = 1, 17 do
       table.insert(parts, __makeBodyPart({ type = "BodyPart_" .. i, scratched = true, bleeding = i % 2 == 0, glass = true }))
@@ -378,4 +388,24 @@ test('a busy worst case stays under about 3.3 KB', () => {
   assert.equal(p.buildings.length, 6);
   assert.equal(p.weapons.length, 4);
   assert.ok(line.length < 3300, `percept is ${line.length} bytes`);
+});
+
+test('the weapon in hand carries its score, and a pen in hand reads as none', () => {
+  const lua = body();
+  lua.run(`
+    CROWBAR = __makeItem({ type = "Base.Crowbar", name = "Crowbar", melee = true, dmg = 1.15, crit = 20, range = 1.25,
+      swing = 3, twoHand = true, cls = { "BLUNT" }, weight = 2 })
+    PEN = __makeItem({ type = "Base.Pen", name = "Pen", melee = true, dmg = 0.1, range = 0.8, swing = 2, cond = 2,
+      condMax = 2, cls = { "IMPROVISED" }, weight = 0.1 })
+    __players[0] = __makePlayer({ x = 10, y = 10, items = { PEN, CROWBAR }, primary = PEN })
+  `);
+  let p = percept(lua);
+  assert.equal(p.weapon, 'none', 'a pen is not a weapon');
+  assert.equal(p.weaponScore, 0);
+  assert.deepEqual(p.weapons.map((w) => w.n), ['Crowbar']);
+  lua.run('__players[0].primary = CROWBAR');
+  p = percept(lua);
+  assert.equal(p.weapon, 'Crowbar');
+  assert.equal(p.weaponScore, 30.2);
+  assert.equal(p.weapons[0].score, 30.2);
 });

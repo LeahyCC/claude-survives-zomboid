@@ -192,6 +192,11 @@ function Sense.itemType(it)
   t.screwdriver = hasTag(it, "SCREWDRIVER")
   t.lighter = hasTag(it, "START_FIRE")
   t.painkiller = full == "Base.Pills"
+  if t.melee then
+    t.wcls, t.wimp = Core.weaponClass(it)
+    t.wtwo = false
+    pcall(function() t.wtwo = it:isTwoHandWeapon() == true end)
+  end
   pcall(function() t.bandage = it:isCanBandage() == true and not hasTag(it, "CAN_BE_WASHED") end)
   pcall(function() t.wipe = it:IsDrainable() and it:getAlcoholPower() == 4 end)
   pcall(function() t.fluid = it:getFluidContainer() ~= nil end)
@@ -224,17 +229,7 @@ function Sense.describeItem(it, p)
       end
     end)
   end
-  if t.melee then
-    local w = { n = "?", dmg = 0, cond = 0, reach = 0 }
-    pcall(function() w.n = it:getDisplayName() end)
-    pcall(function() w.dmg = it:getMaxDamage() end)
-    pcall(function() w.reach = it:getMaxRange() end)
-    pcall(function()
-      local max = it:getConditionMax()
-      w.cond = max > 0 and it:getCondition() / max or 0
-    end)
-    d.melee = w
-  end
+  if t.melee then d.melee = Core.weaponFacts(it, t) end
   return d
 end
 
@@ -255,7 +250,8 @@ function Sense.carriedItems(p)
   return out
 end
 
--- Pure. descs: the tables describeItem makes. Weapons are the best four by damage.
+-- Pure. descs: the tables describeItem makes. Weapons are the best four by score. An item that
+-- scores under the floor (a pen, a fork, a broken bat) is left out: it is not a weapon.
 function Sense.summarizeInventory(descs, limit)
   limit = limit or 4
   local inv = { foodReady = 0, cans = 0, canOpener = false, waterL = 0, emptyBottles = 0, bandages = 0,
@@ -274,15 +270,19 @@ function Sense.summarizeInventory(descs, limit)
     if d.saw then inv.saw = true end
     if d.screwdriver then inv.screwdriver = true end
     if d.lighter then inv.lighter = true end
-    if d.melee then table.insert(weapons, d.melee) end
+    if d.melee then
+      d.melee.score = d.melee.score or Core.weaponScore(d.melee)
+      if Core.isRealWeapon(d.melee) then table.insert(weapons, d.melee) end
+    end
   end
   inv.waterL = math.floor(inv.waterL * 100 + 0.5) / 100
-  table.sort(weapons, function(a, b) return (a.dmg or 0) > (b.dmg or 0) end)
+  table.sort(weapons, function(a, b) return a.score > b.score end)
   local list = {}
   for i = 1, math.min(limit, #weapons) do
     local w = weapons[i]
     list[i] = { n = tostring(w.n), dmg = math.floor((w.dmg or 0) * 100 + 0.5) / 100,
-      cond = math.floor((w.cond or 0) * 100 + 0.5) / 100, reach = math.floor((w.reach or 0) * 100 + 0.5) / 100 }
+      cond = math.floor((w.cond or 0) * 100 + 0.5) / 100, reach = math.floor((w.reach or 0) * 100 + 0.5) / 100,
+      score = w.score }
   end
   return { inv = inv, weapons = list }
 end
@@ -670,10 +670,13 @@ function Sense.buildPercept(p)
     end
   end)
 
-  local weapon = "none"
+  -- A pen in hand reads as "none": the brain should go and find a weapon, not trust the pen.
+  local weapon, weaponScore = "none", 0
   pcall(function()
     local w = p:getPrimaryHandItem()
-    if Core.isMeleeWeapon(w) then weapon = esc(w:getDisplayName()) end
+    if not Core.isMeleeWeapon(w) then return end
+    local facts = Core.weaponFacts(w, Sense.itemType(w))
+    if Core.isRealWeapon(facts) then weapon, weaponScore = esc(facts.n), facts.score end
   end)
 
   local qlen = Core.queueLength(p)
@@ -716,11 +719,11 @@ function Sense.buildPercept(p)
   j = j .. ',"reflexed":' .. tostring(LS.tick - LS.reflexTick < 600)
   j = j .. ',"lastSeq":' .. LS.lastSeq
   j = j .. ',"err":"' .. esc(LS.lastError) .. '"'
-  return j .. Sense.perceptV2(p, px, py, room) .. '}'
+  return j .. Sense.perceptV2(p, px, py, room, weaponScore) .. '}'
 end
 
 -- The v2 fields, each part guarded on its own so one bad call only blanks its own field.
-function Sense.perceptV2(p, px, py, room)
+function Sense.perceptV2(p, px, py, room, weaponScore)
   local json = Core.json
   local parts = {}
   local function add(key, value) table.insert(parts, ',"' .. key .. '":' .. json(value)) end
@@ -751,6 +754,7 @@ function Sense.perceptV2(p, px, py, room)
   -- so the answer is kept for a few seconds.
   carried.inv.canRip = carried.inv.bandages == 0 and try(function() return LS.Needs.canRip(p) end, false) or false
   add("weapons", carried.weapons)
+  add("weaponScore", weaponScore)
   add("inv", carried.inv)
 
   local body = Sense.summarizeWounds(Sense.bodyFacts(p))

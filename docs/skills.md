@@ -8,7 +8,7 @@ result       res = {seq, verb, status, why, target} in the percept
 status       running -> done | failed
 ```
 
-Every order sets `running` when it starts. The verbs below then set `done` or `failed` with a short `why`. The older one-shot verbs (`EAT DRINK EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`) stay `running`, or `failed` with the old message like `eat: no food`.
+Every order sets `running` when it starts. The verbs below then set `done` or `failed` with a short `why`. The older one-shot verbs (`EAT DRINK EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`) stay `running` (`EQUIP` is `done` at once when the right weapon is already in hand), or `failed` with the old message like `eat: no food`.
 
 `target` is what the order works on: the building id for ENTER, SEARCH and LOOT, `x,y` for GOTO. It is set when the order starts and kept on `done` or `failed` (`docs/percept.md`).
 
@@ -16,7 +16,7 @@ A failure also sets `err` in the percept to `verb: why`, for example `enter: loc
 
 ## How a skill runs
 
-`GOTO`, `ENTER`, `SEARCH` and `LOOT` are skills. One runs at a time, in `LocalSurvivor.skill`. `Act.update` moves it on every tick, called from the entry file right after the reflex.
+`GOTO`, `ENTER`, `SEARCH`, `LOOT` and `DROP` are skills. One runs at a time, in `LocalSurvivor.skill`. `Act.update` moves it on every tick, called from the entry file right after the reflex.
 
 ```
 reflex acted this tick      skill pauses, does not touch the queue
@@ -83,11 +83,35 @@ No arguments. Searches the building the survivor stands in.
 - Walks next to each container (`AdjacentFreeTileFinder.Find`) and takes what the loot table wants (below), inside the weight budget.
 - Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`).
 - A transfer that did not happen (the reflex clears the queue when it fights or flees) gets one more try.
+- When the search took a weapon, the skill takes it up before it reports (see EQUIP below). It queues the equip, waits for it, and tries once more if the reflex cut it off. The `why` text stays `took 4: ...` because the bridge reads it. The percept's `weapon` and `weaponScore` show the result.
 - Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them. The percept shows how many are left as `inBldg.roomsLeft` (`Act.roomsLeft`).
 - Done when every room is searched or the weight reaches 85% of `getMaxWeight()`. `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
 - Failed: `not inside`, `nothing left` (every room was already searched), `full` (at 85% before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
 
 A container the body cannot reach is skipped, not a failure. A room that is not loaded is left for a later SEARCH.
+
+## EQUIP
+
+No arguments. Wields the best weapon he carries, one level into bags.
+
+- Every melee weapon is scored (`Core.weaponScore`, see `docs/combat.md`). A pen, fork, spoon and a broken weapon score 0 and are never wielded.
+- A swap needs a clear gain: the new weapon must score 25% more than the one in hand. Two close weapons never trade places as wear moves their scores.
+- Empty hands or a pen in hand: any real weapon will do, the best one wins.
+- A weapon in a bag is moved to the main inventory first, as vanilla's equip does, then `ISEquipWeaponAction` runs with both hands for a two-hander.
+- Already holding the best: nothing is queued and the order is `done` with `already holding the best`.
+- Failed: `equip: no weapon` (nothing carried scores above the floor).
+
+## DROP
+
+No arguments. Sheds weight until he is under the same line SEARCH stops at (85% of `getMaxWeight()`).
+
+- Takes the least valuable items first, the heaviest first among equals. Junk goes before anything useful: a pen, spare clothes, toys, weights, food he cannot eat.
+- After junk come tools, then a spare weapon, then sealed food, then empty bottles.
+- Never dropped: the weapon in hand, the best weapon he carries, clothes he wears, any bag, water, food he can eat now, bandages and ripped sheets.
+- Each item goes through the game's own drop (`ISInventoryPaneContextMenu.dropItem`). A held item is unequipped first. One in a bag comes out of the bag.
+- It plans up to 3 passes, reading the weight again after each, because a bag softens the weight of what is inside. A pass that dropped nothing ends the skill.
+- Done: `dropped 2: Dumb Bell, Spiffo`, with ` (still heavy)` when nothing more could go.
+- Failed: `not heavy` (already under the line), `nothing to drop` (everything left is on the never list, or the game refused the drop).
 
 ## LOOT
 
@@ -104,7 +128,7 @@ No arguments. Kept for the v1 brain.
 
 | Key | Takes | Max | Test |
 |---|---|---|---|
-| weapon | a melee weapon better than the best carried | | `Act.weaponValue` below |
+| weapon | a real weapon when none is carried, or one that scores 25% over the best carried | | `Core.weaponScore` below |
 | bag | a back bag, when none is worn | 1 | `IsInventoryContainer`, `canBeEquipped` is `ItemBodyLocation.BACK` |
 | water | a container of clean water | 4 | `FluidContainer`, `Fluid.Water`, not tainted or poisonous |
 | bottle | an empty bottle up to 2 L, or another drink | 2 | `isEmpty`, not `isInputLocked`, `getCapacity` |
@@ -121,18 +145,14 @@ No arguments. Kept for the v1 brain.
 
 Clothes (`IsClothing`) and anything that matches no row are left. Broken items are left.
 
-Weapon value: class first, then damage, then condition.
+Weapons rank first, above water and food. A pen, pencil, fork or spoon is never taken. A weapon with a score under 5 is left too. The score is in `docs/combat.md`.
 
-```
-axe, spear, long blade, long blunt (two-handed or reach 1.2+)   3
-short blunt (hammer)                                            1.5
-small blade (kitchen knife, screwdriver)                        0.5
-improvised (plank, crafted spear)                               1 less
-value = (class * 10 + max damage, capped at 5) * (0.5 + 0.5 * condition)
-```
+A better weapon than the best carried is always taken, ahead of everything else the room holds. It still has to fit in the weight left. The weapon row sorts by score, so an axe beats a crowbar when both are in the box. A second weapon that is no clear gain is left behind.
 
-A small blade is only taken when no weapon is carried. The class comes from the item script's `Categories`, read with `Item:containsWeaponCategory(WeaponCategory.X)` the way `XpUpdate.lua` does.
+The class comes from the item script's `Categories`, read with `Item:containsWeaponCategory(WeaponCategory.X)` the way `XpUpdate.lua` does.
 
 ## Checked and unchecked
 
 Every Java method the skills call was checked against the 42.21 jar with `node tools/pz-api.mjs`, and every vanilla Lua function against `media/lua`. The tests drive each skill with stub squares and a stub queue. What the real pathfinder, doors, windows and containers do is only checked in a live game.
+
+The weapon score, EQUIP and DROP use vanilla Lua that was read but not run live: `ISInventoryPaneContextMenu.dropItem(item, playerNum)`, `transferIfNeeded(player, item)`, and `ISEquipWeaponAction:new(player, item, time, primary, twoHands)`. The Java methods were checked with `node tools/pz-api.mjs`: `getCriticalChance`, `getSwingTime`, `getMaxDamage`, `getMaxRange`, `isTwoHandWeapon`, `isHandItem`, `isWorn`, `isEquippedClothing`. Whether a drop from inside a worn bag behaves in game is only checked live.

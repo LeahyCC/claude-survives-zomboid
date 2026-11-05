@@ -192,6 +192,7 @@ ISInventoryPaneContextMenu = {
   getEatingMask = function() return false end,
   transferIfNeeded = function() end,
   getContainers = function() return {} end,
+  dropItem = function(item, pn) menuCall("dropItem", pn, item) end,
 }
 
 -- Craft recipes by name, and which ones the game would let him do now.
@@ -305,7 +306,10 @@ function __makePlayer(opts)
   function p:getClothingItem_Back() return self.back or opts.back end
   function p:getPlayerNum() return 0 end
   function p:isKnownPoison() return false end
-  function p:getPrimaryHandItem() return nil end
+  -- opts.primary / self.primary: the item in the main hand.
+  function p:getPrimaryHandItem() return self.primary or opts.primary end
+  function p:getSecondaryHandItem() return nil end
+  function p:isHandItem(it) return it ~= nil and it == (self.primary or opts.primary) end
   function p:getUseHandWeapon() return nil end
   function p:isMeleeWeaponEquipped() return false end
   function p:faceLocation() end
@@ -319,7 +323,7 @@ function __makePlayer(opts)
 end
 
 -- An item. opts: type (full type), name, food, hung, cantEat, opening, rotten, burnt, poison,
--- melee, dmg, range, cond, condMax, tags (ItemTag name -> true), bandage, drainable, alcoholPower,
+-- melee, dmg, crit, range, swing, cond, condMax, tags (ItemTag name -> true), bandage, drainable, alcoholPower,
 -- fluid = { water, tainted, alcohol, locked }, items (contents when it is a bag).
 function __makeItem(opts)
   opts = opts or {}
@@ -354,6 +358,8 @@ function __makeItem(opts)
   function it:isAimedFirearm() return false end
   function it:getMaxDamage() return opts.dmg or 0 end
   function it:getMaxRange() return opts.range or 0 end
+  function it:getCriticalChance() return opts.crit or 0 end
+  function it:getSwingTime() return opts.swing or 3 end
   function it:getCondition() return opts.cond or 10 end
   function it:getConditionMax() return opts.condMax or 10 end
   function it:hasTag(tag) return (opts.tags or {})[tag] == true end
@@ -545,6 +551,17 @@ function __take(p, c)
       for i, x in ipairs(c.items) do if x == a.args[2] then table.remove(c.items, i); break end end
     end
   end
+  ISTimedActionQueue.clear(p)
+end
+
+-- Finish every queued drop: the item leaves the player's list, the queue empties.
+function __finishDrops(p)
+  for _, c in ipairs(__menuCalls) do
+    if c.name == "dropItem" then
+      for i, x in ipairs(p.__items.items) do if x == c.args[1] then table.remove(p.__items.items, i); break end end
+    end
+  end
+  __menuCalls = {}
   ISTimedActionQueue.clear(p)
 end
 

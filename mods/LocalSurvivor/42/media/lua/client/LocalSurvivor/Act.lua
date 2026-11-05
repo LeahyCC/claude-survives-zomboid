@@ -10,24 +10,73 @@ local Act = LS.Act
 local Core = LS.Core
 local Move = LS.Move
 
--- ---------- other actions ----------
-function Act.doEquip(p)
-  local w = nil
-  pcall(function()
-    local items = p:getInventory():getItems()
-    local best, bestD = nil, -1
-    for i = 0, items:size() - 1 do
-      local it = items:get(i)
-      if Core.isMeleeWeapon(it) then
-        local dmg = 0
-        pcall(function() dmg = it:getMaxDamage() end)
-        if dmg > bestD then best, bestD = it, dmg end
-      end
-    end
-    w = best
-  end)
-  if w then ISTimedActionQueue.add(ISEquipWeaponAction:new(p, w, 25, true)) else LS.lastError = "equip: no weapon" end
+-- ---------- weapons: which to wield ----------
+-- Pure. cands: { { score } } for the weapons he carries. heldScore: the score of what is in hand
+-- (0 for nothing, or a pen). Returns the index to wield, or nil to leave things as they are.
+-- Which weapon to take up is a game rule, so it lives here and not in Core. A swap needs a
+-- clear gain (Core.WEAPON.SWAP): two close weapons would otherwise trade places as wear moves
+-- their scores.
+function Act.chooseWeapon(cands, heldScore)
+  local N = Core.WEAPON
+  heldScore = tonumber(heldScore) or 0
+  local best, bestScore = nil, 0
+  for i, c in ipairs(cands or {}) do
+    local s = tonumber(c.score) or 0
+    if s >= N.MIN_SCORE and s > bestScore then best, bestScore = i, s end
+  end
+  if not best then return nil end
+  if heldScore >= N.MIN_SCORE and bestScore < heldScore * N.SWAP then return nil end
+  return best
 end
+
+-- The melee weapons he carries, one level into bags: { it, score, name, two }.
+function Act.weaponsCarried(p)
+  local out = {}
+  for _, it in ipairs(LS.Sense.carriedItems(p)) do
+    local t = LS.Sense.itemType(it)
+    if t.melee then
+      local ok, w = pcall(Core.weaponFacts, it, t)
+      if ok and w then table.insert(out, { it = it, score = w.score, name = w.n, two = w.two }) end
+    end
+  end
+  return out
+end
+
+-- Score of the melee weapon in the main hand, 0 for empty hands or anything that is not a weapon.
+function Act.heldScore(p)
+  local held = 0
+  pcall(function()
+    local it = p:getPrimaryHandItem()
+    if Core.isMeleeWeapon(it) then held = Core.weaponFacts(it, LS.Sense.itemType(it)).score end
+  end)
+  return held
+end
+
+-- The weapon worth taking up now, or nil. Second value: every weapon carried.
+function Act.equipPlan(p)
+  local cands = Act.weaponsCarried(p)
+  local i = Act.chooseWeapon(cands, Act.heldScore(p))
+  return i and cands[i] or nil, cands
+end
+
+-- A weapon in a bag has to come out to the main inventory first, as vanilla's equip does.
+function Act.queueEquip(p, c)
+  pcall(function() ISInventoryPaneContextMenu.transferIfNeeded(p, c.it) end)
+  ISTimedActionQueue.add(ISEquipWeaponAction:new(p, c.it, 50, true, c.two))
+  LS.hudData.thought = "Taking up the " .. tostring(c.name) .. "."
+end
+
+-- Returns "held" when nothing needed doing because the right weapon is already in hand.
+function Act.doEquip(p)
+  local c, cands = Act.equipPlan(p)
+  if c then Act.queueEquip(p, c); return "queued" end
+  for _, x in ipairs(cands) do
+    if x.score >= Core.WEAPON.MIN_SCORE then return "held" end
+  end
+  LS.lastError = "equip: no weapon"
+end
+
+-- ---------- other actions ----------
 -- close the nearest open door (buys time when fleeing indoors, zombies must thump through)
 function Act.doCloseDoor(p)
   local px, py, pz = math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ())
@@ -175,7 +224,7 @@ Act.LOOT = {
 
 -- What kind of thing a described item is, ignoring what is carried.
 Act.IS = {
-  weapon = function(d) return d.weapon ~= nil end,
+  weapon = function(d) return Core.isRealWeapon(d.weapon) end,
   bag = function(d) return d.bag ~= nil end,
   water = function(d) return (tonumber(d.waterL) or 0) > 0 end,
   bottle = function(d) return (d.emptyBottle or d.drink) and true or false end,
@@ -193,26 +242,18 @@ Act.IS = {
   flashlight = function(d) return d.flashlight == true end,
 }
 
--- Long blunt, axes, spears and long blades are the real weapons in 42. A knife is a last resort.
-Act.WEAPON_CLASS = { axe = 3, spear = 3, longblade = 3, blunt = 3, smallblunt = 1.5, smallblade = 0.5, other = 1 }
-
--- Pure. w = { cls, improvised, long, dmg, cond }. Class first, damage breaks ties within it, and
--- a worn-out weapon counts for less.
-function Act.weaponValue(w)
-  if type(w) ~= "table" then return 0 end
-  local base = Act.WEAPON_CLASS[w.cls or "other"] or 1
-  if w.cls == "blunt" and not w.long then base = 1.5 end
-  if w.improvised then base = math.max(0.2, base - 1) end
-  local cond = math.max(0, math.min(1, tonumber(w.cond) or 1))
-  return (base * 10 + math.min(tonumber(w.dmg) or 0, 5)) * (0.5 + 0.5 * cond)
+-- Pure. The score of a described item's weapon facts, 0 when it has none.
+local function weaponScoreOf(d)
+  if type(d) ~= "table" or d.broken or type(d.weapon) ~= "table" then return 0 end
+  return tonumber(d.weapon.score) or Core.weaponScore(d.weapon)
 end
 
--- Pure. Add one described item to a have table (counts per key, best weapon value, bag worn).
+-- Pure. Add one described item to a have table (counts per key, best weapon score, bag worn).
 function Act.countInto(have, d)
   for _, row in ipairs(Act.LOOT) do
     if row.key ~= "weapon" and Act.IS[row.key](d) then have[row.key] = (have[row.key] or 0) + 1 end
   end
-  if d.weapon then have.weaponValue = math.max(tonumber(have.weaponValue) or 0, Act.weaponValue(d.weapon)) end
+  have.weaponValue = math.max(tonumber(have.weaponValue) or 0, weaponScoreOf(d))
   return have
 end
 
@@ -228,9 +269,11 @@ function Act.lootPick(d, have)
     if Act.IS[key](d) and (tonumber(have[key]) or 0) < (row.max or 99) then
       local ok, bonus = true, -(tonumber(d.weight) or 0) / 100
       if key == "weapon" then
-        local v = Act.weaponValue(d.weapon)
-        ok = v > best + 0.5 and (d.weapon.cls ~= "smallblade" or best <= 0)
-        bonus = v / 100
+        -- A real weapon when he has none, or one clearly better than the best he carries. The
+        -- same swap margin as EQUIP, so he never picks up what he would not wield.
+        local v = weaponScoreOf(d)
+        ok = v >= Core.WEAPON.MIN_SCORE and (best <= 0 or v > best * Core.WEAPON.SWAP)
+        bonus = math.min(v, 100) / 200
       elseif key == "bag" then
         ok = not have.bagWorn
         bonus = (tonumber(d.bag.capacity) or 0) / 100
@@ -270,15 +313,17 @@ function Act.planTake(descs, have, budget)
 end
 
 -- Pure. "took 3: Crowbar, Beans, Bandage", capped so the percept stays small.
-function Act.tookText(names)
+local function listText(verb, names)
   local n = #(names or {})
-  if n == 0 then return "took nothing" end
+  if n == 0 then return verb .. " nothing" end
   local shown = {}
   for i = 1, math.min(8, n) do shown[i] = names[i] end
-  local text = "took " .. n .. ": " .. table.concat(shown, ", ")
+  local text = verb .. " " .. n .. ": " .. table.concat(shown, ", ")
   if n > 8 then text = text .. " and " .. (n - 8) .. " more" end
   return text
 end
+function Act.tookText(names) return listText("took", names) end
+function Act.droppedText(names) return listText("dropped", names) end
 
 -- ---------- describing items ----------
 if LS.lootTypes == nil then LS.lootTypes = {} end
@@ -289,10 +334,8 @@ local function lootType(it)
   pcall(function() full = it:getFullType() end)
   local t = LS.lootTypes[full]
   if t then return t end
-  t = { back = Core.isBackBag(it), flashlight = false, twoHand = false }
-  t.cls, t.improvised = Core.weaponClass(it)
+  t = { back = Core.isBackBag(it), flashlight = false }
   pcall(function() t.flashlight = it:hasTag(ItemTag.FLASHLIGHT) == true end)
-  pcall(function() t.twoHand = it:isTwoHandWeapon() == true end)
   if full ~= "" then LS.lootTypes[full] = t end
   return t
 end
@@ -307,17 +350,7 @@ function Act.describeLoot(it, p)
   pcall(function() d.weight = it:getActualWeight() end)
   pcall(function() d.broken = it:isBroken() == true end)
   pcall(function() d.clothing = it:IsClothing() == true end)
-  if t.melee then
-    local w = { cls = lt.cls, improvised = lt.improvised, dmg = 0, range = 0, cond = 1 }
-    pcall(function() w.dmg = it:getMaxDamage() end)
-    pcall(function() w.range = it:getMaxRange() end)
-    pcall(function()
-      local max = it:getConditionMax()
-      w.cond = max > 0 and it:getCondition() / max or 0
-    end)
-    w.long = lt.twoHand or (tonumber(w.range) or 0) >= 1.2
-    d.weapon = w
-  end
+  if t.melee then d.weapon = Core.weaponFacts(it, t) end
   if t.bag and lt.back then
     d.bag = { capacity = 0 }
     pcall(function() d.bag.capacity = it:getCapacity() end)
@@ -785,10 +818,28 @@ Act.SKILL.LOOT = {
   step = function(p, s) searchStep(p, s) end,
 }
 
-local function finishSearch(s, full)
+local function endSearch(s, full)
   local why = Act.tookText(s.names)
   if full then why = why .. " (full)" end
   Act.finish(s, "done", why)
+end
+
+-- A search that took a better weapon takes it up before it reports, so the next order does not
+-- find the old one still in hand. The result text stays "took N: ..." because the bridge reads it.
+local function finishSearch(p, s, full)
+  if s.tookWeapon and not s.equipTried then
+    local c = Act.equipPlan(p)
+    if c then
+      s.equipTried, s.equipItem, s.full = true, c, full
+      Act.queueEquip(p, c)
+      -- A MOVE ordered meanwhile waits for it, as it does for item transfers.
+      LS.lastLootTick = LS.tick
+      s.waitTick = LS.tick
+      s.phase = "equip"
+      return
+    end
+  end
+  endSearch(s, full)
 end
 
 local function roomDistance(p, r)
@@ -803,8 +854,22 @@ end
 searchStep = function(p, s)
   local done = (s.bid and not s.ignoreDone) and (LS.searched[s.bid] or {}) or {}
 
+  if s.phase == "equip" then
+    if Core.queueLength(p) > 0 and LS.tick - s.waitTick < 600 then return end
+    local held = false
+    pcall(function() held = p:getPrimaryHandItem() == s.equipItem.it end)
+    -- The reflex clears the queue when it fights, so a cut equip gets one more try.
+    if not held and not s.equipRetried then
+      s.equipRetried = true
+      Act.queueEquip(p, s.equipItem)
+      s.waitTick = LS.tick
+      return
+    end
+    return endSearch(s, s.full)
+  end
+
   if s.phase == "room" then
-    if Act.weightLeft(p) <= 0 then return finishSearch(s, true) end
+    if Act.weightLeft(p) <= 0 then return finishSearch(p, s, true) end
     local best, bestD = nil, 99999
     for _, r in ipairs(s.rooms) do
       if not done[r.key] and not s.skipRoom[r.key] then
@@ -812,7 +877,7 @@ searchStep = function(p, s)
         if d < bestD then best, bestD = r, d end
       end
     end
-    if not best then return finishSearch(s, false) end
+    if not best then return finishSearch(p, s, false) end
     local room = best.room
     if not room and best.def then pcall(function() room = best.def:getIsoRoom() end) end
     if not room and not best.containers then
@@ -845,7 +910,7 @@ searchStep = function(p, s)
       s.phase = "room"
       return
     end
-    if Act.weightLeft(p) <= 0 then return finishSearch(s, true) end
+    if Act.weightLeft(p) <= 0 then return finishSearch(p, s, true) end
     s.cur = best
     pcall(function() s.tx, s.ty = best.sq:getX() + 0.5, best.sq:getY() + 0.5 end)
     s.dest = nil
@@ -894,7 +959,7 @@ searchStep = function(p, s)
         pcall(function() ISTimedActionQueue.add(ISWearClothing:new(p, it)) end)
         s.have.bagWorn = true
       end
-      table.insert(s.pending, { it = it, name = descs[pick.index].name })
+      table.insert(s.pending, { it = it, name = descs[pick.index].name, weapon = pick.key == "weapon" })
     end
     if #s.pending == 0 then c.done = true; s.phase = "next"; return end
     LS.lastLootTick = LS.tick
@@ -912,6 +977,7 @@ searchStep = function(p, s)
       pcall(function() still = c.c:contains(e.it) end)
       if still then left = left + 1 elseif not e.counted then
         e.counted = true
+        if e.weapon then s.tookWeapon = true end
         table.insert(s.names, e.name)
       end
     end
@@ -928,6 +994,125 @@ searchStep = function(p, s)
     s.phase = "next"
   end
 end
+
+-- ---------- DROP ----------
+-- Shed weight. The least valuable things go first, until he is back under the line SEARCH stops
+-- at. Never the weapon in hand, the best weapon he carries, clothes he wears, a bag, water, food
+-- he can eat now or a bandage. It uses the game's own drop (ISInventoryPaneContextMenu.dropItem),
+-- so a held item is unequipped first and one in a bag comes out of the bag.
+Act.DROP_PASSES = 3
+
+-- Pure. How much a described item is worth keeping; higher stays longer. nil means never drop it.
+-- Which things he keeps is a game rule, so it lives here and not in Core.
+function Act.keepValue(d)
+  if type(d) ~= "table" then return nil end
+  if d.held or d.worn or d.container then return nil end
+  if (tonumber(d.waterL) or 0) > 0 or d.edible or d.bandage or d.sheet then return nil end
+  -- A spare weapon outranks the tools but not the food and medicine, and a better one outranks a worse.
+  if Core.isRealWeapon(d.weapon) then return 25 + math.min(weaponScoreOf(d), 100) / 10 end
+  for _, row in ipairs(Act.LOOT) do
+    if row.key ~= "weapon" and row.key ~= "bag" and Act.IS[row.key](d) then return row.score end
+  end
+  return 0
+end
+
+-- Pure. descs: described items. over: the weight to shed. Returns { index } in the order to drop
+-- them, lowest value first and the heaviest first among equals, and stops once enough goes.
+function Act.planDrop(descs, over)
+  over = tonumber(over) or 0
+  local best, bestScore = nil, 0
+  for i, d in ipairs(descs or {}) do
+    local sc = weaponScoreOf(d)
+    if Core.isRealWeapon(d.weapon) and sc > bestScore then best, bestScore = i, sc end
+  end
+  local cands = {}
+  for i, d in ipairs(descs or {}) do
+    local value, w = Act.keepValue(d), tonumber(d.weight) or 0
+    if value ~= nil and i ~= best and w > 0 then table.insert(cands, { i = i, value = value, w = w }) end
+  end
+  table.sort(cands, function(a, b)
+    if a.value ~= b.value then return a.value < b.value end
+    if a.w ~= b.w then return a.w > b.w end
+    return a.i < b.i
+  end)
+  local picks, shed = {}, 0
+  for _, c in ipairs(cands) do
+    if shed >= over then break end
+    table.insert(picks, c.i)
+    shed = shed + c.w
+  end
+  return picks, shed
+end
+
+-- What he carries as described items, with the flags planDrop needs, and the game items beside them.
+local function dropFacts(p)
+  local descs, items = {}, {}
+  for _, it in ipairs(LS.Sense.carriedItems(p)) do
+    local ok, d = pcall(Act.describeLoot, it, p)
+    if ok and d then
+      pcall(function() d.held = p:isHandItem(it) == true end)
+      pcall(function() d.worn = it:isWorn() == true or p:isEquippedClothing(it) == true end)
+      d.container = LS.Sense.itemType(it).bag == true
+      table.insert(descs, d)
+      table.insert(items, it)
+    end
+  end
+  return descs, items
+end
+
+local function endDrop(s, still)
+  if #s.names == 0 then return Act.finish(s, "failed", "nothing to drop") end
+  local why = Act.droppedText(s.names)
+  if still then why = why .. " (still heavy)" end
+  Act.finish(s, "done", why)
+end
+
+-- Queue one pass of drops. Each pass reads the world again, so a resume after the reflex, or a
+-- pass that left him heavy because a bag softened the weight, simply plans the rest.
+local function dropPass(p, s)
+  local over = -Act.weightLeft(p)
+  if over <= 0 then return endDrop(s, false) end
+  if s.passes >= Act.DROP_PASSES then return endDrop(s, true) end
+  local descs, items = dropFacts(p)
+  local picks = Act.planDrop(descs, over)
+  if #picks == 0 then return endDrop(s, true) end
+  s.passes = s.passes + 1
+  s.pending = {}
+  ISTimedActionQueue.clear(p)
+  local num = 0
+  pcall(function() num = p:getPlayerNum() end)
+  for _, i in ipairs(picks) do
+    ISInventoryPaneContextMenu.dropItem(items[i], num)
+    table.insert(s.pending, { it = items[i], name = descs[i].name })
+  end
+  s.waitTick = LS.tick
+  s.phase = "wait"
+end
+
+Act.SKILL.DROP = {
+  start = function(p, s)
+    if Act.weightLeft(p) >= 0 then return Act.finish(s, "failed", "not heavy") end
+    LS.hudData.action = "DROP"
+    s.names, s.passes = {}, 0
+    dropPass(p, s)
+  end,
+  step = function(p, s)
+    if s.phase ~= "wait" then return end
+    if Core.queueLength(p) > 0 and LS.tick - s.waitTick < 1800 then return end
+    local now = {}
+    for _, it in ipairs(LS.Sense.carriedItems(p)) do now[it] = true end
+    local gone = 0
+    for _, e in ipairs(s.pending) do
+      if not now[e.it] then
+        gone = gone + 1
+        table.insert(s.names, e.name)
+      end
+    end
+    -- Nothing left his hands (a drop the game refused): another pass would plan the same again.
+    if gone == 0 then return endDrop(s, true) end
+    dropPass(p, s)
+  end,
+}
 
 -- ---------- ENTER ----------
 -- Get into a building by its id from the percept. Doors first (a locked one is unlocked when he
@@ -1204,7 +1389,11 @@ verbs.MOVE = function(p, args)
   end
 end
 -- EAT and DRINK are registered in Needs.lua.
-verbs.EQUIP = function(p) LS.travel.active = false; Act.doEquip(p) end
+verbs.EQUIP = function(p, args)
+  LS.travel.active = false
+  -- Nothing to do is a finished order, not a running one, so the brain can move on.
+  if Act.doEquip(p) == "held" then LS.setResult(args.seq, "EQUIP", "done", "already holding the best") end
+end
 verbs.CLOSEDOOR = function(p) LS.travel.active = false; Act.doCloseDoor(p) end
 verbs.CONCEAL = function(p) LS.travel.active = false; Act.doConceal(p) end
 verbs.BREAKIN = function(p) LS.travel.active = false; Act.doBreakin(p) end
@@ -1214,7 +1403,7 @@ verbs.WAIT = function()
   LS.travel.active = false
   if not LS.skill then LS.observing = true end
 end
-for _, name in ipairs({ "GOTO", "ENTER", "SEARCH", "LOOT" }) do
+for _, name in ipairs({ "GOTO", "ENTER", "SEARCH", "LOOT", "DROP" }) do
   verbs[name] = function(p, args) Act.startSkill(p, name, args, Act.SKILL[name]) end
 end
 
