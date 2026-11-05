@@ -176,6 +176,7 @@ function Move.doMove(p, dx, dy, seq)
   dx = math.max(-40, math.min(40, math.floor(tonumber(dx) or 0)))
   dy = math.max(-40, math.min(40, math.floor(tonumber(dy) or 0)))
   if dx == 0 and dy == 0 then return end
+  Core.snapSpeed()
   -- Same heading, and the queue is only a walk: keep that step. Anything else gets replaced.
   if Move.queuedWalkOnly(p) and travel.active and (dx * travel.dx + dy * travel.dy) > 0 then
     travel.dx, travel.dy, travel.budget = dx, dy, 6

@@ -1483,6 +1483,13 @@ function Act.execIntent(p, line)
   }
   if #args.say > 0 then pcall(function() p:Say(args.say) end) end
 
+  -- Night fast forward only suits an order that stands still. Anything else may queue a walk,
+  -- and a walk queued above speed 2 is dropped, so the clock slows before the verb runs. A SLEEP
+  -- that is not asleep yet walks to a bed and shuts the room first.
+  local asleep = false
+  pcall(function() asleep = p:isAsleep() == true end)
+  if not LS.Reflex.CALM_VERBS[action] or (action == "SLEEP" and not asleep) then Core.snapSpeed() end
+
   -- HUD update (transparency)
   hud.action = action
   hud.say = args.say

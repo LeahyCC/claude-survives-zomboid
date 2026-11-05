@@ -233,6 +233,7 @@ function getGameTime()
     getHour = function() return __time.hour end,
     getNightsSurvived = function() return __time.nights end,
     isNight = function() return __time.night or false end,
+    setMultiplier = function(_, m) __time.mult = m end,
   }
 end
 function getGameSpeed() return __speed end
@@ -292,7 +293,9 @@ function __makePlayer(opts)
   end
   function p:getBodyDamage()
     return {
-      getOverallBodyHealth = function() return opts.hp or 100 end,
+      -- A test sets p.hp to take damage, and p.bleeding to open a wound.
+      getOverallBodyHealth = function() return self.hp or opts.hp or 100 end,
+      getNumPartsBleeding = function() return self.bleeding or 0 end,
       getBodyParts = function() return __javaList(opts.parts or {}) end,
     }
   end

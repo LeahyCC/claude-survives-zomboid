@@ -543,6 +543,8 @@ function Reflex.perform(p, a, snap, objs)
   if kind ~= "backoff" then R.backingOff = false end
   if kind ~= "hold" then R.holdWalk = false; R.holdSince = nil end
   if kind == "none" then return false end
+  -- Every branch below may queue a walk, and a walk queued above speed 2 is dropped.
+  Core.snapSpeed()
   if kind == "swing" then
     Reflex.attack(p, z, false)
     hud.action = "FIGHT"
@@ -598,16 +600,111 @@ function Reflex.survive(p)
   return Reflex.perform(p, Reflex.decide(snap), snap, objs)
 end
 
+-- ---------- game speed ----------
+-- Night fast forward: speed 3 while she waits out the dark inside, safe and not walking.
+Reflex.NIGHT_SPEED = 3
+Reflex.FAST_CLEAR = 20          -- tiles. No zombie nearer than this
+Reflex.GENTLE_CLEAR = 60        -- tiles. Speed 2 outside the night rule needs this much room
+Reflex.HIT_DROP = 0.2           -- body health lost between two ticks that counts as a hit
+-- The orders that leave her standing still. Anything else may walk.
+Reflex.CALM_VERBS = { WAIT = true, REST = true, SLEEP = true }
+-- The only queued action that may be running while the clock is fast. Sitting down for a REST
+-- stays in place. A walk would be dropped above speed 2.
+Reflex.IN_PLACE = { ISSitOnGround = true }
+-- The bridge treats 21:00 to 06:00 as night (isNight in senses.mjs). Keep the two the same.
+Reflex.NIGHT_FROM = 21
+Reflex.NIGHT_TO = 6
+
+function Reflex.isNightHour(hour)
+  local h = tonumber(hour) or 12
+  return h >= Reflex.NIGHT_FROM or h < Reflex.NIGHT_TO
+end
+
+-- Pure. f holds the facts speedFacts gathers: manual, nightFast, night, inside, nd (nearest
+-- zombie, 9999 if none), chasing, bleeding, cooling, calm. Returns the speed to run at.
+-- Today's rule is 2 with 60 tiles of room and 1 otherwise. Night fast forward is the one case
+-- that goes above 2, and every condition has to hold.
+function Reflex.pickSpeed(f)
+  if f.manual then return 1 end
+  if f.nightFast and f.night and f.inside and f.calm and not f.cooling
+    and f.nd > Reflex.FAST_CLEAR and not f.chasing and not f.bleeding then
+    return Reflex.NIGHT_SPEED
+  end
+  if f.nd > Reflex.GENTLE_CLEAR then return 2 end
+  return 1
+end
+
+-- Is she standing still on purpose? Asleep counts at once: she cannot walk, and the game runs
+-- the clock fast for sleep itself. Otherwise the last order must be a calm one and nothing may
+-- be walking: no skill, no needs job other than a REST, no momentum, nothing but a sit queued.
+function Reflex.isCalm(p, asleep)
+  if asleep then return true end
+  if not Reflex.CALM_VERBS[LS.result.verb or ""] then return false end
+  if LS.skill ~= nil or LS.travel.active then return false end
+  local job = LS.needsJob
+  -- A SLEEP job that is not asleep yet is still walking to a bed and shutting the room.
+  if job and job.verb ~= "REST" then return false end
+  local qlen = Core.queueLength(p)
+  return qlen == 0 or (qlen == 1 and Reflex.IN_PLACE[Move.headType(p)] == true)
+end
+
+function Reflex.speedFacts(p)
+  local f = { nd = 9999, night = false, inside = false, chasing = false, bleeding = false, asleep = false }
+  f.manual = LS.manualMode and true or false
+  f.nightFast = LS.nightFast ~= false
+  f.cooling = LS.tick < LS.fastCoolUntil
+  local _, nd = Reflex.nearestZombie(p:getX(), p:getY(), 70)
+  f.nd = nd
+  pcall(function() f.night = Reflex.isNightHour(getGameTime():getHour()) end)
+  pcall(function() f.asleep = p:isAsleep() == true end)
+  pcall(function() f.inside = (not p:isOutside()) and p:getSquare():getBuilding() ~= nil end)
+  -- The scans below are only worth paying for once everything cheaper says fast forward is on.
+  if f.nightFast and f.night and f.inside and f.nd > Reflex.FAST_CLEAR then
+    pcall(function() f.chasing = LS.Needs.chasing(p) end)
+    pcall(function() f.bleeding = p:getBodyDamage():getNumPartsBleeding() > 0 end)
+    f.calm = Reflex.isCalm(p, f.asleep)
+  else
+    f.calm = false
+  end
+  return f
+end
+
 -- auto game-speed: fast-forward the boring safe stretches, snap to normal near danger so the
 -- reflex keeps full fidelity. Toggle with G. The user's manual pause (speed 0) always wins.
 function Reflex.manageSpeed(p)
   if not LS.autoSpeed then return end
-  local ok, cur = pcall(function() return getGameSpeed() end)
-  if not ok or cur == 0 then return end          -- paused by user -> leave it
-  local _, nd = Reflex.nearestZombie(p:getX(), p:getY(), 70)
-  local want = 1
-  if not LS.manualMode and nd > 60 then want = 2 end  -- safe and clear -> gentle fast-forward
-  if cur ~= want then pcall(function() setGameSpeed(want) end) end
+  local cur = Core.gameSpeed()
+  if not cur or cur == 0 then return end          -- paused by user -> leave it
+  local want = Reflex.pickSpeed(Reflex.speedFacts(p))
+  -- Asleep, the game picks its own fast speed. Do not lower it to ours.
+  if want == Reflex.NIGHT_SPEED and cur >= want then return end
+  if cur == want then return end
+  -- Cut short: keep the fast forward off for a while so the clock does not flutter.
+  if cur > 2 and want < cur then LS.fastCoolUntil = LS.tick + Core.FAST_COOL end
+  Core.setSpeed(want)
+end
+
+-- Every tick: a hit is the one danger the 5 tick check is too slow for. Costs one getter.
+function Reflex.watchHealth(p)
+  local hp = nil
+  pcall(function() hp = p:getBodyDamage():getOverallBodyHealth() end)
+  if not hp then return end
+  local last = R.lastHp
+  R.lastHp = hp
+  if last and hp < last - Reflex.HIT_DROP then Core.snapSpeed() end
+end
+
+-- Run every 5 ticks while the clock is fast: danger is only seen at the speed it is checked at,
+-- and 20 tiles go by quickly at speed 3.
+function Reflex.guardSpeed(p)
+  local cur = Core.gameSpeed()
+  if cur and cur > 2 then Reflex.manageSpeed(p) end
+end
+
+-- True while night fast forward is what the clock is running at, for the HUD and the percept.
+function Reflex.nightFastOn()
+  local cur = Core.gameSpeed()
+  return LS.autoSpeed and LS.nightFast ~= false and cur ~= nil and cur > 2
 end
 
 -- A pathfind that is stuck plays the open-door animation and never ends. Step to a

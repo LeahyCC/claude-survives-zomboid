@@ -4,6 +4,7 @@
 require "ISUI/ISUIElement"
 require "LocalSurvivor/Core"
 local LS = LocalSurvivor
+local Core = LS.Core
 LS.HUD = LS.HUD or {}
 local HUD = LS.HUD
 
@@ -52,6 +53,14 @@ function LocalHUD:render()
   self:drawRectBorder(0, 0, w, h, 0.7, 0.5, 0.82, 0.72)
   self:drawText("LOCAL", 12, 8, 0.5, 0.82, 0.72, 1, UIFont.Medium)
   self:drawTextRight(self:statusText(), w - 12, 11, 1, 0.83, 0.28, 1, UIFont.Small)
+  -- Bright while the clock is racing through the night, dim when the switch is on but idle.
+  local racing = false
+  pcall(function() racing = LS.Reflex.nightFastOn() end)
+  if racing then
+    self:drawText("NIGHT FAST FORWARD  [K]", 74, 11, 0.5, 0.7, 1, 1, UIFont.Small)
+  else
+    self:drawText("night fast forward " .. (LS.nightFast and "on" or "off") .. "  [K]", 74, 11, 0.45, 0.5, 0.56, 1, UIFont.Small)
+  end
   if data.goal ~= "" then
     for _, gl in ipairs(self:wrap("GOAL: " .. data.goal, 62)) do
       self:drawText(gl, 12, 28, 1, 0.83, 0.28, 1, UIFont.Small); break  -- one line, amber
@@ -92,12 +101,20 @@ function HUD.onKeyPressed(key)
   if key == Keyboard.KEY_H then LS.hudData.visible = not LS.hudData.visible; return end
   if key == Keyboard.KEY_G then
     LS.autoSpeed = not LS.autoSpeed
-    if not LS.autoSpeed then pcall(function() setGameSpeed(1) end) end
+    -- Speed and multiplier together, or a 20x clock would be left behind at speed 1.
+    if not LS.autoSpeed then Core.setSpeed(1) end
+    return
+  end
+  if key == Keyboard.KEY_K then
+    LS.nightFast = not LS.nightFast
+    if not LS.nightFast then Core.snapSpeed() end
     return
   end
   if MOVE_KEYS[key] then
     LS.lastHumanKeyTick = LS.tick
     if not LS.manualMode then
+      -- Driving by hand queues walks too, and they would be dropped at a fast speed.
+      Core.snapSpeed()
       LS.manualMode = true
       LS.travel.active = false
       pcall(function() ISTimedActionQueue.clear(getSpecificPlayer(0)) end)

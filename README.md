@@ -32,7 +32,7 @@ cd bridge
 node pz-bridge.mjs
 ```
 
-Enable **Local Survivor**, start a sandbox game, take your hands off the keys. H hides the in-game panel. G toggles fast-forward. WASD takes over for about 10 seconds.
+Enable **Local Survivor**, start a sandbox game, take your hands off the keys. H hides the in-game panel. G toggles fast-forward. K toggles the night fast forward. WASD takes over for about 10 seconds.
 
 Default model is `gemma4:12b`. It fits the 16 GB card. `llama3.1:8b` is faster and weaker. Switch with the shell before you start the bridge:
 
