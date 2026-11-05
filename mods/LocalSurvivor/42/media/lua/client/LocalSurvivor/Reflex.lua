@@ -53,6 +53,13 @@ Reflex.WEAPON_TICKS = 300    -- the weapon score is read again this often
 Reflex.HANDBACK_TICKS = 1200 -- a new walking order with a chaser in range is the brain's way out: let it run this long
 -- The orders that walk her somewhere. A WAIT or a posture change leaves the reflex in charge.
 Reflex.HANDBACK_VERBS = { GOTO = true, ENTER = true, SECURE = true, MOVE = true }
+-- Tiles. The bridge only holds orders back for a chaser this close (HOLD_CHASE_R in senses.mjs),
+-- so a new order with the chaser farther out is not an escape, just the brain going about its day.
+Reflex.HANDBACK_R = 10
+-- Tiles. Two zombies this close are on her, whatever the pack rule says.
+Reflex.HANDBACK_NEAR = 3
+-- Ticks. A hit this recent keeps the stand-aside from starting (3 seconds).
+Reflex.HANDBACK_HIT_TICKS = 180
 
 -- nearest zombie + how many are within a radius
 function Reflex.nearestZombie(px, py, r)
@@ -724,6 +731,19 @@ function Reflex.perform(p, a, snap, objs)
   return true
 end
 
+-- Pure. Is the danger a pack, too much for the brain's walk to be left alone? The same count
+-- Stance.choose uses for its pack rule (SWARM_N inside SWARM_R, downed ones too), plus two
+-- inside HANDBACK_NEAR. zs is the snapshot list.
+function Reflex.handBackPack(zs)
+  local N = Reflex.N
+  local inPack, onHer = 0, 0
+  for _, e in ipairs(zs) do
+    if e.d <= N.SWARM_R then inPack = inPack + 1 end
+    if e.d <= Reflex.HANDBACK_NEAR then onHer = onHer + 1 end
+  end
+  return inPack >= N.SWARM_N or onHer >= 2
+end
+
 -- Fight, back off or flee on the game clock. Returns true if it took over.
 function Reflex.survive(p)
   local snap, objs = Reflex.snapshot(p)
@@ -734,19 +754,27 @@ function Reflex.survive(p)
   -- A new order with a chaser in range can only be the brain's way out of a chase (the bridge
   -- holds orders back otherwise, or hands the turn back after a loop). Let the walk run: the
   -- flee would cancel it within a second. Anything on her still gets the reflex.
+  -- A pack is not the brain's to walk out of: in the 2026-11-05 soak she died on an ENTER walk
+  -- with four chasing and the reflex stood aside. The window never starts for a pack or just
+  -- after a hit, and it ends the moment one forms or a hit lands (watchHealth).
   local seq = LS.lastSeq
+  local pack = Reflex.handBackPack(snap.zombies)
   if R.seenSeq == nil then
     R.seenSeq = seq
   elseif seq ~= R.seenSeq then
     R.seenSeq = seq
     local verb = LS.result and LS.result.verb or ""
-    for _, e in ipairs(snap.zombies) do
-      if Reflex.HANDBACK_VERBS[verb] and e.chase ~= false and not e.down and not e.crawl and e.d <= Reflex.N.RANGE then
-        R.handBackUntil = LS.tick + Reflex.HANDBACK_TICKS
-        break
+    local hurtLately = LS.tick - (R.hitTick or -99999) < Reflex.HANDBACK_HIT_TICKS
+    if Reflex.HANDBACK_VERBS[verb] and not pack and not hurtLately then
+      for _, e in ipairs(snap.zombies) do
+        if e.chase ~= false and not e.down and not e.crawl and e.d <= Reflex.HANDBACK_R then
+          R.handBackUntil = LS.tick + Reflex.HANDBACK_TICKS
+          break
+        end
       end
     end
   end
+  if pack then R.handBackUntil = 0 end
   if LS.tick < (R.handBackUntil or 0) and nd > 2 then return false end
   -- Did the sprint set last time survive the game's own input update?
   local sprintTook = nil
@@ -854,7 +882,12 @@ function Reflex.watchHealth(p)
   if not hp then return end
   local last = R.lastHp
   R.lastHp = hp
-  if last and hp < last - Reflex.HIT_DROP then Core.snapSpeed() end
+  if last and hp < last - Reflex.HIT_DROP then
+    Core.snapSpeed()
+    -- A hit ends the stand-aside for the brain's walk: it is not working (see survive).
+    R.hitTick = LS.tick
+    R.handBackUntil = 0
+  end
   -- The reflex log counts the hits and the hp lost, for the outcome of each stance.
   if last and hp < last then pcall(function() LS.ReflexLog.health(last - hp, LS.tick) end) end
 end
