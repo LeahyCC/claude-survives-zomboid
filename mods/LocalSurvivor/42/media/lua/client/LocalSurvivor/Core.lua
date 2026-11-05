@@ -81,7 +81,10 @@ function Core.json(v)
   if t == "string" then return '"' .. Core.esc(v) .. '"' end
   if t ~= "table" then return "null" end
   local n = #v
-  if n > 0 or next(v) == nil then
+  -- Kahlua has no global next, so emptiness is checked with pairs.
+  local empty = true
+  for _ in pairs(v) do empty = false; break end
+  if n > 0 or empty then
     local out = {}
     for i = 1, n do out[i] = Core.json(v[i]) end
     return "[" .. table.concat(out, ",") .. "]"
