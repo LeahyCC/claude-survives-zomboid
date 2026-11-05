@@ -45,6 +45,9 @@ local function menuStep()
   local ms = MainScreen.instance
   if not continued then
     continued = true
+    -- The first-time survival guide opens in game and pauses it until someone closes it.
+    -- Set in memory only; the game may still write it to options.ini on exit.
+    pcall(function() getCore():setOptionShowSurvivalGuide(false) end)
     pcall(function() ms:getLatestSave() end)
     local ok, err = pcall(function()
       MainScreen.continueLatestSave(MainScreen.latestSaveGameMode, MainScreen.latestSaveWorld)
