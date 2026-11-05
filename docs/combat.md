@@ -85,6 +85,42 @@ All in `Reflex.N`. Distances are in tiles.
 | `HEAVY_MAX` | 2 | heavy load gate (moodle level) |
 | `TIRED_MAX` | 3 | tired gate (moodle level) |
 
+## Weapon score
+
+`Core.weaponScore` gives every melee weapon one number, so the mod compares weapons the same way everywhere. EQUIP, LOOT, SEARCH, DROP and the percept all read it. It is pure: plain facts in, a number out. Tests are in `test/lua-loot.test.mjs`.
+
+The facts come from the item (`Core.weaponFacts`): max damage, crit chance, max range, two-handed, weight, swing time, condition and the script category.
+
+```
+damage   max damage (capped at 3) * (1 + crit / 100)
+reach    * (reach / 1.2), between 0.5 and 1.35
+speed    * (1 + (3 - swing time) * 0.1), between 0.85 and 1.2
+weight   / (1 + 0.08 * (weight - 2)), for weight over 2
+two-hand * 1.05
+class    axe 1.1, long blade 1.1, spear 1.05, blunt 1, short blunt 0.85, small blade 0.6, other 0.8
+improvised * 0.85
+wear     * (0.4 + 0.6 * condition)
+score    that * 20
+```
+
+Under 0.5 max damage it is 0. A broken weapon, or one with no condition left, is 0. Under a score of 5 it is not a weapon: EQUIP, LOOT and the percept leave it out.
+
+| weapon | score |
+|---|---|
+| pen, pencil, fork, spoon | 0 |
+| kitchen knife | 9 |
+| hammer | 19 |
+| crowbar | 30 |
+| baseball bat | 34 |
+| axe | 51 |
+| machete | 73 |
+
+These are the 42.21 item script numbers at full condition. A crowbar at 10% condition is under 20.
+
+A swap needs the new weapon to score 25% over the one in hand (`Core.WEAPON.SWAP`). Without that, a bat and a crowbar would trade places as wear moved their scores. Which weapon to wield is `Act.chooseWeapon`, a game rule, and it lives in Act.
+
+The reflex does not read the score yet. It still counts a pen as an armed hand (`Reflex.snapshot`).
+
 ## Flags
 
 ```lua

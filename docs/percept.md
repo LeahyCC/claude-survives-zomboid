@@ -31,7 +31,7 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `foods` | int | Edible food in the main inventory (not in bags). Sealed cans do not count. | `Core.isEdible` |
 | `waters` | int | Containers of clean water in the main inventory. | `Core.isWaterItem` |
 | `bldgDir` `bldgDist` | string, int | Direction and Manhattan distance to the nearest building square within 20 tiles. `none` and -1 if none. Refreshed every 120 ticks. | `Sense.scanBuildings` |
-| `weapon` | string | Melee weapon in the main hand, or `none`. | `p:getPrimaryHandItem()` |
+| `weapon` | string | Melee weapon in the main hand, or `none`. A pen, fork or broken weapon reads `none`: it is not a weapon. | `p:getPrimaryHandItem()` |
 | `items` | string | Names of the first 12 inventory items. | `getDisplayName()` |
 | `qlen` | int | Timed actions queued. | `ISTimedActionQueue` |
 | `reflexed` | bool | The reflex acted in the last 600 ticks. | `LocalSurvivor.reflexTick` |
@@ -49,7 +49,8 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `moodle` | object | Moodle levels 0 to 4: `endurance tired panic pain heavy hungry thirsty`. 0 is none. | `p:getMoodles():getMoodleLevel(MoodleType.X)` with `ENDURANCE TIRED PANIC PAIN HEAVY_LOAD HUNGRY THIRST` |
 | `weight` `maxWeight` | number | Carried weight and the capacity before heavy load. | `p:getInventoryWeight()` `p:getMaxWeight()` |
 | `bag` | string | Worn back item name, or `none`. | `p:getClothingItem_Back()` |
-| `weapons` | list | Up to 4 melee weapons carried, best damage first: `{n, dmg, cond, reach}`. `cond` is 0 to 1. | `getMaxDamage()` `getCondition()/getConditionMax()` `getMaxRange()` |
+| `weapons` | list | Up to 4 melee weapons carried, best score first: `{n, dmg, cond, reach, score}`. `cond` is 0 to 1. Anything that scores under 5 (a pen, a fork, a broken bat) is left out. | `Core.weaponFacts`: `getMaxDamage()` `getCondition()/getConditionMax()` `getMaxRange()` |
+| `weaponScore` | number | The score of the weapon in hand, 0 when `weapon` is `none`. Compare it with the `score` of the `weapons` entries: a carried weapon at 25% over it is worth swapping to. | `Core.weaponScore` |
 | `inv` | object | Supplies, see below. | |
 | `wounds` | list | Injured body parts only, worst first, up to 8. | see below |
 | `bleeding` | int | Body parts bleeding now. | `BodyPart:bleeding()` |
@@ -123,7 +124,7 @@ Facts that do not change (bounds, doors, beds) are kept by building id in `Local
 
 ## Size
 
-About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.1 KB.
+About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.3 KB.
 
 ## Checked and unchecked
 

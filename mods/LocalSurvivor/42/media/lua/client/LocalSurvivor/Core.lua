@@ -198,6 +198,75 @@ function Core.weaponClass(it)
   end)
   return cls, improvised
 end
+-- ---------- weapon score ----------
+-- Pure. One number for how good a melee weapon is, from plain facts, so two weapons can be
+-- compared the same way everywhere (EQUIP, LOOT, DROP, the percept). w = { dmg, crit, reach, two,
+-- wt, swing, cond, cls, imp, broken }. dmg is the script's max damage, crit is a percent, cond is
+-- 0 to 1, swing is the script's swing time (lower is faster).
+--
+-- A crowbar scores about 30, a bat 34, an axe 51, a hammer 19, a kitchen knife 9. A pen, fork or
+-- spoon does under half a point of damage, so it scores 0 and is never a weapon.
+Core.WEAPON = {
+  MIN_DMG = 0.5,     -- under this a hit does nothing worth the swing: pens, forks, spoons, scissors
+  DMG_CAP = 3,       -- a few scripts list absurd damage; past this the swing is not any better
+  MIN_SCORE = 5,     -- under this EQUIP and LOOT ignore it, so a nearly broken knife is not a weapon
+  SWAP = 1.25,       -- a new weapon has to beat the one in hand by this much, or he keeps swapping
+  CLASS = { axe = 1.1, spear = 1.05, longblade = 1.1, blunt = 1, smallblunt = 0.85, smallblade = 0.6, other = 0.8 },
+}
+
+local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
+
+function Core.weaponScore(w)
+  if type(w) ~= "table" or w.broken then return 0 end
+  local N = Core.WEAPON
+  local dmg = tonumber(w.dmg) or 0
+  if dmg < N.MIN_DMG then return 0 end
+  local cond = clamp(tonumber(w.cond) or 1, 0, 1)
+  if cond <= 0 then return 0 end
+  -- Damage with the crit chance folded in, then a factor for each thing that helps or hurts.
+  local value = math.min(dmg, N.DMG_CAP) * (1 + clamp(tonumber(w.crit) or 0, 0, 100) / 100)
+  value = value * clamp((tonumber(w.reach) or 1) / 1.2, 0.5, 1.35)
+  value = value * clamp(1 + (3 - (tonumber(w.swing) or 3)) * 0.1, 0.85, 1.2)
+  -- Heavy weapons cost endurance on every swing.
+  value = value / (1 + 0.08 * math.max(0, (tonumber(w.wt) or 0) - 2))
+  if w.two then value = value * 1.05 end
+  value = value * (N.CLASS[w.cls or "other"] or N.CLASS.other)
+  if w.imp then value = value * 0.85 end
+  value = value * (0.4 + 0.6 * cond)
+  return math.floor(value * 20 * 10 + 0.5) / 10
+end
+
+-- Pure. A real weapon: it scores over the floor EQUIP and LOOT use.
+function Core.isRealWeapon(w)
+  return type(w) == "table" and (tonumber(w.score) or Core.weaponScore(w)) >= Core.WEAPON.MIN_SCORE
+end
+
+-- Plain facts about a melee weapon item, with its score. t is the cached item type from
+-- Sense.itemType when the caller has it, so the script lookups are done once per type.
+function Core.weaponFacts(it, t)
+  local w = { n = "?", dmg = 0, crit = 0, reach = 0, wt = 0, swing = 3, cond = 1, cls = "other", imp = false,
+    two = false, broken = false }
+  if t and t.wcls then
+    w.cls, w.imp, w.two = t.wcls, t.wimp, t.wtwo
+  else
+    w.cls, w.imp = Core.weaponClass(it)
+    pcall(function() w.two = it:isTwoHandWeapon() == true end)
+  end
+  pcall(function() w.n = it:getDisplayName() end)
+  pcall(function() w.dmg = it:getMaxDamage() end)
+  pcall(function() w.crit = it:getCriticalChance() end)
+  pcall(function() w.reach = it:getMaxRange() end)
+  pcall(function() w.wt = it:getActualWeight() end)
+  pcall(function() w.swing = it:getSwingTime() end)
+  pcall(function() w.broken = it:isBroken() == true end)
+  pcall(function()
+    local max = it:getConditionMax()
+    w.cond = max > 0 and it:getCondition() / max or 1
+  end)
+  w.score = Core.weaponScore(w)
+  return w
+end
+
 -- A bag worn on the back (CanBeEquipped = base:back). A fanny pack is a bag too, but not this.
 function Core.isBackBag(it)
   local back = false
