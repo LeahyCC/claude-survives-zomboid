@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildReport, groupMissing, failures, harmful, deathsByCause, main } from './review.mjs';
+import { buildReport, groupMissing, failures, harmful, deathsByCause, reflexByStance, main } from './review.mjs';
 import { joinRecords } from '../decisions.mjs';
 
 const REVIEW = fileURLToPath(new URL('./review.mjs', import.meta.url));
@@ -141,4 +141,30 @@ test('the report prints deaths by cause, and says so when there are none', () =>
   assert.ok(buildReport({ decisions: [], nudges: [] }).includes('Deaths by cause\n  No deaths logged.'));
   const since = buildReport({ decisions: [death('r1', 'fell')], nudges: [], from: new Date('2026-11-06') });
   assert.match(since, /No deaths logged/);
+});
+
+const reflex = (kind, stance, o = {}) => ({ t: 'reflex', kind, stance, at: '2026-11-05T09:10:00Z', id: o.id || 's-1', ...o });
+const REFLEX = [
+  reflex('call', 'BREAK', { id: 's-1', why: 'pack' }), reflex('out', 'BREAK', { id: 's-1', escaped: true, chased: false, hits: 0, hpLost: 0, kills: 0 }),
+  reflex('call', 'BREAK', { id: 's-2', why: 'pack' }), reflex('out', 'BREAK', { id: 's-2', escaped: false, chased: true, hits: 2, hpLost: 9.5, kills: 0 }),
+  reflex('call', 'BREAK', { id: 's-3', why: 'hurt' }),
+  reflex('call', 'FIGHT', { id: 's-4', why: '' }), reflex('out', 'FIGHT', { id: 's-4', escaped: false, chased: true, hits: 1, hpLost: 3, kills: 1 }),
+];
+
+test('reflex lines are counted by stance: calls, escapes, hits, hp lost and kills', () => {
+  const rows = reflexByStance([...REFLEX, decision('d9', '2026-11-05T09:00:00Z')]);
+  assert.deepEqual(rows.map((r) => r.stance), ['BREAK', 'FIGHT']);
+  const b = rows[0];
+  assert.deepEqual({ calls: b.calls, outs: b.outs, escaped: b.escaped, chased: b.chased, hits: b.hits, hpLost: b.hpLost, kills: b.kills },
+    { calls: 3, outs: 2, escaped: 1, chased: 1, hits: 2, hpLost: 9.5, kills: 0 });
+  assert.deepEqual([...b.why], [['pack', 2], ['hurt', 1]]);
+  assert.equal(rows[1].kills, 1);
+});
+
+test('the report prints the reflex by stance, and says so when there is none', () => {
+  const text = buildReport({ decisions: REFLEX, nudges: [] });
+  assert.ok(text.includes('  BREAK: 3 calls (pack 2, hurt 1); escaped 1 of 2 (50%), 2 hits, 10 hp lost, 0 kills'), text);
+  assert.ok(text.includes('  FIGHT: 1 calls (- 1); escaped 0 of 1 (0%), 1 hits, 3 hp lost, 1 kills'), text);
+  assert.match(buildReport({}), /No reflex lines logged/);
+  assert.match(buildReport({ decisions: REFLEX, nudges: [], from: new Date('2026-11-06') }), /No reflex lines logged/);
 });

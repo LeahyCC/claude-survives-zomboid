@@ -797,6 +797,9 @@ function Sense.perceptV2(p, px, py, room, weaponScore)
     return light < Sense.DARK_LIGHT
   end, false))
 
+  -- What the reflex has been doing: last stance, how many calls and escapes, hits lately.
+  add("reflex", try(function() return LS.ReflexLog.summary(LS.reflexLog, LS.tick) end, nil))
+
   local r = LS.result or {}
   add("res", { seq = r.seq or 0, verb = r.verb or "", status = r.status or "idle", why = r.why or "",
     target = r.target or "" })

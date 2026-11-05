@@ -27,13 +27,16 @@ LocalSurvivor/
                                     progress and the unstick watch the skills share
   Act.lua       LocalSurvivor.Act   the doEquip, doCloseDoor, doConceal and doBreakin actions, manageLight, execIntent, pollIntent, the verbs,
                                     the skills (GOTO ENTER SEARCH LOOT), update, the loot table
-  Reflex.lua    LocalSurvivor.Reflex fleeVector nearestZombie engage reflex survive releaseDoor manageSpeed
+  Stance.lua    LocalSurvivor.Stance assess choose pickLine pickBarrier posture params wantSneak, all pure (docs/combat.md)
+  ReflexLog.lua LocalSurvivor.ReflexLog note facts outcome summary health flush, the reflex log and the percept summary
+  Reflex.lua    LocalSurvivor.Reflex snapshot decide perform survive manageSneak releaseDoor manageSpeed, and the game side
+                                    of each stance (attack closeIn backOff holdAt runAlong climb)
   Needs.lua     LocalSurvivor.Needs start update, the needs verbs and their jobs (docs/needs.md)
   HUD.lua       LocalSurvivor.HUD   start, onKeyPressed (and the LocalHUD panel class)
   Death.lua     LocalSurvivor.Death sample onDeath onEvent reset, the 10 second ring and the death record (docs/percept.md)
 ```
 
-Require order is `Core`, then `Sense`, then `Move`, then `Act` and `Reflex`. `Needs` needs `Core` and `Sense`. `HUD` needs only `Core`. `Death` needs `Core` and `Sense`. `Sense.writePercept` calls its `sample`, and the entry file registers its `OnPlayerDeath` handler. Calls between modules go through the table at run time (`LocalSurvivor.Sense.zombieScan(...)`), so no module holds a stale copy of another's function.
+Require order is `Core`, then `Sense`, then `Move`, then `Act` and `Reflex`. `Stance` and `ReflexLog` need only `Core`; `Reflex` and `Act` require `Stance`, and `Reflex` requires `ReflexLog`. `Needs` needs `Core` and `Sense`. `HUD` needs only `Core`. `Death` needs `Core` and `Sense`. `Sense.writePercept` calls its `sample`, and the entry file registers its `OnPlayerDeath` handler. Calls between modules go through the table at run time (`LocalSurvivor.Sense.zombieScan(...)`), so no module holds a stale copy of another's function.
 
 Rules:
 
@@ -42,7 +45,7 @@ Rules:
 - Every game call is in `pcall`. A failure in the mod must never stop the tick.
 - Lua here is 5.1 (Kahlua): no `goto`, no `//`, no bitwise operators.
 
-State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `lastTickMs`, `observing`, `autoSpeed`, `nightFast`, `fastCoolUntil`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`, `needsJob` (the running needs job, or false) and `needsOpts`. Act keeps `skill` (the long order running, or nil), `searched` (rooms finished, by building id) and `lootTypes` (loot facts per item type). Move keeps `unstickLog` and `moveWatch` (unstick fires it has seen). Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
+State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `lastTickMs`, `observing`, `autoSpeed`, `nightFast`, `fastCoolUntil`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`, `combat` (the reflex switches), `posture` (the fight posture of the last order), `reflexLog` (the reflex log state), `reflexKind` and `reflexStance` (what the reflex last did, for the death record), `needsJob` (the running needs job, or false) and `needsOpts`. Act keeps `skill` (the long order running, or nil), `searched` (rooms finished, by building id) and `lootTypes` (loot facts per item type). Move keeps `unstickLog` and `moveWatch` (unstick fires it has seen). Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
 
 ## Tick cadence
 
@@ -52,10 +55,10 @@ State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick
 every tick   Reflex.watchHealth (a hit slows a fast clock at once); track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode;
              it acts only on a stuck walk)
              manual mode: write percept each 60, stand down until idle 600 ticks, return
-%5           Reflex.survive          fight or flee; if it acted, skip momentum, glance and poll
+%5           Reflex.survive          read, choose a stance, act, log; if it acted, skip momentum, glance and poll
 every tick   Act.update              the running skill takes a step, or waits while the reflex acts
 %5           Needs.update            step the needs job; it pauses when the reflex acted
-%30          sneak toggle
+%30          Reflex.manageSneak      crouched only while the reflex hides or sneaks past
 %15          Reflex.manageSpeed      (%5 while the clock is above speed 2: Reflex.guardSpeed)
 %90          Act.manageLight
 %120         Sense.scanBuildings
@@ -87,10 +90,10 @@ v2 puts `v` first and `panic01` after `panic`, and adds after `err`:
 One line in `Zomboid/Lua/local_intent.txt`, polled every 45 ticks. A line runs only if its `SEQ` is higher than the last one.
 
 ```
-SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
+SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET[|POSTURE]
 ```
 
-`A` and `B` are `dx` and `dy` for MOVE, and `x` and `y` for GOTO. `TARGET` is a building id for ENTER. The bridge always writes the eighth field, the mod reads a missing one as empty.
+`A` and `B` are `dx` and `dy` for MOVE, and `x` and `y` for GOTO. `TARGET` is a building id for ENTER. The bridge always writes the eighth field, the mod reads a missing one as empty. `POSTURE` is the reflex's fight posture for this order, `avoid` or `clear` (`docs/combat.md`). The bridge writes it only when an option sets one, and the mod reads a missing or unknown one as `normal`.
 
 ## Verb registry
 
