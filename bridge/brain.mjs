@@ -18,6 +18,7 @@ import { planLines } from './planner.mjs';
 import { digest } from './digest.mjs';
 import { intentLine } from './decide.mjs';
 import { pickExamples, exampleLines } from './nudges.mjs';
+import { reactionContext } from './reactions.mjs';
 
 export const RECHECK_MS = 20_000;
 export const PENDING_MS = 10_000;
@@ -44,8 +45,9 @@ function changedSince(p, last, now, voice, recheck = RECHECK_MS) {
   return fresh ? `new need: ${fresh}` : '';
 }
 
-// extra: { plan (the planner's), lessons (the ones whose trigger holds now), examples (lines from
-// past nudges, already worded) }
+// recent: how the last orders went, one line each. extra: { plan (the planner's), lessons (the ones
+// whose trigger holds now), examples (lines from past nudges, already worded), blocked (orders map
+// memory keeps off the menu, with why), pattern (one line when the last orders go in circles) }
 export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   const parts = [`SITUATION:\n${digest(p, memoryStats(mem))}`];
   const plan = planLines(extra.plan);
@@ -58,6 +60,9 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   const examples = extra.examples || [];
   if (examples.length) parts.push(`EXAMPLES:\n${examples.map((t) => `- ${t}`).join('\n')}`);
   if (recent && recent.length) parts.push(`RECENT CHOICES:\n${recent.map((r) => `- ${r}`).join('\n')}`);
+  const blocked = extra.blocked || [];
+  if (blocked.length) parts.push(`NOT ON THE MENU NOW:\n${blocked.map((r) => `- ${r}`).join('\n')}`);
+  if (extra.pattern) parts.push(extra.pattern);
   if (voice && voice.length) {
     parts.push(`A voice only you can hear says: ${voice.map((v) => `"${String(v).slice(0, 200)}"`).join(' ')} Answer it in the thought, one short sentence.`);
   }
@@ -66,7 +71,8 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   return parts.join('\n\n');
 }
 
-// ctx: { now, last (a snapshot), pending ({ seq, at }), voice (lines), recent (short strings),
+// ctx: { now, last (a snapshot), pending ({ seq, at }), voice (lines), history (the tracker's orders
+//        with their results), run (the stats run id, so another character's orders are left out),
 //        plan (the planner's), lessons (every stored lesson), nudges (indexed past nudges, or
 //        nothing to leave the examples out) }
 export function planTurn(p, mem, ctx = {}) {
@@ -94,7 +100,8 @@ export function planTurn(p, mem, ctx = {}) {
   }
   const rules = selectRules(p, mem);
   const lessons = activeLessons(ctx.lessons, p, mem);
-  const extra = { plan: ctx.plan, lessons };
+  const react = reactionContext({ history: ctx.history, mem, p, now, run: ctx.run, options });
+  const extra = { plan: ctx.plan, lessons, blocked: react.blocked, pattern: react.pattern };
   // Only a pick on the menu the model will see can be quoted.
   const withExamples = (menu) => ({ ...extra, examples: exampleLines(pickExamples(ctx.nudges, p, menu)) });
   const policy = decidePolicy(p, mem, options);
@@ -106,7 +113,7 @@ export function planTurn(p, mem, ctx = {}) {
       // The policy still decides; the model only gets a one-item menu so it can answer.
       const only = [policy.option];
       return { kind: 'ask', why: 'policy, voice answered by the model', options: only, offered: options, rules, policy, lessons,
-        user: userMessage(p, mem, only, rules, voice, ctx.recent, withExamples(only)) };
+        user: userMessage(p, mem, only, rules, voice, react.recent, withExamples(only)) };
     }
     return { kind: 'policy', why: policy.rule, options, rules, policy };
   }
@@ -114,7 +121,7 @@ export function planTurn(p, mem, ctx = {}) {
     return { kind: 'skill', why: `${busy.verb} running, nothing worth stopping it for`, options, touch: true };
   }
   return { kind: 'ask', why: reason || 'free choice', options, rules, lessons,
-    user: userMessage(p, mem, options, rules, voice, ctx.recent, withExamples(options)) };
+    user: userMessage(p, mem, options, rules, voice, react.recent, withExamples(options)) };
 }
 
 // The option a decided turn sends, or null when the running job should go on. Sending the

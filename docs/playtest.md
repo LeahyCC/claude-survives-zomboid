@@ -19,7 +19,7 @@ What `playtest.ps1` does:
 
 Tracing: create `Zomboid/Lua/ls_trace.txt` and the mod writes `LocalSurvivor trace` lines to `console.txt` (checked once a minute, no restart needed). It logs each reflex flee, each ENTER attempt and failure with the window's state, each SECURE walk, and every time she goes in or out of a building with the job that was running. Delete the file to stop.
 
-Night fast forward: with a safe house and a WAIT, REST or SLEEP order at night, `speed` in the percept goes to 3 and the clock races. It drops to 1 on a new walking order, a zombie within 20 tiles, a chaser, bleeding or a hit. Run with `ls_trace.txt` on and check that no walk is dropped after the clock slows. The soak test reads `speed` to see how long she sat at 3.
+Night fast forward: with a safe house and a WAIT, REST or SLEEP order at night, `speed` in the percept goes to 3 and the clock races. It drops to 1 on a new walking order, a zombie within 8 tiles or in sight, a chaser, bleeding or a hit. Run with `ls_trace.txt` on and check that no walk is dropped after the clock slows. The soak test reads `speed` to see how long she sat at 3.
 
 ## Rich loot
 

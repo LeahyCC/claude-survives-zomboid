@@ -27,10 +27,10 @@ This loop comes first. Features we guess at come after it.
 3. First soak test. Best run while Colin is not using the PC: it holds the GPU.
 4. Fix the top killers from the soak test. Repeat 3 and 4.
 5. Review pass: read the decision log and Colin's nudges, turn patterns into policy rules, better option labels and eval scenarios.
-6. Later: traits and skills in the percept. Traits change rules and weapon scoring in code, and a one line persona in the prompt flavours the brain's own thought. No second model: 16 GB is already full with the game and the 12B.
+6. Later: traits and skills in the percept. Traits change rules and weapon scoring in code, and a one line persona in the prompt flavours the brain's own thought. No second model in the decisions: 16 GB is already full with the game and the 12B.
 
 ## Not doing
 
-- A separate "thoughts" model. No room on the GPU, and the brain already writes a thought with each choice.
+- A separate "thoughts" model that steers her. No room on the GPU, and the brain already writes a thought with each choice. The inner voice (pepe-8b) is different: first person commentary only, on the CPU, never in the prompt or the orders (`docs/brain.md`).
 - Fine tuning. Too little data, and the menu still changes every week.
 - A bigger planner on this PC, unless the planner benchmark finds a setup that keeps menu turns fast.

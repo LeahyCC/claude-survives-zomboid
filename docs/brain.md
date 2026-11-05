@@ -26,7 +26,8 @@ policy rule fires? .............. send its option, no model call --- policy.mjs
    |
 ask the model ---------------------------------------- llm.mjs
    system:  fixed instructions (cached by Ollama)
-   user:    digest + plan + playbook rules and lessons + recent + voice + options
+   user:    digest + plan + playbook rules and lessons + recent choices with outcomes
+            + orders kept off the menu + pattern note + voice + options
    reply:   {"thought": "...", "choice": "<one of this turn's ids>"}
    |
 re-read the percept: a chaser walked in? drop the order
@@ -47,13 +48,15 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `policy.mjs` | Needs that cannot wait: `decidePolicy`. | service |
 | `playbook.mjs` | Pro rules with a condition each: `selectRules`. | service |
 | `memory.mjs` | Map memory by building id, saved as `map` in `pz-state.json`. | service |
+| `reactions.mjs` | How the last orders went: the outcome lines, the blocked list, loop detection, the rows of the strip. See "Reactions". | service |
 | `digest.mjs` | The situation in plain lines. | formatter |
 | `words.mjs` `geom.mjs` | Words for numbers, compass, distances. | pure helpers |
 | `planner.mjs` | The slow day plan: events, parsing, the background runner. See `docs/planner.md`. | service |
 | `lessons.mjs` | Lessons from past deaths and their triggers. See `docs/planner.md`. | service |
-| `decisions.mjs` | The decision log: decision, outcome and after lines, and the join between them. See `docs/eval.md`. | service |
+| `decisions.mjs` | The decision log: decision, outcome and after lines, and the join between them. It also keeps the last 12 orders with their results in memory (`history()`). See `docs/eval.md`. | service |
 | `death.mjs` | Why she died: the cause and its facts, from the mod's death record. See `docs/eval.md`. | service |
 | `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
+| `commentator.mjs` | The inner voice: spots moments, keeps a summary of the run, rate limits, asks the meme model for a first person line. Commentary only. See "Inner voice". | service |
 | `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
 | `reflexlog.mjs` | Follows the mod's reflex log and copies each stance and outcome into the decision log. See `docs/combat.md`. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
@@ -153,6 +156,13 @@ RULES FOR NOW:
 - Never fight more than one standing zombie. Go around ones that have not seen you.
 - Enter quietly through a door. Smash a window only when there is no other way.
 
+RECENT CHOICES:
+- ENTER house W: failed, zombies at the door, lost 20 HP
+- GOTO away: done, still chased by 2
+
+NOT ON THE MENU NOW:
+- house W: zombies at the door, 1 min ago
+
 OPTIONS:
 b1: walk into house 15 tiles SW, not visited
 away: walk quietly 15 tiles W, away from the zombie that has not seen you
@@ -184,6 +194,64 @@ At most 5 rules whose condition holds go into the user message, in this order:
 | `new-houses` | inside a searched building |
 | `stay-safe` | inside a safe house at night or tired |
 
+## Reactions
+
+The model used to see only what was chosen. Now it also sees how each choice went. Code: `bridge/reactions.mjs`. The data comes from the tracker in `decisions.mjs`, which keeps the last 12 orders in memory (not saved), and from map memory `fails`.
+
+Three parts go into the prompt, each only when it has something to say:
+
+| Part | What it holds |
+|---|---|
+| `RECENT CHOICES` | The last 3 orders of this run, oldest first, one line each, under 90 characters. Name, then what happened. |
+| `NOT ON THE MENU NOW` | Up to 3 orders map memory is keeping off the menu after a failure, newest first: name, why, how long ago. A house is named by where it is now (`house W`) and only while the percept still lists it. |
+| A pattern line | One plain sentence when the orders go in circles. |
+
+How a recent line reads:
+
+| Case | Line |
+|---|---|
+| failed | `ENTER house W: failed, zombies at the door, lost 20 HP` |
+| done | `GOTO away: done, still chased by 2` (the chase count is read when it ended; `lost N HP` is added at 1 HP or more) |
+| newer order sent first | `ENTER house W: cut off by a newer order` |
+| still going | `SEARCH: running, 2 rooms left` (rooms left from `inBldg.roomsLeft`, otherwise the body's `res.why`, otherwise `sent, not started yet`) |
+| no result | `no result in time`, or `she died before it finished` |
+
+An order is named by its verb and, for a walk into a building, by kind and side (`ENTER house W`, from the option's `name`), or by its menu id for a `GOTO` (`GOTO away`). The mod's reason codes are put into words (`zombie` on an ENTER is `zombies at the door`); an unknown one is passed on as it is, cut to 40 characters. Orders from an earlier character are left out (matched by the stats run id).
+
+The pattern line is the first of these that holds:
+
+1. Flee and walk back in, twice in two minutes (`GOTO away` then an `ENTER`, two times): `You keep getting chased off houses. Try a quieter house, or leave this street.`
+2. The same kind of order failed twice in a row or more within 5 minutes, with nothing of that kind working in between: `Walking into a building failed twice in a row. Try something else first.`
+3. The last order failed (within 5 minutes), nothing newer was sent, and the same job is on the menu again: `Your last order, ENTER house N, failed (zombies at the door). It is on the menu again. Try something else first.` A failed walk into a building stays off the menu for 30 seconds and then comes back, usually with the zombies still there.
+
+The line only says what happened. It does not tell her to fight: the model never swings, the reflex does.
+
+### The Reactions strip on /mind
+
+The last 8 orders as rows: time, choice, result, HP change (the order's start to its end; hover for HP lost on the way), and the choice that came next. A failed row is red, a running one teal, a cut-off one grey. The page refreshes every two seconds but rebuilds the strip only when a row changed, so a selection or a hover on it stays put. `/api/state` carries the rows as `reactions`.
+
+### What it costs and what it changes
+
+Measured on 2026-11-04 with `node bridge/tools/try-brain.mjs --reactions --n 10 gemma4:12b` (RTX 5080, six fixtures that call the model, best of 10 per turn). The added text is the worst case: 3 outcome lines, 3 blocked lines and a pattern line.
+
+| | plain | with reactions | added |
+|---|---|---|---|
+| turn time, mean of the six best-of-10 | 393 ms | 409 ms | 16 ms |
+| prompt tokens | 559 | 673 | 114 |
+| time reading the prompt | 204 ms | 243 ms | 39 ms |
+
+The prompt grows by about 600 characters at most. Most turns carry far less: no history means no section.
+
+Whether it changes a pick, from three eval scenarios where the right pick depends on a recent outcome (gemma4:12b, 6 runs each, with the history in the prompt and without):
+
+| scenario | without | with |
+|---|---|---|
+| `retry-failed-house` | 0 of 6 accepted | 6 of 6 |
+| `flee-loop-quieter-house` | 0 of 6 | 6 of 6 |
+| `two-houses-failed-pick-third` | 0 of 6 | 6 of 6 |
+
+Without the history it picks the nearest house, the one that just failed, every time. The first version of this change had only the recent line for the one-failure case, and `retry-failed-house` scored 0 of 2. The third pattern line is what fixed it.
+
 ## Map memory
 
 `state.map` in `bridge/pz-state.json`. Delete the file for a fresh mind.
@@ -198,9 +266,71 @@ It also keeps the last 12 orders sent (seq, verb, key, building), the fails with
 
 ## /mind
 
-`http://localhost:8799/mind` shows the options offered (the chosen one marked), the choice, who decided (policy and its rule, the model, waiting on a skill, the reflex, asleep), the model time, the playbook rules used, and the map memory size. `PZ_LUA_DIR` and `PZ_STATE_FILE` point the bridge at other files, for a page check without the game.
+`http://localhost:8799/mind` shows the options offered (the chosen one marked), the choice, who decided (policy and its rule, the model, waiting on a skill, the reflex, asleep), the model time, the playbook rules used, the map memory size, and the Reactions strip (see "Reactions"). `PZ_LUA_DIR` and `PZ_STATE_FILE` point the bridge at other files, for a page check without the game.
 
 The Nudge panel on the same page lets you pick the option you would have chosen. See "Nudges" in `docs/eval.md`. A model thought that was still running when you pressed "Do it now" is dropped when it finishes, so it cannot overwrite your order.
+
+## Inner voice
+
+A second local model, `pepe-8b_abliterated_pc:latest`, is the voice in her head. It speaks as her ("I", "me"), in its own style, one or two short sentences, and it knows what has happened so far this run. It is commentary only. It never decides anything, never writes an order, and nothing it says goes into the brain's prompt, the planner's prompt or the order line. (The code and logs still call it pepe.)
+
+Each line is a pair. The brain decides an action with its own short thought, and the voice answers right after with how she feels and how she reads the situation:
+
+```
+ENTER house W  "I need to hide out before dark"
+  -> I'm feeling tense, the situation is that the light is going, and this better have a door that locks.
+```
+
+```
+each order sent (policy or model) -----------> pending, only the latest kept
+percept, order history, plan --> moments ----> pending
+quiet for 60 to 90 s ------------------------> an idle thought
+pending --> one line at most every 30 s, only when nothing else needs Ollama
+        --> pepe.log + Inner voice panel + Lua/local_voice.txt
+```
+
+Where the lines go:
+
+- `bridge/pepe.log`: one JSON line each, with `action`, `thought` and `line`.
+- The Inner voice panel on /mind: the last 10, newest first, with the brain's half above the voice's half. It is filled from the log when the bridge starts, so it survives a refresh and a restart.
+- `Zomboid/Lua/local_voice.txt`: the latest line only, one line, overwritten, in the same folder as `local_intent.txt`. The format is `ACTION "thought" | the voice's line`, or just the line for an idle thought. **The HUD side is not built yet.** Nothing in the Lua mod reads this file. A later change can show it on screen.
+
+What triggers a line:
+
+- **An order.** Each order the brain sends, from the policy or the model. When orders come faster than the 30 s gap, the line pairs with the latest one and the older ones are dropped.
+- **A moment.** A kill, losing 8 or more HP at once, starting to bleed, HP falling to 25 or below, a clearly better weapon in hand (hands empty to anything, or a score 1.25 times higher), walking into a building, locking one up, a failed order, a flee and re-enter loop, the planner's new plan, and death. When an order is waiting, the line answers the order and up to two moments ride along. A moment alone gets its own line, with no action beside it. A moment older than 45 seconds is dropped.
+- **Death** is always spoken, never rate limited, and waits for a free model.
+- **An idle thought** about every 60 to 90 seconds when nothing has happened (waiting out the night, walking, searching). Any order, moment or line pushes the next one back. It only runs while the game is sending percepts.
+
+What the model is sent each time, kept small because it runs on a CPU:
+
+- A running summary of this character, at most 6 lines of 150 characters: game hours alive, kills and where she is now, the weapon she started with and the one in hand, buildings entered and searched, what she found, big hits, bleeding and close calls, and the planner's goal. It comes from the percept, the stats run, the order history and the plan, not from the model.
+- The voice's own last 4 lines, so the thought carries on.
+- The order or the moment, and her state line.
+
+The summary and the 4 lines are cleared when the stats run id changes (a new character), or when the hours or kills counter goes back.
+
+How it stays out of the way:
+
+- CPU only (`num_gpu` 0), the shared `num_ctx`, `num_predict` 120, thinking off. A reply cut by the budget is trimmed back to its last full sentence. It takes no VRAM and does not make Ollama reload the menu model.
+- It does not start while a menu turn, a plan, the death review or a menu turn's whole think-and-send is running. That includes idle thoughts.
+- A menu turn or a plan that starts while it is writing cancels it at once. An order or moment goes back in the queue and does not use up the 30 seconds. An idle thought is just asked again later.
+- One line at a time. Anything that arrives during one waits for the next slot.
+
+The only changes to what the model says are a length cap (240 characters), trimming a cut reply to its last full sentence, and control characters turned into spaces. The log is capped at 1 MB and rolls to `pepe.log.1`.
+
+Switches: `PZ_PEPE=0` turns it off. `PZ_PEPE_MODEL` picks another model. `PZ_PEPE_GPU_LAYERS` (default 0), `PZ_PEPE_PREDICT` (120), `PZ_PEPE_TIMEOUT`, `PZ_PEPE_KEEP_ALIVE` (10m), `PZ_PEPE_FILE` and `PZ_PEPE_LOG_MAX` (bytes) tune it. It is on by default when Ollama lists the model. If the model is not installed, or a call gets a 404, it logs one line and turns itself off for the session.
+
+Measured on this PC on 2026-11-04 (`node bridge/tools/try-pepe.mjs`, `gemma4:12b` as the menu model). The script plays seven lines of one short run through the real commentator, so the prompt grows from 383 to about 1330 characters:
+
+| | time |
+|---|---|
+| first line, model loading | 8.2 s |
+| warm line, longer prompt | 5.3 to 9.6 s, median 6.8 s |
+| menu turn alone | 406 to 428 ms, median 414 ms |
+| menu turn fired 0.7 s into a thought | 526 to 613 ms, median 577 ms, the thought cut every time |
+
+The longer prompt makes a line slower than before the summary (1.8 to 4.0 s). That is fine for commentary that speaks at most every 30 s. A menu turn that lands in the middle of a thought costs about 160 ms more than one on a quiet model, because the CPU is still winding down. It stayed under 650 ms in all five runs.
 
 ## Examples from your nudges
 

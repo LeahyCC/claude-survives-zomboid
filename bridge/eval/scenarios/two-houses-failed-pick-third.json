@@ -1,0 +1,78 @@
+{
+ "name": "two-houses-failed-pick-third",
+ "note": "The houses to the north and the south both failed with zombies at the door in the last two minutes, and their retry times are over. A third house sits east.",
+ "patch": {
+  "hp": 70,
+  "buildings": [
+   {
+    "d": 9,
+    "door": {
+     "x": 10651,
+     "y": 9821
+    },
+    "dx": 0,
+    "dy": -9,
+    "id": "4060",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 11,
+    "door": {
+     "x": 10650,
+     "y": 9841
+    },
+    "dx": 0,
+    "dy": 11,
+    "id": "4062",
+    "res": true,
+    "shop": false,
+    "visited": false
+   },
+   {
+    "d": 16,
+    "door": {
+     "x": 10666,
+     "y": 9830
+    },
+    "dx": 16,
+    "dy": 0,
+    "id": "4061",
+    "res": true,
+    "shop": false,
+    "visited": false
+   }
+  ]
+ },
+ "history": [
+  {
+   "verb": "ENTER",
+   "key": "ENTER:4060",
+   "name": "ENTER house N",
+   "result": "failed",
+   "why": "zombie",
+   "lost": 10,
+   "hp": -10,
+   "ago": 90
+  },
+  {
+   "verb": "ENTER",
+   "key": "ENTER:4062",
+   "name": "ENTER house S",
+   "result": "failed",
+   "why": "zombie",
+   "lost": 15,
+   "hp": -15,
+   "ago": 40
+  }
+ ],
+ "accept": [
+  "b3"
+ ],
+ "wrong": [
+  "b1",
+  "b2",
+  "wait"
+ ]
+}

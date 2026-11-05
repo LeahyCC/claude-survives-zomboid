@@ -11,6 +11,8 @@
 //
 //   node bridge/tools/try-brain.mjs --examples [--n 5]   time each turn with and without the
 //                                                        "In a similar spot" example lines (docs/brain.md)
+//   node bridge/tools/try-brain.mjs --reactions [--n 5]  the same, for the recent-choice outcomes, the
+//                                                        not-on-the-menu lines and the pattern note
 import { loadFixture, fixtureNames, readFixture } from '../fixtures/load.mjs';
 import { planTurn, userMessage } from '../brain.mjs';
 import { selectRules } from '../playbook.mjs';
@@ -21,6 +23,7 @@ const args = process.argv.slice(2);
 const dry = args.includes('--dry');
 const noOld = args.includes('--no-old');
 const examples = args.includes('--examples');
+const reactions = args.includes('--reactions');
 const nIndex = args.indexOf('--n');
 const reps = nIndex >= 0 ? Math.max(1, Number(args[nIndex + 1]) || 5) : 5;
 const models = args.filter((a, i) => !a.startsWith('--') && !(nIndex >= 0 && i === nIndex + 1));
@@ -33,14 +36,20 @@ function exampleLinesFor(opts) {
   return picks.map((o) => `In a similar spot, the better pick was ${o.id} (${String(o.label).slice(0, 70)}) because the door is close and the street is empty.`);
 }
 
+// Stand-ins for a bad moment, with the lines as long as the bridge makes them (reactions.mjs).
+const REACT_RECENT = ['ENTER house W: failed, zombies at the door, lost 20 HP', 'GOTO away: done, still chased by 2', 'ENTER house W: cut off by a newer order'];
+const REACT_BLOCKED = ['house W: zombies at the door, 4 min ago', 'walking away: got stuck on the way, 1 min ago', 'searching this building: full, 2 min ago'];
+const REACT_PATTERN = 'You keep getting chased off houses. Try a quieter house, or leave this street.';
+
 const median = (xs) => [...xs].sort((x, y) => x - y)[Math.floor(xs.length / 2)];
 
-// The same turn asked `reps` times plain and `reps` times with examples, interleaved so a drifting
+// The same turn asked `reps` times plain and `reps` times with the extra lines, interleaved so a drifting
 // GPU clock does not favour one side. The first pair is thrown away: it carries any model load.
 // The minimum is the number to read: the GPU is shared with the game and other jobs, and a slow
 // call only ever adds time. The median shows how noisy the run was.
-async function compareExamples(model) {
-  console.log(`\n# ${model}: turn time without and with 2 example lines, best of ${reps} (first pair discarded)`);
+// add(opts) gives what goes on top of the plain message: { recent, extra }.
+async function compareAdded(model, what, add) {
+  console.log(`\n# ${model}: turn time without and with ${what}, best of ${reps} (first pair discarded)`);
   const rows = [];
   for (const name of fixtureNames()) {
     const { percept, memory } = loadFixture(name);
@@ -49,7 +58,8 @@ async function compareExamples(model) {
     const opts = plan.options;
     const rules = selectRules(percept, memory);
     const plain = userMessage(percept, memory, opts, rules, [], []);
-    const withEx = userMessage(percept, memory, opts, rules, [], [], { examples: exampleLinesFor(opts) });
+    const more = add(opts);
+    const withEx = userMessage(percept, memory, opts, rules, [], more.recent, more.extra);
     const ids = opts.map((o) => o.id);
     const t = { a: [], b: [], readA: [], readB: [] };
     let tokA = 0;
@@ -71,11 +81,11 @@ async function compareExamples(model) {
       readA: Math.min(...t.readA), readB: Math.min(...t.readB),
     });
   }
-  console.log('\n| fixture | plain ms (min / median) | with examples ms (min / median) | added ms (min) | prompt tokens plain / with | prompt read ms (min) plain / with |');
+  console.log('\n| fixture | plain ms (min / median) | with ms (min / median) | added ms (min) | prompt tokens plain / with | prompt read ms (min) plain / with |');
   console.log('|---|---|---|---|---|---|');
   for (const r of rows) console.log(`| ${r.fixture} | ${r.aMin} / ${r.aMed} | ${r.bMin} / ${r.bMed} | ${r.bMin - r.aMin} | ${r.tokA} / ${r.tokB} | ${r.readA} / ${r.readB} |`);
   const avg = (k) => Math.round(rows.reduce((s, r) => s + r[k], 0) / rows.length);
-  console.log(`\nMean over ${rows.length} fixtures: ${avg('aMin')} ms plain, ${avg('bMin')} ms with examples, ${avg('bMin') - avg('aMin')} ms added. ${avg('tokB') - avg('tokA')} more prompt tokens, ${avg('readB') - avg('readA')} ms more reading the prompt.`);
+  console.log(`\nMean over ${rows.length} fixtures: ${avg('aMin')} ms plain, ${avg('bMin')} ms with, ${avg('bMin') - avg('aMin')} ms added. ${avg('tokB') - avg('tokA')} more prompt tokens, ${avg('readB') - avg('readA')} ms more reading the prompt.`);
 }
 
 async function newBrain(model, name) {
@@ -135,7 +145,11 @@ const pad = (s, n) => String(s).padEnd(n);
 
 for (const model of models) {
   if (examples) {
-    await compareExamples(model);
+    await compareAdded(model, '2 example lines', (opts) => ({ recent: [], extra: { examples: exampleLinesFor(opts) } }));
+    continue;
+  }
+  if (reactions) {
+    await compareAdded(model, '3 outcome lines, 3 blocked lines and a pattern note', () => ({ recent: REACT_RECENT, extra: { blocked: REACT_BLOCKED, pattern: REACT_PATTERN } }));
     continue;
   }
   console.log(`\n# ${model}${dry ? ' (dry)' : ''}`);
