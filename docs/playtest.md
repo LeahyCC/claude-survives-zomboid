@@ -21,6 +21,47 @@ Tracing: create `Zomboid/Lua/ls_trace.txt` and the mod writes `LocalSurvivor tra
 
 Night fast forward: with a safe house and a WAIT, REST or SLEEP order at night, `speed` in the percept goes to 3 and the clock races. It drops to 1 on a new walking order, a zombie within 20 tiles, a chaser, bleeding or a hit. Run with `ls_trace.txt` on and check that no walk is dropped after the clock slows. The soak test reads `speed` to see how long she sat at 3.
 
+## Rich loot
+
+To watch how she picks gear when there is plenty to pick from:
+
+```
+pwsh tools/playtest.ps1 -RichLoot
+```
+
+This writes `Zomboid/Lua/ls_loot.txt` before launch. The helper reads it when the world loads, and the script deletes it once the game is in. Without `-RichLoot` the script removes the file, and the helper changes nothing. The `LocalSurvivor` mod and the bridge are not involved.
+
+What it sets, all to 4 (the option's own maximum in Build 42.21; the sandbox screen stops at 3, "Abundant"; the default is 0.6):
+
+| option | covers |
+|---|---|
+| `WeaponLootNew` | melee weapons |
+| `RangedWeaponLootNew`, `AmmoLootNew` | guns and ammo |
+| `FoodLootNew`, `CannedFoodLootNew` | perishable and non-perishable food |
+| `MedicalLootNew` | medicine and bandages |
+| `SurvivalGearsLootNew` | camping gear |
+| `ContainerLootNew` | bags |
+| `ToolLootNew` | tools |
+
+`RollsMultiplier` is left alone. Its tooltip warns that a high value can hurt performance.
+
+How it reaches loot generation:
+
+- The loot rolls do not read the sandbox options. `IsoWorld.init` copies each option once into a static float on `ItemPickerJava`, right after it reads the save's sandbox file. Changing only `SandboxVars` or the option would do nothing.
+- So the helper sets each option with `getSandboxOptions():getOptionByName(name):setValue(...)`, copies the value into `SandboxVars` too, then calls `ItemPickerJava.InitSandboxLootSettings()`. That is the same method `IsoWorld.init` calls, and it re-reads the options into the floats the rolls use.
+- This was read from the game's class files, not run. The console line below shows `refreshed=true` when the call worked. Whether loot really comes out richer is the live check.
+- The helper runs on `OnLoadedMapZones`, which fires inside `IsoWorld.init` after the first copy and before chunks load. `OnGameStart` is a second chance.
+
+Console line, once per world:
+
+```
+LocalSurvivorDev loot WeaponLootNew 0.6 to 4, RangedWeaponLootNew 0.6 to 4, ...; refreshed=true
+```
+
+The save file: the game writes the sandbox options to `map_sand.bin` when it saves. The helper puts the old values back on `OnSave`, before that write, and sets the high ones again on `OnPostSave`. So the player's sandbox settings should not change. If `OnSave` ever does not run first, the high values would be saved with the world. To check, save and quit, then run again with `-RichLoot`: the `old` values in the console line should still be the ones you chose.
+
+Loot is rolled when a container is first opened or its area first loads. Only buildings she has not opened yet get the new amounts. A save that was already explored will look the same, so use a new world or walk to fresh buildings.
+
 What to watch:
 
 - `Zomboid/console.txt`: Lua errors and `LocalSurvivor` lines.
