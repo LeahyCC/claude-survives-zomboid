@@ -3,6 +3,9 @@
 --   main menu : continue the latest save
 --   in game   : when player 0 is dead, respawn a random survivor through the game's own screens
 -- Without that file it does nothing, so leaving the mod enabled is harmless.
+--
+-- While Zomboid/Lua/ls_loot.txt exists, a world that loads gets much more loot (see "rich loot"
+-- at the bottom). Without that file the loot options are never touched.
 
 local function flagOn()
   local ok, on = pcall(function()
@@ -131,3 +134,112 @@ local function respawnStep()
 end
 
 Events.OnTickEvenPaused.Add(respawnStep)
+
+-- ---------- rich loot (Zomboid/Lua/ls_loot.txt) ----------
+-- Lets a playtest watch how she chooses gear when there is plenty to choose from.
+--
+-- Why this is not just SandboxVars: the loot rolls never read the options. Java copies each
+-- option once into a static float (ItemPickerJava.foodLootModifier and the like) inside
+-- IsoWorld.init, right after the save's sandbox file is read. So the option is set first and
+-- ItemPickerJava.InitSandboxLootSettings() is called to copy it again. Both come from the
+-- vanilla game: getSandboxOptions():getOptionByName(...):setValue(...) is what its admin
+-- sandbox screen does, and IsoWorld.init itself calls the refresh.
+--
+-- When: OnLoadedMapZones runs inside IsoWorld.init after that copy and before chunks load.
+-- OnGameStart is a second chance, and a no-op if the first one worked.
+--
+-- The game writes the sandbox options to map_sand.bin when it saves. OnSave puts the old values
+-- back first, so the file keeps what the player chose. OnPostSave sets the high values again.
+-- The loot rolls keep using the copied floats either way. If OnSave ever fails to run before
+-- the write, the high values would be saved with the world.
+
+local LOOT_FLAG = "ls_loot.txt"
+
+-- 4 is the option's own maximum in Build 42.21 (0 to 4, default 0.6). The sandbox screen stops
+-- at 3 ("Abundant"). RollsMultiplier is left alone: its tooltip warns it can hurt performance.
+local LOOT_TARGET = 4
+local LOOT_OPTIONS = {
+  "WeaponLootNew",         -- melee weapons
+  "RangedWeaponLootNew",
+  "AmmoLootNew",
+  "FoodLootNew",           -- perishable food
+  "CannedFoodLootNew",     -- non-perishable food
+  "MedicalLootNew",
+  "SurvivalGearsLootNew",
+  "ContainerLootNew",      -- bags
+  "ToolLootNew",
+}
+
+local lootState = nil -- set once the options were raised: old and new values, to swap on save
+
+local function fileExists(name)
+  local found = false
+  pcall(function()
+    local r = getFileReader(name, false)
+    if r then found = true; r:close() end
+  end)
+  return found
+end
+
+local function lootApply()
+  if lootState then return end
+  if not fileExists(LOOT_FLAG) then return end
+  local state = { old = {}, new = {}, oldVars = {}, missing = {} }
+  -- Stored before the first change, so a failure half way can still be undone on save.
+  lootState = state
+  local okSet, errSet = pcall(function()
+    local options = getSandboxOptions()
+    for _, name in ipairs(LOOT_OPTIONS) do
+      local opt = options:getOptionByName(name)
+      if not opt then
+        table.insert(state.missing, name)
+      else
+        local top = LOOT_TARGET
+        local max = opt:getMax()
+        if max and max < top then top = max end
+        state.old[name] = opt:getValue()
+        opt:setValue(top)
+        state.new[name] = opt:getValue()
+        -- The Lua table is what updateFromLua() copies back into the options, so keep it in step.
+        if SandboxVars then
+          state.oldVars[name] = SandboxVars[name]
+          SandboxVars[name] = state.new[name]
+        end
+      end
+    end
+  end)
+  local okRefresh, errRefresh = pcall(function() ItemPickerJava.InitSandboxLootSettings() end)
+  local parts = {}
+  for _, name in ipairs(LOOT_OPTIONS) do
+    if state.old[name] ~= nil then
+      table.insert(parts, name .. " " .. tostring(state.old[name]) .. " to " .. tostring(state.new[name]))
+    end
+  end
+  local line = "loot " .. table.concat(parts, ", ") .. "; refreshed=" .. tostring(okRefresh)
+  if #state.missing > 0 then line = line .. "; missing=" .. table.concat(state.missing, ",") end
+  if not okSet then line = line .. "; set failed: " .. tostring(errSet) end
+  if not okRefresh then line = line .. "; refresh failed: " .. tostring(errRefresh) end
+  say(line)
+end
+
+-- Put the old values back (raised = false) or the high ones again (raised = true).
+local function lootSwap(raised)
+  if not lootState then return end
+  pcall(function()
+    local options = getSandboxOptions()
+    for name, old in pairs(lootState.old) do
+      local opt = options:getOptionByName(name)
+      if opt then opt:setValue(raised and lootState.new[name] or old) end
+      if SandboxVars then
+        if raised then SandboxVars[name] = lootState.new[name] else SandboxVars[name] = lootState.oldVars[name] end
+      end
+    end
+  end)
+end
+
+-- A world loaded after returning to the menu reads its own sandbox file again, so start clean.
+Events.OnInitWorld.Add(function() lootState = nil end)
+Events.OnLoadedMapZones.Add(lootApply)
+Events.OnGameStart.Add(lootApply)
+Events.OnSave.Add(function() lootSwap(false) end)
+Events.OnPostSave.Add(function() lootSwap(true) end)

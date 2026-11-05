@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildReport, groupMissing, failures, harmful, main } from './review.mjs';
+import { buildReport, groupMissing, failures, harmful, deathsByCause, main } from './review.mjs';
 import { joinRecords } from '../decisions.mjs';
 
 const REVIEW = fileURLToPath(new URL('./review.mjs', import.meta.url));
@@ -112,4 +112,33 @@ test('the command reads both files, takes --since, and rejects a bad date', () =
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const death = (run, cause, o = {}) => ({
+  t: 'death', id: `death-${run}`, at: '2026-11-05T09:10:00Z', run, cause, job: 'SEARCH', zClose: 2, zChasing: 3, hpLost10: 40, source: 'mod', ...o,
+});
+
+test('deaths are grouped by cause, most common first, with the job and the averages', () => {
+  const groups = deathsByCause([
+    death('r1', 'bitten while busy'), death('r2', 'bitten while busy', { job: 'GOTO', zClose: 1, hpLost10: 20 }),
+    death('r3', 'starved', { job: null, order: null, zClose: 0, zChasing: 0, hpLost10: 0 }),
+    { t: 'decision', id: 'x' },
+  ]);
+  assert.deepEqual(groups.map((g) => [g.cause, g.n]), [['bitten while busy', 2], ['starved', 1]]);
+  assert.equal(groups[0].jobs.get('SEARCH'), 1);
+  assert.equal(groups[0].hp, 60);
+});
+
+test('a run with two death lines counts once, with the newer line', () => {
+  const groups = deathsByCause([death('r1', 'unknown', { source: 'bridge' }), death('r1', 'bitten', { job: 'ENTER' })]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].cause, 'bitten');
+});
+
+test('the report prints deaths by cause, and says so when there are none', () => {
+  const text = buildReport({ decisions: [death('r1', 'overrun while fleeing'), death('r2', 'overrun while fleeing', { source: 'bridge' })], nudges: [] });
+  assert.ok(text.includes("Deaths by cause\n  2x overrun while fleeing: doing SEARCH 2; 2 close and 3 chasing at the end, 40 hp lost in the last 10 s (1 from the bridge's own guess)"), text);
+  assert.ok(buildReport({ decisions: [], nudges: [] }).includes('Deaths by cause\n  No deaths logged.'));
+  const since = buildReport({ decisions: [death('r1', 'fell')], nudges: [], from: new Date('2026-11-06') });
+  assert.match(since, /No deaths logged/);
 });

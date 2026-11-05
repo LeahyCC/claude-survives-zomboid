@@ -3,12 +3,15 @@
 #
 #   pwsh tools/playtest.ps1            install, launch (or reuse a running game), get in game
 #   pwsh tools/playtest.ps1 -Shot x.png also save a screenshot of the game window when in game
+#   pwsh tools/playtest.ps1 -RichLoot   also raise the loot options for this world (test runs only)
 #
 # The auto-continue lives in tools/dev-mod/LocalSurvivorDev. It only acts while
 # Zomboid/Lua/ls_autoload.txt exists, and this script deletes that file once the game is in.
+# -RichLoot works the same way with ls_loot.txt. Without the switch the file is removed.
 param(
   [int]$TimeoutSec = 420,
-  [string]$Shot = ''
+  [string]$Shot = '',
+  [switch]$RichLoot
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
@@ -16,6 +19,7 @@ $zomboid = Join-Path $env:USERPROFILE 'Zomboid'
 $luaDir = Join-Path $zomboid 'Lua'
 $percept = Join-Path $luaDir 'local_percept.txt'
 $flag = Join-Path $luaDir 'ls_autoload.txt'
+$lootFlag = Join-Path $luaDir 'ls_loot.txt'
 
 & pwsh (Join-Path $repo 'install.ps1') | Out-Null
 $devSrc = Join-Path $PSScriptRoot 'dev-mod\LocalSurvivorDev'
@@ -52,6 +56,9 @@ if (Test-Path $latest) {
 
 New-Item -ItemType Directory -Force $luaDir | Out-Null
 Set-Content -Path $flag -Value '1'
+# The helper reads this when the world loads. A leftover file from an earlier run would make a
+# normal launch rich, so without the switch it is removed.
+if ($RichLoot) { Set-Content -Path $lootFlag -Value '1' } else { Remove-Item $lootFlag -ErrorAction SilentlyContinue }
 
 Add-Type @'
 using System;
@@ -94,6 +101,7 @@ function Test-InGame {
 
 if (Test-InGame) {
   Write-Host 'Already in game.'
+  if ($RichLoot) { Write-Warning 'The world is already loaded, so -RichLoot has no effect until the next load.' }
 } else {
   if ((Get-PzWindow) -eq [IntPtr]::Zero) {
     Write-Host 'Starting Project Zomboid through Steam...'
@@ -102,7 +110,7 @@ if (Test-InGame) {
   $deadline = (Get-Date).AddSeconds($TimeoutSec)
   while (-not (Test-InGame)) {
     if ((Get-Date) -gt $deadline) {
-      Remove-Item $flag -ErrorAction SilentlyContinue
+      Remove-Item $flag, $lootFlag -ErrorAction SilentlyContinue
       throw "Not in game after $TimeoutSec s. Check the game window."
     }
     Start-Sleep -Seconds 8
@@ -112,6 +120,6 @@ if (Test-InGame) {
   }
   Write-Host 'In game.'
 }
-Remove-Item $flag -ErrorAction SilentlyContinue
+Remove-Item $flag, $lootFlag -ErrorAction SilentlyContinue
 
 if ($Shot) { & pwsh (Join-Path $PSScriptRoot 'screenshot.ps1') -Out $Shot }
