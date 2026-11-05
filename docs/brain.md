@@ -33,7 +33,7 @@ ask the model ---------------------------------------- llm.mjs
 re-read the percept: a chaser walked in? drop the order
    |
 "keep" or the job already running? no order
-otherwise write SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
+otherwise write SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET[|POSTURE]
 ```
 
 A percept with no `v` field comes from an old mod. It gets the old prompt and the old rules in `bridge/decide.mjs`.
@@ -58,6 +58,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
 | `commentator.mjs` | The inner voice: spots moments, keeps a summary of the run, rate limits, asks the meme model for a first person line. Commentary only. See "Inner voice". | service |
 | `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
+| `reflexlog.mjs` | Follows the mod's reflex log and copies each stance and outcome into the decision log. See `docs/combat.md`. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
 | `pz-bridge.mjs` | Reads the percept, runs the loop, writes the order, serves `/mind`. | I/O |
 | `decide.mjs` | The v1 brain for old mods, and `intentLine`. | v1 |

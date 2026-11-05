@@ -28,6 +28,14 @@ for (const type of ['GOTO', 'ENTER', 'SEARCH']) assert.equal(normalize({ action:
 assert.equal(normalize({ action: { type: 'LOOT', target: 'B|1' } }).target, 'B 1');
 assert.equal(intentLine(5, normalize({ action: { type: 'LOOT' }, target: '123' })), '5|LOOT|0|0||||123');
 
+// The fight posture is a 9th field, written only when it is one the mod knows and not normal.
+const wait = normalize({ action: { type: 'WAIT' } });
+assert.equal(intentLine(6, { ...wait, posture: 'avoid' }), '6|WAIT|0|0||||' + '|avoid');
+assert.equal(intentLine(6, { ...wait, posture: ' CLEAR ' }), '6|WAIT|0|0||||' + '|clear');
+assert.equal(intentLine(6, { ...wait, posture: 'normal' }), '6|WAIT|0|0||||');
+assert.equal(intentLine(6, { ...wait, posture: 'a|b' }), '6|WAIT|0|0||||');
+assert.equal(intentLine(6, wait), '6|WAIT|0|0||||');
+
 const inch = normalize({ action: { type: 'MOVE', dx: -1, dy: 0 } });
 assert.equal(inch.type, 'MOVE');
 assert.equal(inch.dx, -16);

@@ -1,6 +1,6 @@
 -- LocalSurvivor, the body half. A local model plays Project Zomboid.
 -- Perception OUT : one-line JSON in  %USERPROFILE%/Zomboid/Lua/local_percept.txt  (~1/s)
--- Intent     IN  : reads  %USERPROFILE%/Zomboid/Lua/local_intent.txt  ->  "SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET"
+-- Intent     IN  : reads  %USERPROFILE%/Zomboid/Lua/local_intent.txt  ->  "SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET|POSTURE"
 -- The .txt extension is required. Build 42.20+ getFileWriter only allows ini, cfg, txt, log.
 -- Reflex and movement are from claude-survives-zomboid (MIT).
 --
@@ -18,6 +18,8 @@ require "LocalSurvivor/Core"
 require "LocalSurvivor/Sense"
 require "LocalSurvivor/Move"
 require "LocalSurvivor/Act"
+require "LocalSurvivor/Stance"
+require "LocalSurvivor/ReflexLog"
 require "LocalSurvivor/Reflex"
 require "LocalSurvivor/Needs"
 require "LocalSurvivor/HUD"
@@ -106,14 +108,9 @@ function LS.onTick()
   -- A long need (drink at a sink, sleep, bandage) steps here and pauses while the reflex acts.
   if tick % 5 == 0 then pcall(function() LS.Needs.update(p, acted) end) end
 
-  -- CROUCH/SNEAK to avoid drawing zombies when they're around but we're not mid-flee; stand tall
-  -- (no sneak) while actively escaping so we move at full speed.
-  if tick % 30 == 0 then
-    local _, nd = LS.Reflex.nearestZombie(px, py, 30)
-    -- sneak only at MID range (creep past); never in melee (would cripple attacks) or mid-flee
-    local sneak = nd >= 6 and nd < 25 and (tick - LS.reflexTick > 90)
-    pcall(function() p:setSneaking(sneak) end)
-  end
+  -- Crouched only while the reflex is hiding or creeping past unaware zombies. Anything else
+  -- stands, so a fight or a run is at full speed (docs/combat.md).
+  if tick % 30 == 0 then pcall(function() LS.Reflex.manageSneak(p) end) end
 
   if tick % 15 == 0 then pcall(function() LS.Reflex.manageSpeed(p) end)
   elseif tick % 5 == 0 then pcall(function() LS.Reflex.guardSpeed(p) end) end

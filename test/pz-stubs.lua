@@ -117,7 +117,7 @@ for _, name in ipairs({
   "ISInventoryTransferAction", "ISOpenCloseDoor", "ISSmashWindow", "ISClimbThroughWindow",
   "ISOpenCloseCurtain", "ISRemoveBrokenGlass", "ISOpenCloseWindow", "ISWearClothing",
   "ISTakeWaterAction", "ISApplyBandage", "ISDisinfect", "ISUnequipAction", "ISRemoveGlass", "ISSitOnGround",
-  "ISLockDoor", "ISToggleLightAction",
+  "ISLockDoor", "ISToggleLightAction", "ISClimbOverFence",
 }) do actionClass(name) end
 -- The vanilla pathfind action is built by named constructors, not new().
 ISPathFindAction = { Type = "ISPathFindAction" }
@@ -241,8 +241,9 @@ end
 function getGameSpeed() return __speed end
 function setGameSpeed(v) __speed = v end
 
-function getFileWriter(name)
-  local w = { buf = "" }
+-- append: the game's third argument. True keeps what the file held.
+function getFileWriter(name, create, append)
+  local w = { buf = append and (__files[name] or "") or "" }
   function w:write(s) self.buf = self.buf .. s end
   function w:close() __files[name] = self.buf end
   return w

@@ -1,16 +1,19 @@
--- The real survival engine: local and fast, no brain round-trip. Fight like a good player
--- (one standing zombie at a time, stomp what is down, step back from a second one, stop when
--- winded), flee a pack, get off a stuck door, and slow or speed the game clock.
--- Reflex.decide is pure: a plain snapshot in, a plain action out. See docs/combat.md.
+-- The real survival engine: local and fast, no brain round-trip. Every 5 ticks it reads the
+-- game into a plain snapshot, Stance.choose picks a stance (fight, hold, shove and step, break
+-- contact, hide, sneak past, climb, flee), and perform carries it out with the game's own
+-- actions. Also gets off a stuck door, and slows or speeds the game clock. See docs/combat.md.
 
 require "LocalSurvivor/Core"
 require "LocalSurvivor/Sense"
 require "LocalSurvivor/Move"
+require "LocalSurvivor/Stance"
+require "LocalSurvivor/ReflexLog"
 local LS = LocalSurvivor
 LS.Reflex = LS.Reflex or {}
 local Reflex = LS.Reflex
 local Core = LS.Core
 local Move = LS.Move
+local Stance = LS.Stance
 
 -- Reflex-only state. On the namespace so a second run of this file keeps it.
 if LS.reflexState == nil then
@@ -25,62 +28,28 @@ if LS.reflexState == nil then
   }
 end
 local R = LS.reflexState
+-- Added after the first release, so an older live table gets them too.
+if R.badLine == nil then R.badLine = {} end
+if R.climbTried == nil then R.climbTried = {} end
 
 -- Each part of the fight can be switched off at run time. A key left nil counts as on.
 if LS.combat == nil then
-  LS.combat = { stomp = true, spacing = true, gates = true, doorHold = true }
+  LS.combat = { stomp = true, spacing = true, gates = true, doorHold = true, climb = true, hide = true, sprint = true }
 end
 
--- Distances are in tiles. Safe to overwrite on a second run.
-Reflex.N = {
-  RANGE = 11,          -- the reflex only looks this far; farther is the brain's job
-  SWARM_R = 7,         -- this many living zombies inside SWARM_R is a pack: run
-  SWARM_N = 3,
-  HP_FLEE = 30,
-  STOMP_REACH = 1.0,
-  STOMP_CLEAR = 2.5,   -- no standing zombie this close before looking down to stomp
-  DOWN_CLOSE = 4,      -- walk over to a downed zombie this close
-  SPACING_R = 2,       -- a second standing zombie this close: step back first
-  ON_HIM = 1.2,        -- too close to turn away: shove instead
-  BITE = 1.5,          -- a zombie bites from here, so swing even if the weapon is shorter
-  CHASE_MAX = 6,
-  UNAWARE_R = 2,       -- a zombie that is not chasing is left alone unless this close
-  BLOCK_R = 4,         -- or this close and in the way of the walk
-  BACKOFF = 3,
-  HOLD_R = 12,
-  HOLD_SCAN = 6,
-  HOLD_MAX = 1800,     -- ticks of holding with nothing coming before giving the spot up
-  END_LOW = 0.3,
-  PANIC_MAX = 3,
-  HEAVY_MAX = 2,
-  TIRED_MAX = 3,
-}
+-- The thresholds live with the pure stance code. Same table, so a live edit reaches both.
+Reflex.N = Stance.N
 
--- Sum a repulsion vector AWAY from every zombie within range (closer = stronger), so we flee
--- along the safest heading instead of blindly away from just the nearest one (which could be
--- straight into two others). This is what keeps him alive between slow LLM decisions.
-function Reflex.fleeVector(px, py)
-  local fx, fy, nearestD, danger = 0, 0, 9999, 0
-  pcall(function()
-    local zl = getCell():getZombieList()
-    if not zl then return end
-    for i = 0, zl:size() - 1 do
-      local z = zl:get(i)
-      if Core.zombieAlive(z) then
-        local dx, dy = px - z:getX(), py - z:getY()   -- points AWAY from the zombie
-        local d = math.sqrt(dx * dx + dy * dy)
-        if d < nearestD then nearestD = d end
-        if d <= 22 and d > 0.1 then
-          local w = (22 - d) / 22                       -- 0..1, nearer pushes harder
-          fx = fx + (dx / d) * w
-          fy = fy + (dy / d) * w
-          if d <= Core.FLEE_TRIGGER then danger = danger + 1 end
-        end
-      end
-    end
-  end)
-  return fx, fy, nearestD, danger
-end
+-- Compass headings for the open lines.
+Reflex.DIRS = { { 1, 0 }, { 1, 1 }, { 0, 1 }, { -1, 1 }, { -1, 0 }, { -1, -1 }, { 0, -1 }, { 1, -1 } }
+Reflex.LINE_LEN = 6          -- tiles a line must be clear for
+Reflex.TERRAIN_TICKS = 30    -- lines and barriers are read again this often, or after a 2 tile move
+Reflex.BAD_LINE_TICKS = 300  -- a run that went nowhere keeps its line off the list this long
+Reflex.RUN_STUCK = 60        -- a run that has not moved a tile in this many ticks went nowhere
+Reflex.CLIMB_ANIM = 120      -- the climb happens in the animation after its action leaves the queue
+Reflex.CLIMB_GIVEUP = 300    -- a climb not started by then (the walk failed, the game refused) is dropped
+Reflex.CLIMB_AGAIN = 600     -- the same fence or window is not tried again for this long
+Reflex.WEAPON_TICKS = 300    -- the weapon score is read again this often
 
 -- nearest zombie + how many are within a radius
 function Reflex.nearestZombie(px, py, r)
@@ -191,192 +160,132 @@ function Reflex.closeIn(p, z, d, thought)
   R.closingIn = stepped and true or false
 end
 
--- Swing if it is in reach, otherwise walk in.
-function Reflex.engage(p, z, d)
-  if Reflex.inMeleeReach(p, z, d) or (Reflex.zombieOnHim(d) and Core.holdingMelee(p)) then
-    R.closingIn = false
-    Reflex.attack(p, z, false)
-    LS.hudData.action = "FIGHT"
-    LS.hudData.thought = "On it. Swing and drop this one."
-    return
+-- The fight brain. Pure: reads only snap and the flags, touches no game object. The rules are
+-- in Stance.choose; this name stays because the tests and the docs use it.
+function Reflex.decide(snap)
+  return Stance.choose(snap)
+end
+
+-- True when a low fence or a window sits on the edge between two neighbouring squares.
+local function barrierEdge(a, b)
+  if not a or not b then return false end
+  local yes = false
+  pcall(function() yes = a:isHoppableTo(b) == true or a:isWindowTo(b) == true end)
+  return yes
+end
+
+-- Walk the tiles from (x0, y0) to (x1, y1) and say whether a low fence or a window lies on the
+-- way. A diagonal step is checked through its x corner, which is close enough for "between".
+function Reflex.barrierBetween(x0, y0, x1, y1, z)
+  local steps = math.max(math.abs(x1 - x0), math.abs(y1 - y0))
+  if steps == 0 then return false end
+  local x, y = x0, y0
+  local cur = Move.square(x, y, z)
+  for i = 1, steps do
+    local nx = x0 + math.floor((x1 - x0) * i / steps + 0.5)
+    local ny = y0 + math.floor((y1 - y0) * i / steps + 0.5)
+    local nxt = Move.square(nx, ny, z)
+    if not cur or not nxt then return false end
+    if nx ~= x and ny ~= y then
+      local via = Move.square(nx, y, z)
+      if barrierEdge(cur, via) or barrierEdge(via, nxt) then return true end
+    elseif barrierEdge(cur, nxt) then
+      return true
+    end
+    x, y, cur = nx, ny, nxt
   end
-  Reflex.closeIn(p, z, d)
+  return false
 end
 
--- FLEE reflex: repulsion-vector escape. Proactive, starts spacing out before contact.
-function Reflex.reflex(p)
-  local hud = LS.hudData
-  local px, py = p:getX(), p:getY()
-  local fx, fy, nearestD, danger = Reflex.fleeVector(px, py)
-  if danger == 0 then return end
-  local qlen = Core.queueLength(p)
-  local emergency = nearestD <= Core.FLEE_INTERRUPT
-  if qlen > 0 and not emergency then return end
-  if LS.tick - LS.reflexTick < 45 and not emergency then return end
-  local len = math.sqrt(fx * fx + fy * fy)
-  if len < 0.01 then return end
-  LS.reflexTick = LS.tick
-  if emergency then pcall(function() p:Say("!") end) end
-  hud.action = "FLEE (reflex)"
-  hud.thought = "Too close, breaking away to open the gap."
-  Move.doMove(p, math.floor(fx / len * 16 + 0.5), math.floor(fy / len * 16 + 0.5))  -- short, controlled break
-end
-
--- Unit vector away from the given zombies, nearer ones pushing harder. Falls back to straight
--- away from the nearest so a perfectly balanced pair still gives a heading.
-local function awayFrom(zs, radius, standingOnly, nearestIdx)
-  local fx, fy = 0, 0
-  for _, z in ipairs(zs) do
-    local d = tonumber(z.d) or 9999
-    if d <= radius and d > 0.1 and not (standingOnly and z.isDown) then
-      local w = (radius - d) / radius
-      fx = fx - (z.dx / d) * w
-      fy = fy - (z.dy / d) * w
+-- The compass headings with no wall, door or window for LINE_LEN tiles. A line a run went
+-- nowhere on lately is marked blocked, so the next run takes another way.
+function Reflex.openLines(p)
+  local out = {}
+  local px, py, pz = math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ())
+  for i, d in ipairs(Reflex.DIRS) do
+    local n = Reflex.LINE_LEN
+    if Move.lineClear(px, py, px + d[1] * n, py + d[2] * n, pz) then
+      table.insert(out, { dx = d[1], dy = d[2], dir = i, blocked = LS.tick - (R.badLine[i] or -99999) < Reflex.BAD_LINE_TICKS })
     end
   end
-  local len = math.sqrt(fx * fx + fy * fy)
-  if len < 0.01 and nearestIdx then
-    local z = zs[nearestIdx]
-    fx, fy = -z.dx, -z.dy
-    len = math.sqrt(fx * fx + fy * fy)
-  end
-  if len < 0.01 then return 0, 0 end
-  return fx / len, fy / len
+  return out
 end
 
-local function gateReason(snap)
-  local N = Reflex.N
-  if (tonumber(snap.endurance) or 1) < N.END_LOW then return "winded" end
-  if (tonumber(snap.panic) or 0) >= N.PANIC_MAX then return "panic" end
-  if (tonumber(snap.heavy) or 0) >= N.HEAVY_MAX then return "heavy" end
-  if (tonumber(snap.tired) or 0) >= N.TIRED_MAX then return "tired" end
+-- The compass index of a heading, or nil when it is not one of the eight.
+function Reflex.dirOf(dx, dy)
+  local len = math.sqrt(dx * dx + dy * dy)
+  if len < 0.01 then return nil end
+  for i, d in ipairs(Reflex.DIRS) do
+    local dl = math.sqrt(d[1] * d[1] + d[2] * d[2])
+    if (dx * d[1] + dy * d[2]) / (len * dl) > 0.99 then return i end
+  end
   return nil
 end
 
--- The fight brain. Pure: reads only snap and the flags, touches no game object.
--- snap.zombies: list of { d, dx, dy, down, crawl, chase, outside }, dx,dy from player to zombie.
--- snap also has armed, reach, shortBlade, hp, endurance (0..1), panic, heavy, tired (moodle
--- levels), inside, hold ({dx, dy} to a spot inside a door or window, or nil), heading ({dx, dy}
--- of the current walk, or nil), flags (defaults to LocalSurvivor.combat).
--- Returns { kind, index, dx, dy, why }. kind is stomp, swing, shove, backoff, flee, hold, close
--- or none. index points into snap.zombies.
-function Reflex.decide(snap)
-  snap = snap or {}
-  local N = Reflex.N
-  local flags = snap.flags or LS.combat or {}
-  local function on(key) return flags[key] ~= false end
-  local zs = {}
-  for _, z in ipairs(snap.zombies or {}) do
-    local d = tonumber(z.d) or 9999
-    local entry = { d = d, dx = tonumber(z.dx) or 0, dy = tonumber(z.dy) or 0, chase = z.chase, outside = z.outside }
-    -- Stomping off means downed zombies are fought like any other, the way it was before.
-    -- One lying outside while he is inside cannot be reached through the wall.
-    entry.isDown = on("stomp") and (z.down or z.crawl) and true or false
-    entry.canStomp = entry.isDown and not (snap.inside and z.outside)
-    table.insert(zs, entry)
-  end
-
-  local near, nearD = nil, 9999
-  local stand, standD = nil, 9999
-  local standIn, standInD = nil, 9999
-  local down, downD = nil, 9999
-  local swarm, close2 = 0, 0
-  for i, z in ipairs(zs) do
-    if z.d < nearD then near, nearD = i, z.d end
-    if z.d <= N.SWARM_R then swarm = swarm + 1 end
-    if z.isDown then
-      if z.canStomp and z.d < downD then down, downD = i, z.d end
-    else
-      if z.d < standD then stand, standD = i, z.d end
-      if not z.outside and z.d < standInD then standIn, standInD = i, z.d end
-      if z.d <= N.SPACING_R then close2 = close2 + 1 end
+-- Fences and windows within CLIMB_R she could get over now: low hoppable fences (not the tall
+-- ones), and windows or frames the game says she can climb through (open, or the glass gone).
+-- Each is an edge between two tiles, stored with its object so perform can climb it.
+function Reflex.findBarriers(p)
+  local found = {}
+  pcall(function()
+    local cell = getCell()
+    local cx, cy, pz = math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ())
+    local r = Stance.N.CLIMB_R
+    for x = cx - r, cx + r do
+      for y = cy - r, cy + r do
+        local sq = cell:getGridSquare(x, y, pz)
+        local objs = nil
+        if sq then pcall(function() objs = sq:getObjects() end) end
+        if objs then
+          for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            local kind, north = nil, false
+            local isWindow = instanceof(o, "IsoWindow") or instanceof(o, "IsoWindowFrame")
+            if not isWindow and instanceof(o, "IsoThumpable") then
+              pcall(function() isWindow = o:isWindow() == true end)
+            end
+            if isWindow then
+              local can = false
+              pcall(function() can = o:canClimbThrough(p) == true end)
+              if can then
+                kind = "window"
+                pcall(function() north = o:getNorth() == true end)
+              end
+            else
+              local hop, tall = false, false
+              pcall(function() hop = o:isHoppable() == true end)
+              pcall(function() tall = o:isTallHoppable() == true end)
+              if hop and not tall then
+                kind = "fence"
+                -- The same test vanilla's ISClimbOverFence uses to pick the way over.
+                pcall(function() north = sq:has(IsoFlagType.HoppableN) == true end)
+              end
+            end
+            if kind then
+              table.insert(found, { kind = kind, x = x, y = y, north = north, obj = o,
+                key = x .. "," .. y .. "," .. (north and "n" or "w") })
+            end
+          end
+        end
+      end
     end
-  end
-  local NONE = { kind = "none" }
-  if not near or nearD > N.RANGE then return NONE end
+  end)
+  return found
+end
 
-  local function act(kind, index, why, dx, dy)
-    return { kind = kind, index = index, why = why, dx = dx, dy = dy }
+-- Pure. Where a barrier edge is from her, and which way is across. A north edge lies between
+-- y - 1 and y, a west edge between x - 1 and x (the way the game lays out walls).
+function Reflex.edgeFacts(b, px, py)
+  local mx, my, nx, ny
+  if b.north then
+    mx, my = b.x + 0.5, b.y
+    nx, ny = 0, (py < b.y) and 1 or -1
+  else
+    mx, my = b.x, b.y + 0.5
+    nx, ny = (px < b.x) and 1 or -1, 0
   end
-  local function flee(why)
-    local fx, fy = awayFrom(zs, 22, false, near)
-    return act("flee", near, why, fx, fy)
-  end
-  local function backoff(why)
-    local fx, fy = awayFrom(zs, N.SWARM_R, true, stand or near)
-    return act("backoff", stand or near, why, fx, fy)
-  end
-
-  if (tonumber(snap.hp) or 100) < N.HP_FLEE then
-    if nearD <= Core.FLEE_TRIGGER then return flee("hurt") end
-    return NONE
-  end
-  if swarm >= N.SWARM_N then return flee("pack") end
-  if not on("spacing") and nearD <= Core.FLEE_INTERRUPT and swarm >= 2 then return flee("cornered") end
-
-  -- Stomp: no weapon wear, no swing. Only while nothing standing is close enough to grab him.
-  if down and standD > N.STOMP_CLEAR then
-    if downD <= N.STOMP_REACH then return act("stomp", down) end
-    if downD <= N.DOWN_CLOSE then return act("close", down, "down") end
-  end
-
-  -- Inside with one coming from outside: let it come through the opening and fall.
-  -- Hit it as it climbs if it is already in reach. One standing inside is a normal fight.
-  if on("doorHold") and snap.inside and snap.hold and standInD > N.STOMP_CLEAR then
-    local comer = nil
-    for i, z in ipairs(zs) do
-      if z.chase and z.outside and z.d <= N.HOLD_R and (not comer or z.d < zs[comer].d) then comer = i end
-    end
-    local inReach = stand and snap.armed and (standD < (tonumber(snap.reach) or 0) or standD <= N.BITE)
-    if comer and not inReach then
-      return act("hold", comer, nil, tonumber(snap.hold.dx) or 0, tonumber(snap.hold.dy) or 0)
-    end
-  end
-
-  -- An unaware zombie is sneaked past, not fought, unless it is close or in the way.
-  local hx, hy, hl = 0, 0, 0
-  if snap.heading then
-    hx, hy = tonumber(snap.heading.dx) or 0, tonumber(snap.heading.dy) or 0
-    hl = math.sqrt(hx * hx + hy * hy)
-  end
-  local function worthFighting(z)
-    if z.chase ~= false or z.d <= N.UNAWARE_R then return true end
-    return hl > 0.01 and z.d <= N.BLOCK_R and (hx * z.dx + hy * z.dy) / (hl * z.d) > 0.7
-  end
-  stand, standD = nil, 9999
-  for i, z in ipairs(zs) do
-    if not z.isDown and z.d < standD and worthFighting(z) then stand, standD = i, z.d end
-  end
-  if not stand then return NONE end
-
-  -- Bare hands lose a trade of blows. One on him alone can still be shoved down and stomped.
-  if not snap.armed then
-    if standD <= N.ON_HIM and swarm <= 1 then return act("shove", stand, "unarmed") end
-    if standD <= Core.FLEE_TRIGGER then return flee("unarmed") end
-    return NONE
-  end
-
-  if on("gates") then
-    local why = gateReason(snap)
-    if why then
-      if standD <= N.ON_HIM then return act("shove", stand, why) end
-      return backoff(why)
-    end
-  end
-
-  if on("spacing") and close2 >= 2 then
-    if standD <= N.ON_HIM then return act("shove", stand, "spacing") end
-    return backoff("spacing")
-  end
-
-  -- A knife does not win a chase. Open the gap until the zombie is close enough to hit.
-  if snap.shortBlade and standD > N.BITE then
-    local fx, fy = awayFrom(zs, 22, false, stand)
-    return act("flee", stand, "short", fx, fy)
-  end
-  if standD < (tonumber(snap.reach) or 0) or standD <= N.BITE then return act("swing", stand) end
-  if standD <= N.CHASE_MAX then return act("close", stand) end
-  return NONE
+  local dx, dy = mx - px, my - py
+  return { kind = b.kind, dx = dx, dy = dy, d = math.sqrt(dx * dx + dy * dy), nx = nx, ny = ny, key = b.key }
 end
 
 -- The nearest door or window that opens from his room to the outside, and the tile one step
@@ -422,24 +331,53 @@ function Reflex.findHoldSpot(p, zx, zy)
   return best
 end
 
+-- The weapon in hand's score, read again only when the item changes or now and then (wear).
+local function handScore(p)
+  local it = nil
+  pcall(function() it = p:getPrimaryHandItem() end)
+  if not it then return 0 end
+  if R.scoreItem ~= it or LS.tick - (R.scoreTick or -99999) >= Reflex.WEAPON_TICKS then
+    local s = 0
+    pcall(function() s = Core.weaponFacts(it).score end)
+    R.scoreItem, R.scoreTick, R.score = it, LS.tick, tonumber(s) or 0
+  end
+  return R.score or 0
+end
+
 -- Read the game into the plain table decide wants. Each call is its own pcall so one missing
--- method only loses its own field. objs[i] is the zombie object behind snap.zombies[i].
+-- method only loses its own field. objs[i] is the zombie object behind snap.zombies[i], and
+-- objs.barriers[i] the fence or window behind snap.barriers[i].
 function Reflex.snapshot(p)
   local N = Reflex.N
   local px, py, pz = p:getX(), p:getY(), 0
   pcall(function() pz = p:getZ() end)
-  local snap = { zombies = {}, armed = Core.holdingMelee(p), hp = 100, endurance = 1, panic = 0, heavy = 0, tired = 0 }
+  local snap = { zombies = {}, armed = Core.holdingMelee(p), hp = 100, endurance = 1, panic = 0, heavy = 0, tired = 0,
+    bleeding = 0, kills = 0 }
   local objs = {}
   snap.reach = Reflex.weaponReach(p)
   snap.shortBlade = snap.armed and Reflex.shortBlade(p) or false
+  snap.weaponScore = snap.armed and handScore(p) or 0
   pcall(function() snap.hp = p:getBodyDamage():getOverallBodyHealth() end)
+  pcall(function() snap.bleeding = p:getBodyDamage():getNumPartsBleeding() end)
   pcall(function() snap.endurance = p:getStats():get(CharacterStat.ENDURANCE) end)
   pcall(function() snap.panic = p:getMoodles():getMoodleLevel(MoodleType.PANIC) end)
   pcall(function() snap.heavy = p:getMoodles():getMoodleLevel(MoodleType.HEAVY_LOAD) end)
   pcall(function() snap.tired = p:getMoodles():getMoodleLevel(MoodleType.TIRED) end)
   pcall(function() snap.inside = not p:isOutside() end)
+  pcall(function() snap.load = p:getInventoryWeight() / math.max(1, p:getMaxWeight()) end)
+  pcall(function() snap.kills = p:getZombieKills() end)
+  snap.posture = LS.posture or "normal"
+  snap.prev = R.stance
+  -- A climb's action leaves the queue at once and the body goes over in the animation after.
+  local climbing = LS.tick < (R.climbUntil or 0)
+  pcall(function()
+    local name = p:getCurrentStateName()
+    if name and string.find(tostring(name), "Climb", 1, true) then climbing = true end
+  end)
+  snap.climbing = climbing
   if LS.travel.active then snap.heading = { dx = LS.travel.dx, dy = LS.travel.dy } end
   local chaserOutside = nil
+  local cx, cy, cz = math.floor(px), math.floor(py), math.floor(pz)
   pcall(function()
     local zl = getCell():getZombieList()
     if not zl then return end
@@ -462,6 +400,12 @@ function Reflex.snapshot(p)
           -- every zombie before it could tell.
           local okChase, chase = pcall(function() return z:getTarget() == p end)
           e.chase = (not okChase) or chase and true or false
+          -- Does the one after her still see her? Lost sight is how a player shakes them off.
+          -- Left unknown (nil) when the game will not say, and unknown counts as seeing.
+          if e.chase then pcall(function() e.sees = z:isTargetVisible() == true end) end
+          if not e.down and d <= N.BARRIER_R then
+            e.across = Reflex.barrierBetween(cx, cy, math.floor(z:getX()), math.floor(z:getY()), cz)
+          end
           table.insert(snap.zombies, e)
           table.insert(objs, z)
           if e.chase and e.outside and d <= N.HOLD_R and (not chaserOutside or d < chaserOutside.d) then
@@ -483,6 +427,34 @@ function Reflex.snapshot(p)
   else
     R.holdSpot = nil
   end
+
+  -- The ground only matters with one close. Read it at most twice a second, or after a move.
+  local nd = 9999
+  for _, e in ipairs(snap.zombies) do if e.d < nd then nd = e.d end end
+  if nd <= N.RANGE then
+    local t = R.terrain
+    local moved = t and ((px - t.x) ^ 2 + (py - t.y) ^ 2 >= 4)
+    if not t or moved or LS.tick - t.tick >= Reflex.TERRAIN_TICKS then
+      t = { x = px, y = py, tick = LS.tick, lines = Reflex.openLines(p) }
+      t.barriers = flags.climb ~= false and Reflex.findBarriers(p) or {}
+      R.terrain = t
+    end
+    -- A run that went nowhere since the lines were read is off the list at once.
+    for _, l in ipairs(t.lines) do
+      if LS.tick - (R.badLine[l.dir] or -99999) < Reflex.BAD_LINE_TICKS then l.blocked = true end
+    end
+    snap.lines = t.lines
+    snap.barriers, objs.barriers = {}, {}
+    for _, b in ipairs(t.barriers) do
+      local f = Reflex.edgeFacts(b, px, py)
+      -- Tried lately, unless it is the one she is on now. Keeps her from climbing straight back.
+      f.failed = b.key ~= R.climbKey and LS.tick - (R.climbTried[b.key] or -99999) < Reflex.CLIMB_AGAIN
+      table.insert(snap.barriers, f)
+      table.insert(objs.barriers, b)
+    end
+  else
+    R.terrain = nil
+  end
   return snap, objs
 end
 
@@ -495,9 +467,21 @@ local THOUGHTS = {
   panic = "Hands are shaking. Backing off, I'll miss like this.",
   heavy = "Carrying too much to fight. Backing off.",
   tired = "Too tired to fight well. Backing off.",
+  bleeding = "I'm bleeding. Not starting a fight like this.",
+  hurt = "Hurt too badly to trade blows. Backing off.",
   hold = "Holding inside. Let it come through and fall.",
+  holdFence = "Fence between us. Let it climb over and fall.",
+  short = "Knife is short. Letting it come to me.",
   down = "One's down. Moving in to finish it.",
-  short = "Knife is too short. Opening the gap.",
+  breakContact = "Running to get out of their sight.",
+  flee = "Too close, breaking away to open the gap.",
+  hideStill = "They lost me. Down low and still.",
+  hideSlip = "They lost me. Creeping away low.",
+  sneak = "It hasn't seen me. Keeping low.",
+  sneakPack = "A group that hasn't seen me. Creeping away.",
+  climbFence = "Over the fence. They'll be slow on it.",
+  climbWindow = "Through the window. That slows them.",
+  climbing = "Climbing.",
 }
 
 -- Walk a few tiles along the heading decide gave, once. A new walk every tick restarts the path.
@@ -534,16 +518,132 @@ function Reflex.holdAt(p, a, z)
   if z then pcall(function() p:faceThisObject(z) end) end
 end
 
+-- One walk of n tiles along the chosen line. It is kept while it heads the same way, since a
+-- new walk every 5 ticks restarts the path. A run that has not moved a tile in RUN_STUCK ticks
+-- went nowhere: its line goes off the list and the next decision takes another. That is the
+-- flee that stood on one tile for seconds in the 2026-11-04 run.
+function Reflex.runAlong(p, a, n)
+  local dx, dy = tonumber(a.dx) or 0, tonumber(a.dy) or 0
+  if math.abs(dx) + math.abs(dy) < 0.01 then return end
+  local px, py = p:getX(), p:getY()
+  local run = R.running
+  if run and run.n == n and Move.queuedWalkOnly(p) and (dx * run.dx + dy * run.dy) > 0.7 then
+    if (px - run.x) ^ 2 + (py - run.y) ^ 2 >= 1 then
+      run.x, run.y, run.tick = px, py, LS.tick
+    elseif LS.tick - run.tick > Reflex.RUN_STUCK then
+      if run.dir then R.badLine[run.dir] = LS.tick end
+      Core.trace("run-stuck", "dir=" .. tostring(run.dir) .. " at " .. math.floor(px) .. "," .. math.floor(py))
+      R.running = nil
+      ISTimedActionQueue.clear(p)
+    end
+    return
+  end
+  ISTimedActionQueue.clear(p)
+  LS.travel.active = false
+  LS.reflexTick = LS.tick
+  local dir = Reflex.dirOf(dx, dy)
+  local ok = Move.stepWalk(p, math.floor(dx * n + 0.5), math.floor(dy * n + 0.5))
+  Core.trace("run", tostring(a.kind) .. " " .. tostring(a.why) .. " dir=" .. tostring(dir) .. " ok=" .. tostring(ok)
+    .. " at " .. math.floor(px) .. "," .. math.floor(py))
+  if ok then
+    R.running = { dx = dx, dy = dy, x = px, y = py, tick = LS.tick, dir = dir, n = n }
+  else
+    R.running = nil
+    if dir then R.badLine[dir] = LS.tick end
+  end
+end
+
+-- Sprint while breaking contact, and stop as soon as the stance changes. The game sets sprint
+-- from the keys every frame (IsoPlayer.updateInternal2), so this may not take. survive reads
+-- isSprinting back and the log says whether it did (docs/combat.md).
+function Reflex.setSprint(p, on)
+  if on and (LS.combat or {}).sprint ~= false then
+    pcall(function() p:setSprinting(true) end)
+    R.sprintSet = true
+  elseif R.sprintSet then
+    pcall(function() p:setSprinting(false) end)
+    R.sprintSet = false
+  end
+end
+
+-- Crouch or stand. Sneak is a toggle in the game, so it stays as set.
+function Reflex.setSneak(p, on)
+  local now = nil
+  pcall(function() now = p:isSneaking() end)
+  if now == on then return end
+  pcall(function() p:setSneaking(on) end)
+end
+
+-- Every 30 ticks from the tick loop. Crouched only while the reflex wants it (hiding, or
+-- creeping past ones that have not seen her); otherwise stand, to move and swing at full
+-- speed. Before this she sneaked whenever a zombie was 6 to 25 tiles off, chasers included.
+function Reflex.manageSneak(p)
+  Reflex.setSneak(p, Stance.wantSneak(R.stance, LS.tick - (R.stanceTick or -99999)))
+end
+
+-- Get over the chosen fence or through the chosen window: walk to the square vanilla picks in
+-- front of it, then the game's own climb action. The action ends at once and the body goes
+-- over in the animation after it, so once the queue is empty decide waits CLIMB_ANIM ticks.
+function Reflex.climb(p, a, snap, objs)
+  local b = snap.barriers and snap.barriers[a.target]
+  local ob = objs.barriers and objs.barriers[a.target]
+  if not b or not ob then return false end
+  if R.climbKey ~= ob.key then
+    R.climbKey, R.climbAt = ob.key, LS.tick
+    R.climbTried[ob.key] = LS.tick
+    ISTimedActionQueue.clear(p)
+    LS.travel.active = false
+    LS.reflexTick = LS.tick
+    local spot, here = nil, nil
+    pcall(function() spot = AdjacentFreeTileFinder.FindWindowOrDoor(ob.obj:getSquare(), ob.obj, p) end)
+    pcall(function() here = p:getCurrentSquare() end)
+    if spot and spot ~= here then ISTimedActionQueue.add(ISWalkToTimedAction:new(p, spot)) end
+    local ok = pcall(function()
+      if ob.kind == "window" then ISTimedActionQueue.add(ISClimbThroughWindow:new(p, ob.obj, 0))
+      else ISTimedActionQueue.add(ISClimbOverFence:new(p, ob.obj, nil)) end
+    end)
+    Core.trace("climb", ob.kind .. " " .. ob.key .. " queued=" .. tostring(ok))
+    if not ok then R.climbKey = nil end
+    return ok
+  end
+  if Core.queueLength(p) == 0 then
+    R.climbUntil = LS.tick + Reflex.CLIMB_ANIM
+    R.climbKey = nil
+  elseif LS.tick - (R.climbAt or 0) > Reflex.CLIMB_GIVEUP then
+    ISTimedActionQueue.clear(p)
+    R.climbKey = nil
+    return false
+  end
+  return true
+end
+
 -- Carry out what decide chose. Returns true when the reflex took the tick.
 function Reflex.perform(p, a, snap, objs)
   local hud = LS.hudData
   local kind = a.kind
+  snap, objs = snap or {}, objs or {}
   local z = a.index and objs[a.index] or nil
+  local moving = (tonumber(a.dx) or 0) ~= 0 or (tonumber(a.dy) or 0) ~= 0
   if kind ~= "close" then R.closingIn = false end
   if kind ~= "backoff" then R.backingOff = false end
   if kind ~= "hold" then R.holdWalk = false; R.holdSince = nil end
+  if kind ~= "break" and kind ~= "flee" then R.running = nil end
+  if kind ~= "hide" then R.hideSince = nil end
+  if kind ~= "hide" and kind ~= "sneak" then R.slipWalk = false end
+  if kind ~= "climb" and kind ~= "wait" then R.climbKey = nil end
+  Reflex.setSprint(p, kind == "break")
+  if kind ~= "none" then
+    R.stance, R.stanceTick = a.stance or Stance.OF[kind] or "NONE", LS.tick
+    -- The death record reads these: what she was doing in her last seconds.
+    LS.reflexStance, LS.reflexStanceTick = R.stance, LS.tick
+    Reflex.setSneak(p, kind == "hide" or kind == "sneak")
+  end
   if kind == "none" then return false end
-  -- The death record reads this: was she fighting or fleeing in her last seconds.
+  -- Creeping past ones that have not seen her: crouch and let the walk go on.
+  if kind == "sneak" and not moving then
+    hud.thought = THOUGHTS.sneak
+    return false
+  end
   LS.reflexKind, LS.reflexKindTick = kind, LS.tick
   -- Every branch below may queue a walk, and a walk queued above speed 2 is dropped.
   Core.snapSpeed()
@@ -566,7 +666,7 @@ function Reflex.perform(p, a, snap, objs)
   elseif kind == "hold" then
     if not R.holdSince then R.holdSince = LS.tick end
     local quiet = true
-    for _, e in ipairs(snap.zombies) do if e.d <= 3 then quiet = false end end
+    for _, e in ipairs(snap.zombies or {}) do if e.d <= 3 then quiet = false end end
     -- A zombie that never finds the way in must not pin him to the spot for good.
     if quiet and LS.tick - R.holdSince > Reflex.N.HOLD_MAX then
       R.holdOffUntil = LS.tick + Reflex.N.HOLD_MAX
@@ -576,18 +676,40 @@ function Reflex.perform(p, a, snap, objs)
     if not quiet then R.holdSince = LS.tick end
     Reflex.holdAt(p, a, z)
     hud.action = "HOLD (reflex)"
-    hud.thought = THOUGHTS.hold
+    hud.thought = (a.why == "fence" and THOUGHTS.holdFence) or (a.why == "short" and THOUGHTS.short) or THOUGHTS.hold
   elseif kind == "close" then
     if z then Reflex.closeIn(p, z, snap.zombies[a.index].d, a.why == "down" and THOUGHTS.down or nil) end
-  elseif kind == "flee" then
-    Core.trace("flee", tostring(a.why) .. " at " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))
-    if a.why == "short" then
-      Move.doMove(p, math.floor((a.dx or 0) * 16 + 0.5), math.floor((a.dy or 0) * 16 + 0.5))
-      hud.action = "FLEE (reflex)"
-      hud.thought = THOUGHTS.short
-    else
-      Reflex.reflex(p)
+  elseif kind == "break" or kind == "flee" then
+    Reflex.runAlong(p, a, Reflex.N.RUN_STEP)
+    hud.action = kind == "break" and "BREAK CONTACT (reflex)" or "FLEE (reflex)"
+    hud.thought = kind == "break" and THOUGHTS.breakContact or THOUGHTS.flee
+  elseif kind == "hide" or kind == "sneak" then
+    if kind == "hide" then
+      if not R.hideSince then R.hideSince = LS.tick end
+      -- Long enough. The brain can move her on, still crouched.
+      if LS.tick - R.hideSince > Reflex.N.HOLD_MAX then return false end
     end
+    if moving then
+      if not (R.slipWalk and Move.queuedWalkOnly(p)) then
+        ISTimedActionQueue.clear(p)
+        LS.travel.active = false
+        local n = Reflex.N.HIDE_STEP
+        R.slipWalk = Move.stepWalk(p, math.floor(a.dx * n + 0.5), math.floor(a.dy * n + 0.5)) and true or false
+      end
+    else
+      LS.travel.active = false
+      if Move.queuedWalkOnly(p) then ISTimedActionQueue.clear(p) end
+    end
+    hud.action = kind == "hide" and "HIDE (reflex)" or "SNEAK (reflex)"
+    hud.thought = (kind == "sneak" and THOUGHTS.sneakPack) or (moving and THOUGHTS.hideSlip) or THOUGHTS.hideStill
+  elseif kind == "climb" then
+    local b = snap.barriers and snap.barriers[a.target]
+    if not Reflex.climb(p, a, snap, objs) then return false end
+    hud.action = "CLIMB (reflex)"
+    hud.thought = (b and b.kind == "window") and THOUGHTS.climbWindow or THOUGHTS.climbFence
+  elseif kind == "wait" then
+    hud.action = "CLIMB (reflex)"
+    hud.thought = THOUGHTS.climbing
   end
   return true
 end
@@ -599,7 +721,13 @@ function Reflex.survive(p)
   for _, e in ipairs(snap.zombies) do if e.d < nd then nd = e.d end end
   -- The door escape must not hold the fight off while a zombie is already on him.
   if LS.tick < R.unstickUntil and nd > 2 then return false end
-  return Reflex.perform(p, Reflex.decide(snap), snap, objs)
+  -- Did the sprint set last time survive the game's own input update?
+  local sprintTook = nil
+  if R.sprintSet then pcall(function() sprintTook = p:isSprinting() == true end) end
+  local a = Reflex.decide(snap)
+  local acted = Reflex.perform(p, a, snap, objs)
+  pcall(function() LS.ReflexLog.note(a, snap, LS.tick, snap.kills, sprintTook) end)
+  return acted
 end
 
 -- ---------- game speed ----------
@@ -698,6 +826,8 @@ function Reflex.watchHealth(p)
   local last = R.lastHp
   R.lastHp = hp
   if last and hp < last - Reflex.HIT_DROP then Core.snapSpeed() end
+  -- The reflex log counts the hits and the hp lost, for the outcome of each stance.
+  if last and hp < last then pcall(function() LS.ReflexLog.health(last - hp, LS.tick) end) end
 end
 
 -- Run every 5 ticks while the clock is fast: danger is only seen at the speed it is checked at,

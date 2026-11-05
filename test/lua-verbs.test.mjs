@@ -82,7 +82,7 @@ test('a verb added from another file is dispatched with the parsed fields', () =
     LocalSurvivor.Act.execIntent(__players[0], "9|PING|1|2|hi|why|goal|door-7")
   `);
   assert.deepEqual(lua.get('LocalSurvivor.seen'), {
-    seq: 9, action: 'PING', a: '1', b: '2', say: 'hi', thought: 'why', goal: 'goal', target: 'door-7',
+    seq: 9, action: 'PING', a: '1', b: '2', say: 'hi', thought: 'why', goal: 'goal', target: 'door-7', posture: '',
   });
   assert.equal(lua.get('LocalSurvivor.result.status'), 'running');
 });
@@ -94,6 +94,21 @@ test('a line without a target field gets an empty target', () => {
     LocalSurvivor.Act.execIntent(__players[0], "1|PING|0|0|||")
   `);
   assert.equal(lua.get('LocalSurvivor.seen.target'), '');
+});
+
+test('the ninth field sets the fight posture, and a line without it is normal', () => {
+  const lua = freshBody();
+  lua.run('LocalSurvivor.Act.execIntent(__players[0], "1|WAIT|0|0|||||avoid")');
+  assert.equal(lua.get('LocalSurvivor.posture'), 'avoid');
+  lua.run('LocalSurvivor.Act.execIntent(__players[0], "2|WAIT|0|0|||||clear")');
+  assert.equal(lua.get('LocalSurvivor.posture'), 'clear');
+  // An older bridge writes eight fields: the thresholds as they always were.
+  lua.run('LocalSurvivor.Act.execIntent(__players[0], "3|WAIT|0|0|||")');
+  assert.equal(lua.get('LocalSurvivor.posture'), 'normal');
+  lua.run('LocalSurvivor.Act.execIntent(__players[0], "4|WAIT|0|0|||||avoid fights")');
+  assert.equal(lua.get('LocalSurvivor.posture'), 'avoid');
+  lua.run('LocalSurvivor.Act.execIntent(__players[0], "5|WAIT|0|0|||||dance")');
+  assert.equal(lua.get('LocalSurvivor.posture'), 'normal');
 });
 
 test('a verb that throws is caught and reported as failed', () => {
@@ -133,13 +148,18 @@ test('the tick loop writes the percept and polls the order file on its cadence',
   assert.equal(percept.bldgDir, 'none');
 });
 
+// The run is its own walk along an open line now, not the momentum walk: momentum used to drag
+// her on after the reflex let go, and hiding needs her to stop. The bare player has no
+// endurance, so it is a plain run, not a sprint.
 test('an unarmed player with a zombie close flees on a survival tick', () => {
   const lua = freshBody();
   lua.run('__zombies[1] = { getX = function() return 14 end, getY = function() return 10 end, getZ = function() return 0 end, isDead = function() return false end }');
-  lua.run('__squares["2,10,0"] = { isFree = function() return true end }');
+  // A run is 10 tiles now (Stance.N.RUN_STEP), the old flee was 16.
+  lua.run('__squares["0,10,0"] = { isFree = function() return true end }');
   for (let i = 0; i < 5; i++) lua.fireEvent('OnTick');
   assert.equal(lua.get('LocalSurvivor.hudData.action'), 'FLEE (reflex)');
-  assert.equal(lua.get('LocalSurvivor.travel.active'), true);
+  assert.deepEqual(lua.run('return __queueTypes(__players[0])'), ['ISWalkToTimedAction']);
+  assert.equal(lua.get('LocalSurvivor.travel.active'), false);
 });
 
 test('Core helpers', () => {

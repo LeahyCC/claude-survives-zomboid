@@ -3,7 +3,7 @@
 What each order does, when it is done, and why it fails. Code is the truth: `mods/LocalSurvivor/42/media/lua/client/LocalSurvivor/Act.lua` and `Move.lua`.
 
 ```
-order line   SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
+order line   SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET[|POSTURE]
 result       res = {seq, verb, status, why, target} in the percept
 status       running -> done | failed
 ```

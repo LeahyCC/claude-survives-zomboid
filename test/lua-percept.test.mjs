@@ -361,7 +361,8 @@ test('night makes it dark', () => {
   assert.equal(percept(lua).dark, true);
 });
 
-test('a busy worst case stays under about 3.3 KB', () => {
+// The reflex summary added about 140 bytes (docs/percept.md, Size).
+test('a busy worst case stays under about 3.5 KB', () => {
   const lua = body();
   lua.run(`
     local items, parts = {}, {}
@@ -387,7 +388,7 @@ test('a busy worst case stays under about 3.3 KB', () => {
   assert.equal(p.wounds.length, 8);
   assert.equal(p.buildings.length, 6);
   assert.equal(p.weapons.length, 4);
-  assert.ok(line.length < 3300, `percept is ${line.length} bytes`);
+  assert.ok(line.length < 3500, `percept is ${line.length} bytes`);
 });
 
 test('the weapon in hand carries its score, and a pen in hand reads as none', () => {

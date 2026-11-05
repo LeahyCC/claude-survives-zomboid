@@ -68,9 +68,26 @@ The v2 brain (`docs/brain.md`) reads every field and gives the model a short dig
 | `bed` | object or null | Nearest bed in this building: `{x, y, z, d}`. | see below |
 | `buildings` | list | Up to 6 nearest buildings within 40 tiles. | see below |
 | `dark` | bool | Night, or the square is darker than 0.43 (vanilla's too-dark-to-read line). | `getGameTime():isNight()` `square:getLightLevel(p:getPlayerNum())` |
+| `reflex` | object | What the reflex has been doing, see below. | `ReflexLog.summary` |
 | `res` | object | What the last order did: `{seq, verb, status, why, target}`. `status` is `idle`, `running`, `done` or `failed`. `target` is what the job works on, or `""` when there is none (see below). Each verb's reasons are in `docs/skills.md` and `docs/needs.md`. | `LocalSurvivor.result` |
 
 Distances `d` are straight-line tiles. `dx` and `dy` are offsets, +x east and +y south. Object keys print in sorted order.
+
+### reflex
+
+A summary of the reflex log (`docs/combat.md`). The full calls and outcomes are in `Zomboid/Lua/local_reflex.txt`.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `stance` | string | The last stance taken: `FIGHT HOLD SHOVE BREAK HIDE SNEAK CLIMB FLEE`, or `NONE` before the first. |
+| `why` | string | The reason it was first taken, like `pack`, `winded` or `door`. Empty for a plain fight. |
+| `age` | int | Seconds since the reflex last took a stance, -1 if never. |
+| `calls` | int | Stances taken this session. |
+| `outcomes` | int | Of those, how many have had their 5 second outcome. |
+| `escapes` | int | Outcomes where nothing chased her within 10 tiles and nothing stood within 3. |
+| `hits60` | int | Hits taken in the last minute: body health drops over 0.2 in one tick. |
+| `level` | int | The threat level of the last decision, 0 to 4. |
+| `posture` | string | The fight posture from the last order: `normal`, `avoid` or `clear`. |
 
 ### inv
 
@@ -191,13 +208,14 @@ Sample. Every key is optional: a read that fails leaves its key out, and the bri
 | `z` | Floor. | `getZ()` |
 | `job` | The running skill or need job, `LS.skill.verb` or `LS.needsJob.verb`. | |
 | `order` `status` | The last order and its state. | `LS.result` |
-| `reflex` | `fight`, `flee`, `hold` or `none`, from what `Reflex.perform` did in the last 3 seconds (`LS.reflexKind`). `swing stomp shove close` count as a fight, `flee backoff` as a flight. | |
+| `reflex` | `fight`, `flee`, `hold`, `hide` or `none`, from what `Reflex.perform` did in the last 3 seconds (`LS.reflexKind`). `swing stomp shove close` count as a fight, `flee backoff break climb wait` as a flight, `hide sneak` as hiding. | |
+| `stance` | The reflex stance behind it (`docs/combat.md`), like `BREAK`, when one was taken in the last 3 seconds. | `LS.reflexStance` |
 
 A sample is about 230 bytes, so the record is near 3 KB. It is only in the dead percept. Which stat names, scales and `getDeathString` text the live game gives is not checked yet.
 
 ## Size
 
-About 1 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.3 KB. The gun fields add under 100 bytes with one gun.
+About 1.2 KB normally. The worst case in `test/lua-percept.test.mjs` (8 wounds, 6 zombies, 6 buildings, 4 weapons, long names) is under 3.5 KB. The `reflex` summary adds about 140 bytes and the gun fields under 100 bytes with one gun.
 
 ## The HUD weapon line
 

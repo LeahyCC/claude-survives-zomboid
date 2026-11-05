@@ -69,6 +69,22 @@ What to watch:
 - `http://localhost:8799/mind`: what the brain chose and why.
 - `bridge/decisions.jsonl`: one line per decided turn and what came of it, and one `death` line per run. `node bridge/tools/review.mjs` summarizes it, deaths by cause first.
 - `Zomboid/Lua/local_death.txt`: the last 10 seconds of the character that just died.
+- `Zomboid/Lua/local_reflex.txt`: one line per reflex stance and one per outcome 5 seconds later (`docs/combat.md`). The bridge copies them into `decisions.jsonl` as `reflex` lines, and `review.mjs` prints "Reflex by stance".
+
+## Checking the reflex
+
+Turn tracing on (`ls_trace.txt`) so `console.txt` gets a `run` line for each break or flee walk and a `climb` line for each climb. Watch the HUD action and the percept's `reflex` field.
+
+1. One zombie, a bat in hand, fresh: `FIGHT`, she walks in and swings. With a pen: no walk in, `BREAK CONTACT` or `FLEE`.
+2. Three or more coming in the open: `BREAK CONTACT`. Check the walk heads away along open ground, not into a wall. If she stands on one tile, a `run-stuck` trace line should follow within about a second and the next walk should take another way.
+3. In the log, look at the `out` lines for `BREAK`: `sprint` says whether the game kept her sprinting. Expect `false` (see `docs/combat.md`, Sneak and sprint).
+4. After a break, once they lose her: `HIDE (reflex)`, crouched, not walking. She stands up again within a few seconds of nothing being about.
+5. An unaware zombie 8 to 14 tiles off and nothing chasing: she crouches and the order keeps walking. A chaser anywhere: she stands.
+6. A low fence between her and a pack chasing her: `CLIMB (reflex)`, she walks to the fence and goes over. She must not climb straight back. A tall fence is never picked.
+7. Inside with two coming at a door: `HOLD (reflex)` at the spot one tile in. Outside with two coming over a low fence: `HOLD (reflex)` on her side, swings as each comes over.
+8. Winded (endurance under 0.3) with one close: shoves and steps back, never walks in. Bleeding or hp under 50: the same.
+9. An order line with `|avoid` as a ninth field (write it by hand into `local_intent.txt` with a higher seq): she gets away from a chaser at 5 tiles instead of walking to it. `|clear`: she walks to one at 7.
+10. After a session, `node bridge/tools/review.mjs` prints "Reflex by stance" with calls, escapes, hits and hp lost.
 
 ## Checking a death
 
