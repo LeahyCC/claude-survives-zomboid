@@ -155,19 +155,32 @@ Events.OnTickEvenPaused.Add(respawnStep)
 
 local LOOT_FLAG = "ls_loot.txt"
 
--- 4 is the option's own maximum in Build 42.21 (0 to 4, default 0.6). The sandbox screen stops
--- at 3 ("Abundant"). RollsMultiplier is left alone: its tooltip warns it can hurt performance.
-local LOOT_TARGET = 4
+-- Each option and the value a test run wants. Every value is clamped to the option's own range.
+-- 4 is the loot options' maximum in Build 42.21 (0 to 4, default 0.6); the sandbox screen stops
+-- at 3 ("Abundant"). RollsMultiplier rolls each container more times: its tooltip warns it can
+-- cost performance, which is fine for a test run. MaximumLooted and MaximumDiminishedLoot empty
+-- a share of buildings that grows with the world's age, so an older save looked picked over even
+-- with every loot option at 4. Both go to 0.
 local LOOT_OPTIONS = {
-  "WeaponLootNew",         -- melee weapons
-  "RangedWeaponLootNew",
-  "AmmoLootNew",
-  "FoodLootNew",           -- perishable food
-  "CannedFoodLootNew",     -- non-perishable food
-  "MedicalLootNew",
-  "SurvivalGearsLootNew",
-  "ContainerLootNew",      -- bags
-  "ToolLootNew",
+  { "WeaponLootNew", 4 },          -- melee weapons
+  { "RangedWeaponLootNew", 4 },
+  { "AmmoLootNew", 4 },
+  { "FoodLootNew", 4 },            -- perishable food
+  { "CannedFoodLootNew", 4 },      -- non-perishable food
+  { "MedicalLootNew", 4 },
+  { "SurvivalGearsLootNew", 4 },
+  { "ContainerLootNew", 4 },       -- bags
+  { "ToolLootNew", 4 },
+  { "KeyLootNew", 4 },             -- house keys, which ENTER can use
+  { "LiteratureLootNew", 4 },
+  { "CookwareLootNew", 4 },
+  { "ClothingLootNew", 4 },
+  { "MaterialLootNew", 4 },
+  { "FarmingLootNew", 4 },
+  { "GeneratorLootNew", 4 },
+  { "RollsMultiplier", 4 },
+  { "MaximumLooted", 0 },
+  { "MaximumDiminishedLoot", 0 },
 }
 
 local lootState = nil -- set once the options were raised: old and new values, to swap on save
@@ -189,14 +202,14 @@ local function lootApply()
   lootState = state
   local okSet, errSet = pcall(function()
     local options = getSandboxOptions()
-    for _, name in ipairs(LOOT_OPTIONS) do
+    for _, row in ipairs(LOOT_OPTIONS) do
+      local name, top = row[1], row[2]
       local opt = options:getOptionByName(name)
       if not opt then
         table.insert(state.missing, name)
       else
-        local top = LOOT_TARGET
-        local max = opt:getMax()
-        if max and max < top then top = max end
+        pcall(function() local max = opt:getMax(); if max and max < top then top = max end end)
+        pcall(function() local min = opt:getMin(); if min and min > top then top = min end end)
         state.old[name] = opt:getValue()
         opt:setValue(top)
         state.new[name] = opt:getValue()
@@ -210,7 +223,8 @@ local function lootApply()
   end)
   local okRefresh, errRefresh = pcall(function() ItemPickerJava.InitSandboxLootSettings() end)
   local parts = {}
-  for _, name in ipairs(LOOT_OPTIONS) do
+  for _, row in ipairs(LOOT_OPTIONS) do
+    local name = row[1]
     if state.old[name] ~= nil then
       table.insert(parts, name .. " " .. tostring(state.old[name]) .. " to " .. tostring(state.new[name]))
     end

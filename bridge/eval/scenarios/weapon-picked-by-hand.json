@@ -1,0 +1,32 @@
+{
+ "name": "weapon-picked-by-hand",
+ "note": "A crowbar in hand that the player chose, an axe in the bag that scores far higher. The player's pick stands: leave the weapon alone and go on to the house.",
+ "patch": {
+  "weapon": "Crowbar",
+  "weaponScore": 30,
+  "weaponByHand": true,
+  "weapons": [
+   {
+    "cond": 0.9,
+    "dmg": 2.2,
+    "n": "Axe",
+    "reach": 1.2,
+    "score": 51
+   },
+   {
+    "cond": 1,
+    "dmg": 1.15,
+    "n": "Crowbar",
+    "reach": 1.25,
+    "score": 30
+   }
+  ]
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "equip",
+  "wait"
+ ]
+}

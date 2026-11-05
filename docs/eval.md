@@ -65,7 +65,20 @@ Two runs per scenario is a small sample. A single scenario flipping between runs
 - A call that fails or returns a reply that fails the checks counts as a bad reply.
 - There is no run of it in this file yet. The first one is for after the key is set on this PC.
 
-## Latest run: gemma4:12b, 37 scenarios, with outcomes in the prompt
+## Latest run: gemma4:12b, 39 scenarios, guns and a hand-picked weapon
+
+2026-11-05, after the loot rework (`docs/skills.md`). Two scenarios are new, both about what is in her hand: `gun-in-hand-saucepan-in-bag` (a pistol in hand, a saucepan in the bag, a house nearby: go to the house, do not swap) and `weapon-picked-by-hand` (a crowbar the player chose, an axe in the bag that scores far higher: leave it alone). In both the right pick is the house, and `equip` is not on the menu at all, because the policy and the options now treat the hand as armed and chosen. `--n 2`, default prompt, game not running.
+
+```
+Model turns: 43/48 accepted, 2 wrong, 3 other, 0 bad replies. Mean 450 ms, p90 547 ms.
+Policy turns (no model): 15 scenarios, 15 accepted, 0 wrong.
+```
+
+- The two new scenarios: 4 of 4 accepted (`b1 b1` each).
+- Before the change the same percepts would have swapped. Without `heldGun` a pistol in hand reads as empty hands and the policy sends `equip` for the saucepan. Without `weaponByHand` the axe is "clearly better" and the policy swaps the crowbar for it.
+- The misses are the old ones: `panicked-outside` (0 of 2, both `b2`), `winded-no-chase` (0 of 2, `b1` instead of `rest`) and `can-with-opener` (1 of 2). The code those scenarios run on did not change. Read the totals, not one row.
+
+## Earlier run: gemma4:12b, 37 scenarios, with outcomes in the prompt
 
 2026-11-04, after the brain began to tell the model how its last orders went (`docs/brain.md`, "Reactions"). Three scenarios are new: `retry-failed-house`, `flee-loop-quieter-house` and `two-houses-failed-pick-third`. In each one the nearest house just failed and is on the menu again, and the right pick is another house. `--n 2`, default prompt, RTX 5080 with Ollama on the same PC, game not running.
 

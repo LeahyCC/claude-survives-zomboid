@@ -3,7 +3,7 @@
 
 import { level, percent, tiles, clock, woundText, list, count } from './words.mjs';
 import { compass } from './geom.mjs';
-import { isNight, panic01, zombies } from './senses.mjs';
+import { isNight, panic01, zombies, heldGun, weaponByHand } from './senses.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -36,8 +36,15 @@ function gear(p) {
   const weapons = Array.isArray(p.weapons) ? p.weapons : [];
   const inHand = String(p.weapon || 'none');
   const w = weapons.find((x) => x.n === inHand);
+  const gun = heldGun(p);
+  const guns = Array.isArray(p.guns) ? p.guns : [];
+  const held = guns.find((x) => x.held);
   let weapon = 'No weapon.';
-  if (inHand !== 'none') weapon = `Holding a ${inHand}${w ? ` (${percent(w.cond)})` : ''}.`;
+  if (gun) {
+    // A pistol is held but not swung: say what it has in it, and that a melee weapon is spare.
+    const rounds = held ? `, ${num(held.loaded)} loaded and ${num(held.ammo)} spare rounds` : '';
+    weapon = `Holding a ${gun} (a gun${rounds}).`;
+  } else if (inHand !== 'none') weapon = `Holding a ${inHand}${w ? ` (${percent(w.cond)})` : ''}${weaponByHand(p) ? ', your own pick' : ''}.`;
   else if (weapons.length) weapon = `Nothing in hand, a ${weapons[0].n} in the bag.`;
   const bag = String(p.bag || 'none') === 'none' ? 'No bag worn.' : `Wearing a ${p.bag}.`;
   const load = num(p.maxWeight) ? ` Load ${num(p.weight).toFixed(1)} of ${num(p.maxWeight)}.` : '';

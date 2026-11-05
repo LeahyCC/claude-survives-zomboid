@@ -1,0 +1,34 @@
+{
+ "name": "gun-in-hand-saucepan-in-bag",
+ "note": "A pistol in hand with a saucepan in the bag, a house nearby. She is armed. Do not put the gun away for the pan: go look at the house.",
+ "patch": {
+  "weapon": "none",
+  "weaponScore": 0,
+  "heldGun": "Pistol",
+  "weaponByHand": true,
+  "guns": [
+   {
+    "ammo": 12,
+    "held": true,
+    "loaded": 8,
+    "n": "Pistol"
+   }
+  ],
+  "weapons": [
+   {
+    "cond": 0.7,
+    "dmg": 0.7,
+    "n": "Saucepan",
+    "reach": 1,
+    "score": 9.2
+   }
+  ]
+ },
+ "accept": [
+  "b1"
+ ],
+ "wrong": [
+  "equip",
+  "wait"
+ ]
+}

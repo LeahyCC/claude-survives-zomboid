@@ -81,16 +81,23 @@ nearest door  ->  locked?  ->  next door or window (quiet, up to 4 tries)
 No arguments. Searches the building the survivor stands in.
 
 - Rooms nearest first, then containers in the room nearest first. Rooms on another floor count 4 tiles per floor.
-- Containers are `IsoRoom:getContainer()`. If that is empty, the room squares are read for objects with containers.
+- Every container in the room is opened (`Act.roomContainers`). Three sources, each container kept once:
+  - `IsoRoom:getContainer()`, the room's own list. It holds the first container of an object only, so a fridge's freezer or a stove's oven is missing from it.
+  - Every container of every object on every square of the room (`getContainerCount`, `getContainerByIndex`), as the loot window reads them (`ISInventoryPage`). Counters, fridges, wardrobes, cupboards and crates all come in this way.
+  - The floor of each square: the items lying there (`IsoGridSquare:getWorldObjects`), and the contents of a bag lying there. A floor container is a plain `ItemContainer.new("floor")` that holds those items, which is what the loot window builds and what `ISTransferAction` takes from. It is built again when she gets there, so what she has taken is gone. Items she dropped herself (DROP) are left out, or DROP and SEARCH would trade a spare weapon back and forth.
+- The game rolls a container's loot the first time it is looked at, and only for squares next to the player. A container read before that is empty. So before it reads one, the skill does what `ISInventoryPage:checkExplored` does: `ItemPicker.fillContainer`, then `setExplored(true)`.
 - Walks next to each container (`AdjacentFreeTileFinder.Find`) and takes what the loot table wants (below), inside the weight budget.
-- Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`).
+- Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`), in place of a smaller one.
 - A transfer that did not happen (the reflex clears the queue when it fights or flees) gets one more try.
-- When the search took a weapon, the skill takes it up before it reports (see EQUIP below). It queues the equip, waits for it, and tries once more if the reflex cut it off. The `why` text stays `took 4: ...` because the bridge reads it. The percept's `weapon` and `weaponScore` show the result.
+- When the search took a weapon, the skill takes it up before it reports (see EQUIP below), unless the weapon in her hand is one Colin chose. It queues the equip, waits for it, and tries once more if the reflex cut it off. The `why` text stays `took 4: ...` because the bridge reads it. The percept's `weapon` and `weaponScore` show the result. A gun is never taken up.
 - Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them. The percept shows how many are left as `inBldg.roomsLeft` (`Act.roomsLeft`).
-- Done when every room is searched or the weight reaches 85% of `getMaxWeight()`. `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
-- Failed: `not inside`, `nothing left` (every room was already searched), `full` (at 85% before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
+- A container she could not reach (no free square beside it, or the walk failed) is skipped. The room is then not marked finished, so the next SEARCH tries it once more (`Act.ROOM_TRIES`, 2), and after that it counts as done so one blocked cupboard cannot keep a building open for ever.
+- Done when every room is searched or the weight reaches the search line: 85% of `getMaxWeight()` with a back bag worn, 60% with none (`Act.searchLeft`). `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
+- Failed: `not inside`, `nothing left` (every room was already searched), `full` (at the search line before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
 
-A container the body cannot reach is skipped, not a failure. A room that is not loaded is left for a later SEARCH.
+A room that is not loaded is left for a later SEARCH.
+
+What went wrong in the rich loot run (`tools/playtest.ps1 -RichLoot`): she took dye, perfume, ice cream and a plunger and left a pistol. The pistol had no row in the loot table at all (a gun is not a melee weapon, so it matched nothing). The dye and perfume matched the "any other drink" row, because every fluid container counted as a drink. And the plunger scored just over the weapon floor. The container walk itself was also thinner than it looked (the room list alone, loot rolled only for the 3 by 3 squares around her), which is fixed above. None of this was run in a live game yet.
 
 ## EQUIP
 
@@ -103,13 +110,33 @@ No arguments. Wields the best weapon he carries, one level into bags.
 - Already holding the best: nothing is queued and the order is `done` with `already holding the best`.
 - Failed: `equip: no weapon` (nothing carried scores above the floor).
 
+A gun is gear, not a melee weapon, and EQUIP treats it so:
+
+- A gun is never a candidate. `Core.isMeleeWeapon` leaves it out, so EQUIP never wields one, and a gun in the pack does not count as a weapon for `equip: no weapon`.
+- A gun in her hand counts as armed. She does not swap it for a saucepan, a crowbar or an axe. The order is `done` with `holding the one you picked`. (Before this, a held pistol scored 0, she counted as unarmed, and the rule swapped it for a saucepan.)
+
+The weapon Colin put there himself is never swapped away (`Act.watchHand`, every tick and whenever the percept is built):
+
+```
+hand changes, the mod queued nothing   ->  Colin's pick, locked
+hand changes to what EQUIP queued      ->  the mod's own, no lock
+a gun in hand                          ->  always his: the mod never equips a gun
+```
+
+- Only a weapon can be a pick: a gun, or a melee weapon over the score floor. Food, a bottle or a bandage in her hand while she eats or drinks is not a pick, and does not end one.
+- The lock ends when the item breaks, leaves the pack (checked every 30 ticks while it is out of her hand), Colin puts another weapon in her hand, or the character dies (a new player object starts a fresh watch, and its first look only sets the baseline).
+- While it is locked, EQUIP and the weapon step of SEARCH do nothing if it is in her hand. If it is out of her hand (she ate, she drank) EQUIP puts it back, not the best weapon.
+- The percept shows it as `weaponByHand` and the HUD line says `(your pick)`.
+- The mod marks its own equips with `Act.markModEquip` for 1800 ticks, so a slow equip animation is not taken for a pick.
+
 ## DROP
 
 No arguments. Sheds weight until he is under the same line SEARCH stops at (85% of `getMaxWeight()`).
 
 - Takes the least valuable items first, the heaviest first among equals. Junk goes before anything useful: a pen, spare clothes, toys, weights, food he cannot eat.
-- After junk come tools, then a spare weapon, then sealed food, then empty bottles.
+- After junk come tools, then a spare weapon, then sealed food, then empty bottles. Guns and ammo go last of all. DROP has its own scale (`keep` in `Act.LOOT`), not the loot value.
 - Never dropped: the weapon in hand, the best weapon he carries, clothes he wears, any bag, water, food he can eat now, bandages and ripped sheets.
+- Everything dropped is remembered (`Act.noteDropped`), so a later SEARCH does not pick it up from the floor again.
 - Each item goes through the game's own drop (`ISInventoryPaneContextMenu.dropItem`). A held item is unequipped first. One in a bag comes out of the bag.
 - It plans up to 3 passes, reading the weight again after each, because a bag softens the weight of what is inside. A pass that dropped nothing ends the skill.
 - Done: `dropped 2: Dumb Bell, Spiffo`, with ` (still heavy)` when nothing more could go.
@@ -119,42 +146,69 @@ No arguments. Sheds weight until he is under the same line SEARCH stops at (85% 
 
 No arguments. Kept for the v1 brain.
 
-- Searches the room the survivor is in, with the same table. No junk pass.
+- Searches the room the survivor is in, with the same container walk and the same loot value. No junk pass.
 - Outside, or in a room with no containers: the nearest container within 10 tiles, and the room it is in.
 - Always looks again, even in a room a SEARCH finished. It marks the room searched too.
 - Done and failed as SEARCH. With nothing in reach it fails `nothing left`, so `err` starts with `loot` and the bridge does not loot there again.
 
 ## Loot table
 
-`Act.LOOT`, best first. `max` counts what is already carried, one level into bags. Scoring is the pure `Act.lootPick(desc, have)` and `Act.planTake(descs, have, budget)`, tested in `test/lua-loot.test.mjs`.
+Every item gets one loot value, and SEARCH and LOOT take the highest first. The value is pure: plain item facts in, a number out (`Core.lootKinds(item, carried)` lists every way the item is worth taking, best first, and `Core.lootValue` is the best of them, 0 for junk). Which of them she may still take is a game rule and lives in `Act`: how many of a kind (`max` in `Act.LOOT`, counting what she carries, one level into bags), how much weight is left, and how much each kilo is worth. The take or leave step is the pure `Act.lootPick(desc, have)` and `Act.planTake(descs, have, budget, total)`. Tests: `test/lua-loot.test.mjs` and `test/lua-search.test.mjs`.
 
-| Key | Takes | Max | Test |
+The order, best first:
+
+```
+bag          none worn, or one with 1.5 times the room of the worn one
+melee        a weapon that scores 25% over the best carried and over 8
+firearm      a gun, with the ammo for it: loose rounds, a magazine or a box of the right calibre
+medical      bandages, disinfectant, antibiotics, painkillers, splints, ripped sheets
+water        a litre of clean water, then an empty bottle, then another drink
+food         food that keeps: dry, canned (with a can opener in mind)
+fresh food   only when she is hungry now, or will be within the day
+tools        can opener (above the rest), hammer, saw, screwdriver, lighter, flashlight, batteries
+junk         worth nothing: dye, perfume, plungers, decorations, clothes, anything with no use
+```
+
+| Kind | Value | Max | Test |
 |---|---|---|---|
-| weapon | a real weapon when none is carried, or one that scores 25% over the best carried | | `Core.weaponScore` below |
-| bag | a back bag, when none is worn | 1 | `IsInventoryContainer`, `canBeEquipped` is `ItemBodyLocation.BACK` |
-| water | a container of clean water | 4 | `FluidContainer`, `Fluid.Water`, not tainted or poisonous |
-| bottle | an empty bottle up to 2 L, or another drink | 2 | `isEmpty`, not `isInputLocked`, `getCapacity` |
-| food | food that can be eaten now | 12 | `Core.isEdible` |
-| can | sealed food | 12 | `Core.isSealedFood` |
-| opener | a can opener, when none is carried | 1 | tag `CAN_OPENER` |
-| bandage | a clean bandage | 6 | `isCanBandage`, not tag `CAN_BE_WASHED` |
-| sheet | ripped sheets | 6 | `Base.RippedSheets` |
-| disinfectant | disinfectant or alcohol wipes | 2 | 40% alcohol over 0.15 L, or alcohol power 4 |
-| painkiller | pills | 2 | `Base.Pills` |
-| hammer saw screwdriver | one each | 1 | tags `HAMMER` `SAW` `SCREWDRIVER` |
-| lighter | a lighter or matches | 1 | tag `START_FIRE` |
-| flashlight | a flashlight | 1 | tag `FLASHLIGHT` |
+| bag | 100 | 2 | `IsInventoryContainer`, `canBeEquipped` is `ItemBodyLocation.BACK`. The one worn counts, so a bigger one can still come |
+| weapon | 90 and up | | over the loot floor (8, below) and 25% over the best carried: `Core.weaponScore` |
+| gun | 86 with ammo, 56 without | 2 | `Core.isGun` (ranged or aimed firearm). With ammo means the ammo is carried, in the same container, or the gun is loaded |
+| ammo, mag, box | 84, 84, 80 | 60 rounds, 3, 2 | rounds are tag `AMMO`, a magazine has an ammo type and a capacity, a box is the display category Ammo. Only for a gun she has or is taking |
+| bandage | 78 | 6 | `isCanBandage`, not tag `CAN_BE_WASHED` |
+| disinfectant | 76 | 2 | 40% alcohol over 0.15 L, or alcohol power 4 |
+| antibiotic | 74 | 2 | `Base.Antibiotics` |
+| painkiller | 72 | 2 | `Base.Pills` |
+| splint | 70 | 2 | `Base.Splint` |
+| water | 68 | 4 | `FluidContainer`, `Fluid.Water`, not tainted or poisonous |
+| sheet | 64 | 6 | `Base.RippedSheets` |
+| food | 60 | 12 | `Core.isEdible`, and it keeps: no shelf figure, or 14 days or more to go, and not frozen |
+| can | 58 | 12 | `Core.isSealedFood` |
+| opener | 58 | 1 | tag `CAN_OPENER` |
+| bottle | 56 | 2 | `isEmpty`, not `isInputLocked`, a capacity from 0.5 to 2 L (a 0.1 L perfume flask is not a bottle) |
+| fresh | 52 hungry now, 36 hungry within the day | 3 | edible but spoils soon (under 14 days to rot, or frozen). Hunger 0.25 or more; or 0.1 or more with a day or more left and under 3 food carried. Frozen food is only taken when hungry now |
+| drink | 50 | 2 | a fluid in the Beverage category (`FluidCategory.Beverage`). Dye, perfume and fuel are fluids but not drinks |
+| hammer, saw, screwdriver | 46, 45, 44 | 1 | tags `HAMMER` `SAW` `SCREWDRIVER` |
+| lighter | 43 | 1 | tag `START_FIRE` |
+| flashlight | 42 | 1 | tag `FLASHLIGHT` |
+| battery | 40 | 2 | `Base.Battery` |
 
-Clothes (`IsClothing`) and anything that matches no row are left. Broken items are left.
+Clothes (`IsClothing`), broken items and anything that matches no kind are left. Hunger is read once at the start of the search.
 
-Weapons rank first, above water and food. A pen, pencil, fork or spoon is never taken. A weapon with a score under 5 is left too. The score is in `docs/combat.md`.
+How long food keeps is read from the item: `getOffAgeMax` (the days until it is totally rotten) minus `getAge`. A figure in the millions means it does not spoil. Frozen food counts as spoiling soon, since it melts when it leaves the freezer.
 
-A better weapon than the best carried is always taken, ahead of everything else the room holds. It still has to fit in the weight left. The weapon row sorts by score, so an axe beats a crowbar when both are in the box. A second weapon that is no clear gain is left behind.
+**Weapons.** A pen, pencil, fork or spoon is never taken. A weapon must score at least 8 (`Core.LOOT.WEAPON_MIN`) to be worth carrying, a little over the score floor of 5 that makes it a weapon for the reflex. A kitchen knife (9) and a saucepan (9 to 12) pass. A plunger (6) does not. A better weapon than the best carried is always taken ahead of everything else the room holds, if it fits. The weapon kind sorts by score, so an axe beats a crowbar when both are in the box. A second weapon that is no clear gain is left behind.
+
+**Guns.** A pistol is taken whether or not ammo is known, since ammo is often in another room. With ammo it ranks above medicine, without it just under food that keeps. When a gun and its rounds lie in one container, the gun makes the rounds worth taking in the same stop. Rounds for a gun she does not have are left.
+
+**Weight.** The weight budget is 85% of the carry limit with a back bag worn and 60% with none, so with no bag she stops well before she is overloaded (`Act.searchLeft`). Inside the budget a pick has to be worth its weight (`Core.lootWorth`): the bar is value per kilo, and it rises as the budget drains. An empty pack takes anything with a value. At 25% of the room left the bar is 34 per kilo: a litre of water (68) and a bandage pass, a 3 kg saw (15) stays.
 
 The class comes from the item script's `Categories`, read with `Item:containsWeaponCategory(WeaponCategory.X)` the way `XpUpdate.lua` does.
 
 ## Checked and unchecked
 
 Every Java method the skills call was checked against the 42.21 jar with `node tools/pz-api.mjs`, and every vanilla Lua function against `media/lua`. The tests drive each skill with stub squares and a stub queue. What the real pathfinder, doors, windows and containers do is only checked in a live game.
+
+The loot value and the container walk use these, all found in the 42.21 jar with `node tools/pz-api.mjs`: `HandWeapon:isRanged`, `isAimedFirearm`, `getMagazineType`, `getAmmoBox`, `isContainsClip`, `isRoundChambered`; `InventoryItem:getAmmoType` (then `AmmoType:getItemKey`), `getCurrentAmmoCount`, `getMaxAmmo`, `getCount`, `getDisplayCategory`, `getOffAgeMax`, `getAge`; `Food:isFrozen`; `FluidContainer:isCategory` with `FluidCategory.Beverage`; `IsoObject:getContainerCount`, `getContainerByIndex`; `IsoGridSquare:getWorldObjects`; `IsoWorldInventoryObject:getItem`; `ItemContainer:isExplored`, `setExplored`, `AddItem`; `ItemPickerJava.fillContainer` (the Lua global `ItemPicker` is set to it in `server/Items/ItemPicker.lua`). None of it has run in a live game. The checks that matter most: that the floor container takes an item off the ground through `ISInventoryTransferAction`, that `ItemPicker.fillContainer` on a container she stands next to rolls the same loot the loot window would, that `getOffAgeMax` is in days, and that wearing a bigger bag over a smaller one works.
 
 The weapon score, EQUIP and DROP use vanilla Lua that was read but not run live: `ISInventoryPaneContextMenu.dropItem(item, playerNum)`, `transferIfNeeded(player, item)`, and `ISEquipWeaponAction:new(player, item, time, primary, twoHands)`. The Java methods were checked with `node tools/pz-api.mjs`: `getCriticalChance`, `getSwingTime`, `getMaxDamage`, `getMaxRange`, `isTwoHandWeapon`, `isHandItem`, `isWorn`, `isEquippedClothing`. Whether a drop from inside a worn bag behaves in game is only checked live.
