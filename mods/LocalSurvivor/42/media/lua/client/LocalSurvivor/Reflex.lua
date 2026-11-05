@@ -605,7 +605,10 @@ end
 -- ---------- game speed ----------
 -- Night fast forward: speed 3 while she waits out the dark inside, safe and not walking.
 Reflex.NIGHT_SPEED = 3
-Reflex.FAST_CLEAR = 20          -- tiles. No zombie nearer than this
+-- Tiles. No zombie nearer than this, and none in sight. It was 20, but in town some zombie is
+-- almost always inside 20 tiles, so the night never sped up. One 15 tiles off outside a shut
+-- house is no threat, and at speed 3 the 5 tick guard still sees one closing from 8.
+Reflex.FAST_CLEAR = 8
 Reflex.GENTLE_CLEAR = 60        -- tiles. Speed 2 outside the night rule needs this much room
 Reflex.HIT_DROP = 0.2           -- body health lost between two ticks that counts as a hit
 -- The orders that leave her standing still. Anything else may walk.
@@ -629,7 +632,7 @@ end
 function Reflex.pickSpeed(f)
   if f.manual then return 1 end
   if f.nightFast and f.night and f.inside and f.calm and not f.cooling
-    and f.nd > Reflex.FAST_CLEAR and not f.chasing and not f.bleeding then
+    and f.nd > Reflex.FAST_CLEAR and not f.seen and not f.chasing and not f.bleeding then
     return Reflex.NIGHT_SPEED
   end
   if f.nd > Reflex.GENTLE_CLEAR then return 2 end
@@ -663,6 +666,7 @@ function Reflex.speedFacts(p)
   -- The scans below are only worth paying for once everything cheaper says fast forward is on.
   if f.nightFast and f.night and f.inside and f.nd > Reflex.FAST_CLEAR then
     pcall(function() f.chasing = LS.Needs.chasing(p) end)
+    pcall(function() f.seen = p:getStats():getNumVisibleZombies() > 0 end)
     pcall(function() f.bleeding = p:getBodyDamage():getNumPartsBleeding() > 0 end)
     f.calm = Reflex.isCalm(p, f.asleep)
   else

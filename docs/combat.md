@@ -170,7 +170,8 @@ It then clears the queue and queues a one-tile step to a neighbour that is not a
 - Speed 2 when no zombie is within 60 tiles, otherwise 1. Manual mode is always 1.
 - **Night fast forward** is speed 3 (20 times). It needs every one of these:
   - `LS.nightFast` is on (K toggles it, default on) and it is night, 21:00 to 06:00, the same hours as `isNight` in the bridge.
-  - She is inside a building, no zombie is within 20 tiles, nothing is chasing her and she is not bleeding.
+  - She is inside a building, no zombie is within 8 tiles or in sight, nothing is chasing her and she is not bleeding.
+  - It was 20 tiles at first. In town some zombie is almost always inside 20, so the night never sped up (8 of 101 samples in the first live night). One 15 tiles off outside a shut house is no threat.
   - The last order was WAIT, REST or SLEEP, or she is asleep. With the first three, no skill is running, no needs job other than REST, no momentum walk, and the queue is empty or only a sit.
   - No snap back in the last 600 ticks.
 - Speed 4 is not used. Speed 3 is enough, and at 40 times the 5 tick checks have very little game time to react in.
@@ -182,7 +183,7 @@ Vanilla `ISWalkToTimedAction:isValid` is false above speed 2, so a walk queued a
 - `Reflex.perform` for any reflex action, and `Move.doMove` for every walk it starts.
 - Pressing a movement key (manual mode), and turning night fast forward off with K.
 - A hit: `Reflex.watchHealth` runs every tick and snaps when body health drops by more than 0.2.
-- A zombie inside 20 tiles, a chaser, bleeding or a new order that walks, found by `Reflex.guardSpeed` every 5 ticks while the speed is above 2.
+- A zombie inside 8 tiles or in sight, a chaser, bleeding or a new order that walks, found by `Reflex.guardSpeed` every 5 ticks while the speed is above 2.
 
 `Core.snapSpeed` does nothing when auto speed is off (G) or the game is paused. The speed is in the percept as `speed`. The HUD title row shows "NIGHT FAST FORWARD" while it runs, and otherwise whether the K switch is on.
 
