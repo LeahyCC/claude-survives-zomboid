@@ -26,10 +26,11 @@ LocalSurvivor/
   Move.lua      LocalSurvivor.Move  canStand stepWalk queuedWalkOnly doMove momentum
   Act.lua       LocalSurvivor.Act   the doX actions, manageLight, execIntent, pollIntent, the verbs
   Reflex.lua    LocalSurvivor.Reflex fleeVector nearestZombie engage reflex survive releaseDoor manageSpeed
+  Needs.lua     LocalSurvivor.Needs start update holdsSpot, the needs verbs and their jobs (docs/needs.md)
   HUD.lua       LocalSurvivor.HUD   start, onKeyPressed (and the LocalHUD panel class)
 ```
 
-Require order is `Core`, then `Sense`, then `Move`, then `Act` and `Reflex`. `HUD` needs only `Core`. Calls between modules go through the table at run time (`LocalSurvivor.Sense.zombieScan(...)`), so no module holds a stale copy of another's function.
+Require order is `Core`, then `Sense`, then `Move`, then `Act` and `Reflex`. `Needs` needs `Core` and `Sense`. `HUD` needs only `Core`. Calls between modules go through the table at run time (`LocalSurvivor.Sense.zombieScan(...)`), so no module holds a stale copy of another's function.
 
 Rules:
 
@@ -38,16 +39,18 @@ Rules:
 - Every game call is in `pcall`. A failure in the mod must never stop the tick.
 - Lua here is 5.1 (Kahlua): no `goto`, no `//`, no bitwise operators.
 
-State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`. Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
+State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`, `needsJob` (the running needs job, or false) and `needsOpts`. Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
 
 ## Tick cadence
 
 `LocalSurvivor.onTick` runs every game tick. Order inside it is fixed.
 
 ```
-every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode)
+every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode,
+             not while a needs job acts in place)
              manual mode: write percept each 60, stand down until idle 600 ticks, return
 %5           Reflex.survive          fight or flee; if it acted, skip momentum, glance and poll
+%5           Needs.update            step the needs job; it pauses when the reflex acted
 %30          sneak toggle
 %15          Reflex.manageSpeed
 %90          Act.manageLight
@@ -89,7 +92,7 @@ SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET
 
 `LocalSurvivor.verbs[VERB] = function(p, args) ... end`. `args` is a table of strings: `seq`, `action`, `a`, `b`, `say`, `thought`, `goal`, `target`. A verb fails by setting `LocalSurvivor.lastError`.
 
-Today's verbs: `MOVE EAT DRINK LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`. An unknown verb runs as `WAIT`. A new verb is one assignment from its own file. `Act.execIntent` does not change.
+Today's verbs: `MOVE LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT` in `Act.lua`, and `DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST` in `Needs.lua`. The needs verbs start a job that runs over many ticks and reports `done` or `failed` itself (see `docs/needs.md`). The bridge sends only the first group and `EAT DRINK` so far. An unknown verb runs as `WAIT`. A new verb is one assignment from its own file. `Act.execIntent` does not change.
 
 ## Result record
 
@@ -98,6 +101,7 @@ Today's verbs: `MOVE EAT DRINK LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`. 
 - `idle` at start.
 - `running` when `execIntent` starts a verb.
 - `failed` with `why = lastError` when the verb set `lastError` or threw.
+- `done` or `failed` later, from a needs job, with its own `why`.
 
 The percept carries it as `res`.
 

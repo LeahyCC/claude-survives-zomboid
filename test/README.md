@@ -27,6 +27,8 @@ Calls:
 - `fireEvent('OnTick')` calls every handler the mod registered. `eventCount(name)` counts them.
 - `autoload()` runs every file under the client folder. `requireModule(name)` runs one, with its requires.
 - A fake player is `__makePlayer({ x, y, items })`. Put it in `__players[0]` and the tick loop uses it. `__zombies`, `__squares` and `__files` are the fake world.
+- The vanilla menu handlers (`ISWorldObjectContextMenu.onDrink`, `ISInventoryPaneContextMenu.eatItem`, ...) record each call in `__menuCalls` and queue a stand-in action. `__recipes[name]` and `__canCraft[name]` stand in for craft recipes and the game's "can do it now" check. `__sleepAllowed = true` lets `onSleepWalkToComplete` put the player to sleep.
+- `instanceof(o, "IsoDoor")` is true for a stub table with `__class = "IsoDoor"`.
 
 ```js
 lua.run('__players[0] = __makePlayer({ x = 10, y = 10 })');

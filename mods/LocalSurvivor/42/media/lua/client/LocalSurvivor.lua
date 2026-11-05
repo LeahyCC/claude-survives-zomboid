@@ -19,6 +19,7 @@ require "LocalSurvivor/Sense"
 require "LocalSurvivor/Move"
 require "LocalSurvivor/Act"
 require "LocalSurvivor/Reflex"
+require "LocalSurvivor/Needs"
 require "LocalSurvivor/HUD"
 
 local LS = LocalSurvivor
@@ -45,7 +46,7 @@ function LS.onTick()
   -- A slice of the place scan every tick, in manual mode too, so the percept stays current.
   pcall(function() LS.Sense.step(p) end)
 
-  if not LS.manualMode then LS.Reflex.releaseDoor(p) end
+  if not LS.manualMode and not LS.Needs.holdsSpot(p) then LS.Reflex.releaseDoor(p) end
 
   if LS.manualMode then
     local qlen = Core.queueLength(p)
@@ -65,6 +66,8 @@ function LS.onTick()
   -- (it froze the game). The flee reflex handles dire moments instead; pause manually if you want.
   local acted = false
   if tick % 5 == 0 then pcall(function() acted = LS.Reflex.survive(p) end) end
+  -- A long need (drink at a sink, sleep, bandage) steps here and pauses while the reflex acts.
+  if tick % 5 == 0 then pcall(function() LS.Needs.update(p, acted) end) end
 
   -- CROUCH/SNEAK to avoid drawing zombies when they're around but we're not mid-flee; stand tall
   -- (no sneak) while actively escaping so we move at full speed.

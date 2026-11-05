@@ -271,8 +271,7 @@ verbs.MOVE = function(p, args)
     Move.doMove(p, dx, dy)
   end
 end
-verbs.EAT = function(p) LS.travel.active = false; Act.doEat(p) end
-verbs.DRINK = function(p) LS.travel.active = false; Act.doDrink(p) end
+-- EAT and DRINK are registered in Needs.lua.
 verbs.LOOT = function(p) LS.travel.active = false; Act.doLoot(p) end
 verbs.EQUIP = function(p) LS.travel.active = false; Act.doEquip(p) end
 verbs.CLOSEDOOR = function(p) LS.travel.active = false; Act.doCloseDoor(p) end
