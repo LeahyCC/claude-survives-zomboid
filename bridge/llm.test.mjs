@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  callPlanner, parseGpuLayers, plannerOptions, isMissingModel, DEFAULT_PLANNER_MODEL, MODEL,
+  callPlanner, callChoice, warmPlanner, plannerModelInUse, resetPlannerState, parseGpuLayers, plannerOptions, isMissingModel, DEFAULT_PLANNER_MODEL, MODEL,
 } from './llm.mjs';
 import { planSchema } from './planner.mjs';
 
@@ -115,4 +115,111 @@ test('a machine without the default planner falls back to the menu model, and re
   }
   assert.deepEqual(m.bodies.map((b) => b.model), [DEFAULT_PLANNER_MODEL, MODEL, MODEL]);
   assert.equal('num_gpu' in m.bodies[1].options, false, 'the fallback model is not forced onto the CPU');
+});
+
+const slow = (ms) => new Promise((r) => setTimeout(r, ms));
+const skipPinned = (t) => {
+  if (process.env.PZ_PLANNER_MODEL || process.env.PZ_PLANNER_GPU_LAYERS || process.env.PZ_PLANNER_THINK || MODEL === DEFAULT_PLANNER_MODEL) {
+    t.skip('planner env is set on this machine');
+    return true;
+  }
+  return false;
+};
+
+test('plannerModelInUse names the fallback model after a 404', async (t) => {
+  if (skipPinned(t)) return;
+  resetPlannerState();
+  assert.equal(plannerModelInUse(), DEFAULT_PLANNER_MODEL);
+  const m = mockFetch((body) => (body.model === DEFAULT_PLANNER_MODEL ? missing(body.model) : ok('{"goal":"y"}')));
+  try {
+    await callPlanner({ system: 's', user: 'u', schema: planSchema() });
+    assert.equal(plannerModelInUse(), MODEL);
+  } finally {
+    m.restore();
+    resetPlannerState();
+  }
+  assert.equal(plannerModelInUse(), DEFAULT_PLANNER_MODEL);
+});
+
+test('the warm-up sends the same model and options as a real plan, with one token', async (t) => {
+  if (skipPinned(t)) return;
+  resetPlannerState();
+  const m = mockFetch(() => ok('hi'));
+  try {
+    const w = await warmPlanner();
+    assert.equal(w.ok, true);
+    await callPlanner({ system: 's', user: 'u', schema: planSchema() });
+  } finally {
+    m.restore();
+    resetPlannerState();
+  }
+  const [warm, real] = m.bodies;
+  assert.equal(warm.model, real.model);
+  assert.equal(warm.options.num_ctx, real.options.num_ctx);
+  assert.equal(warm.options.num_gpu, real.options.num_gpu);
+  assert.equal(warm.keep_alive, real.keep_alive);
+  assert.equal(warm.options.num_predict, 1);
+});
+
+test('the first real plan waits for the warm-up, and a menu turn does not', async (t) => {
+  if (skipPinned(t)) return;
+  resetPlannerState();
+  const order = [];
+  const m = mockFetch(async (body) => {
+    if (body.options.num_predict === 1) {
+      order.push('warm start');
+      await slow(150);
+      order.push('warm end');
+      return ok('');
+    }
+    order.push(body.options.num_predict === 96 ? 'menu' : 'plan');
+    return ok('{"id":"a"}');
+  });
+  try {
+    const warm = warmPlanner();
+    const plan = callPlanner({ system: 's', user: 'u', schema: planSchema() });
+    await callChoice('u', ['a', 'b']);
+    assert.deepEqual(order, ['warm start', 'menu'], 'the menu turn did not wait for the load');
+    await Promise.all([warm, plan]);
+  } finally {
+    m.restore();
+    resetPlannerState();
+  }
+  assert.deepEqual(order, ['warm start', 'menu', 'warm end', 'plan']);
+});
+
+test('a warm-up that finds the default model missing switches to the menu model, and plans still run', async (t) => {
+  if (skipPinned(t)) return;
+  resetPlannerState();
+  const m = mockFetch((body) => (body.model === DEFAULT_PLANNER_MODEL ? missing(body.model) : ok('{"goal":"y"}')));
+  try {
+    const w = await warmPlanner();
+    assert.equal(w.ok, false);
+    assert.match(w.error, /404/);
+    assert.equal(plannerModelInUse(), MODEL);
+    const r = await callPlanner({ system: 's', user: 'u', schema: planSchema() });
+    assert.equal(r.raw, '{"goal":"y"}');
+  } finally {
+    m.restore();
+    resetPlannerState();
+  }
+  assert.deepEqual(m.bodies.map((b) => b.model), [DEFAULT_PLANNER_MODEL, MODEL]);
+});
+
+test('a warm-up that fails for another reason does not block plans', async (t) => {
+  if (skipPinned(t)) return;
+  resetPlannerState();
+  const m = mockFetch((body) => (body.options.num_predict === 1
+    ? { ok: false, status: 500, text: async () => 'out of memory' }
+    : ok('{"goal":"z"}')));
+  try {
+    const w = await warmPlanner();
+    assert.equal(w.ok, false);
+    assert.equal(plannerModelInUse(), DEFAULT_PLANNER_MODEL);
+    const r = await callPlanner({ system: 's', user: 'u', schema: planSchema() });
+    assert.equal(r.raw, '{"goal":"z"}');
+  } finally {
+    m.restore();
+    resetPlannerState();
+  }
 });

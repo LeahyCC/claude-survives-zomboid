@@ -107,7 +107,7 @@ Read the flag as a nudge, not proof. The runs are few, and the runs without the 
 
 ## `/mind`
 
-- **Plan**: the goal, the steps, the home, why it was asked, how long ago in game hours, and the planner's model. It says when the planner is thinking, what it is waiting to plan, and the last error.
+- **Plan**: the goal, the steps, the home, why it was asked, how long ago in game hours, and the model that is really planning (the menu model after the default planner turned out to be missing). It says when the planner is thinking, what it is waiting to plan, and the last error.
 - **Lessons**: each with its tag, runs active, and average hours with and without. A flagged one has an amber edge and a warning. Each has a delete button.
 - **Playbook rules used**: also lists `lesson (tag): text` for the lessons in the last menu prompt.
 
@@ -123,7 +123,7 @@ Deleting `pz-state.json` does not touch lessons. That is on purpose.
 
 ## Check it
 
-`npm test` covers the events, plan parsing, lesson parsing, dedupe, the cap, trigger matching, the run flag, the planner's wait for a free model, and a menu turn cutting a plan short. The model is mocked. Nothing in it tests a real model's plans or lessons. `bridge/tools/planner-bench.mjs` runs the planner prompt against Ollama for timing and shape (see the last section). Read the first few plans from a live run before trusting them.
+`npm test` covers the events, plan parsing, lesson parsing, dedupe, the cap, trigger matching, the run flag, the planner's wait for a free model, a menu turn cutting a plan short, the warm-up and its fallback, and the JSON reader on fenced, prefixed and suffixed replies. The model is mocked. Nothing in it tests a real model's plans or lessons. `bridge/tools/planner-bench.mjs` runs the planner prompt against Ollama for timing and shape (see the last section). Read the first few plans from a live run before trusting them.
 
 The last two defaults go with the default model only. Set `PZ_PLANNER_MODEL` and the planner runs as before: Ollama places the model and thinking is on auto. An explicit `PZ_PLANNER_GPU_LAYERS` or `PZ_PLANNER_THINK` always wins.
 
@@ -155,13 +155,25 @@ Each row is the real planner prompt, `PLAN_SYSTEM` and `planSchema()` through `c
 | **qwen3.6-35b** | **num_gpu 0** | **off** | 12 | 12 | 12 | 31 s / 6.2 s | 0.4 s / 0.4 s | 0 of 12 |
 | qwen3.6-27b | num_gpu 0 | off | 4 | 4 | 4 | 54 s / 34 s | 0.5 s / 0.6 s | 0 of 4 |
 
-Names are the installed tags without `_abliterated_pc:latest`. The 6.2 s menu turn in the `gemma4-26b` CPU row came while other programs were calling Ollama. It was not repeated. The menu turns in the 12B rows ran slower (0.8 s) than in the later rows (0.4 s) with nothing changed on the menu side, so part of that gap is the state of the PC and not the planner. The 12B's one parse failure was a reply the JSON reader could not find an object in.
+Names are the installed tags without `_abliterated_pc:latest`. The 6.2 s menu turn in the `gemma4-26b` CPU row came while other programs were calling Ollama. It was not repeated. The menu turns in the 12B rows ran slower (0.8 s) than in the later rows (0.4 s) with nothing changed on the menu side, so part of that gap is the state of the PC and not the planner. The 12B's one parse failure was a reply the JSON reader could not find an object in. The reader has since been fixed (see JSON in replies).
 
 The chosen row again, with a menu turn fired 1.5 s into each plan (8 plans): the menu turn during the plan took 0.46 to 0.48 s, and after it 0.37 to 0.44 s.
 
-Cold start of the chosen model: the first plan after Ollama unloaded it took 31 s. That is longer than `PZ_PLAN_GRACE` (15 s), so a menu turn arriving meanwhile cuts the plan short. Ollama still finishes the load. In a test with a menu turn every 3 s, the first plan was cut at 18 s, the retry took 6 s, and menu turns stayed at 0.36 to 0.41 s during the load. So the first plan of a session is lost and the second works. With `keep_alive` at 30 minutes the model stays loaded between plans.
+Cold start of the chosen model: the first plan after Ollama unloaded it took 31 s. That is longer than `PZ_PLAN_GRACE` (15 s), so a menu turn arriving meanwhile cuts the plan short. Ollama still finishes the load. In a test with a menu turn every 3 s, the first plan was cut at 18 s, the retry took 6 s, and menu turns stayed at 0.36 to 0.41 s during the load. Without a fix the first plan of a session is lost and the second works. With `keep_alive` at 30 minutes the model stays loaded between plans.
 
 Not run: `qwen3.8-27b` (the same class as `qwen3.6-27b`, and another program had it loaded), `qwen3.8-27b-coder` (a coding model is not a sensible planner) and the small 4B to 12B variants.
+
+### Warm-up at start
+
+The bridge loads the planner model once when it starts, in the background. The request is one token with the same model, `num_ctx`, `num_gpu` and `keep_alive` as a real plan, so Ollama does not reload it later. The first real plan waits until the warm-up has finished or failed. A menu turn never waits for it and never cuts it off. It is not counted as a menu call and has no grace timer.
+
+If Ollama says the default model is missing (404), the warm-up switches the planner to `PZ_MODEL` for good, the same fallback a real plan uses. Any other failure is logged and plans run as before. The log line is `planner model ready` or `planner warm-up failed`.
+
+`/mind` shows the model in use, so it names `PZ_MODEL` after a fallback.
+
+### JSON in replies
+
+`extractJSON` in `bridge/decide.mjs` used to cut from the first `{` to the last `}`. Any text after the object that held a brace, or a second object, made the cut invalid JSON, and the reply was refused. It now reads the first balanced object, ignores braces inside strings, and tries the next `{` when one does not parse. It skips a think block, a code fence, text before, and text or a comment after. It still throws on anything that is not valid JSON, such as single quotes, trailing commas or a cut-off object.
 
 ### The rule
 

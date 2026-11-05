@@ -109,4 +109,32 @@ for (const name of fixtures) {
   }
 }
 
+// extractJSON: a reply that starts as valid JSON must be read, and junk must still throw.
+{
+  const good = JSON.stringify({ action: { type: 'LOOT' }, thought: 'Grab it.' });
+  const fence = '`'.repeat(3);
+  const cases = {
+    'leading code fence': `${fence}json\n${good}\n${fence}`,
+    'plain fence': `${fence}\n${good}\n${fence}`,
+    'text before': `Here is my choice: ${good}`,
+    'brace in text before': `I will use {the door} now.\n${good}`,
+    'text after with a brace': `${good}\nNote: I chose LOOT (not {MOVE}).`,
+    'trailing comment': `${good} // done`,
+    'second object after': `${good}\n{"action":{"type":"WAIT"},"thought":"no"}`,
+    'after a think block': `<think>maybe {x}</think>\n${good}`,
+  };
+  for (const [name, raw] of Object.entries(cases)) {
+    assert.equal(extractJSON(raw).action.type, 'LOOT', name);
+  }
+  const braces = JSON.stringify({ action: { type: 'LOOT' }, thought: 'Close the } door { first' });
+  assert.equal(extractJSON(braces).thought, 'Close the } door { first');
+  const quoted = JSON.stringify({ action: { type: 'LOOT' }, thought: 'say "}" twice' });
+  assert.equal(extractJSON(`ok ${quoted} done }`).thought, 'say "}" twice');
+  // Not JSON stays not JSON.
+  for (const raw of ['', 'no braces here', '{not json}', '{"a":', '{"a":1,}', "{'a':1}", 'use {x} and {y}']) {
+    assert.throws(() => extractJSON(raw), undefined, JSON.stringify(raw));
+  }
+  assert.throws(() => extractJSON('nothing'), /no JSON in reply/);
+}
+
 console.log('decide.test.mjs ok');

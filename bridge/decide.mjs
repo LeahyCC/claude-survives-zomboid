@@ -26,15 +26,47 @@ Rules: if zDist is under 15, MOVE so dx*zdx + dy*zdy is negative. The body turns
 JSON is the action, then one short thought. No other fields. Do not copy the sample numbers.
 {"action":{"type":"MOVE","dx":16,"dy":0},"thought":"East, toward the building."}`;
 
+// The end of the object that opens at text[start], or -1. Braces inside strings do not count,
+// so {"say":"a } b"} is one object. The old reader took the first { to the last } in the reply,
+// which broke on any text after the object that held a brace (a note, a second object).
+function objectEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i += 1) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i += 1;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{') depth += 1;
+    else if (c === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+// The first JSON object in a model reply. Skips a think block, a code fence and talk around
+// the object. A { that does not start valid JSON (prose like "use {x}") is skipped and the
+// next one tried. Anything that never parses still throws.
 export function extractJSON(raw) {
   let text = String(raw ?? '');
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
   const closed = text.toLowerCase().lastIndexOf('</think>');
   if (closed >= 0) text = text.slice(closed + '</think>'.length);
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('no JSON in reply');
-  return JSON.parse(text.slice(start, end + 1));
+  let first = null;
+  for (let start = text.indexOf('{'); start >= 0; start = text.indexOf('{', start + 1)) {
+    const end = objectEnd(text, start);
+    if (end < 0) continue;
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch (err) {
+      first = first || err;
+    }
+  }
+  if (first) throw first;
+  throw new Error('no JSON in reply');
 }
 
 function clip(value, max) {
