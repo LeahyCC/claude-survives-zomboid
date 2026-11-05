@@ -60,8 +60,42 @@ end
 -- ---------- string helpers ----------
 function Core.esc(s)
   s = tostring(s or "")
-  s = s:gsub("\\", "\\\\"); s = s:gsub('"', '\\"'); s = s:gsub("\r", " "); s = s:gsub("\n", " ")
+  -- JSON forbids every raw control character, tab included, not only line breaks.
+  s = s:gsub("\\", "\\\\"); s = s:gsub('"', '\\"'); s = s:gsub("%c", " ")
   return s
+end
+-- A nil value drops its key from a Lua table, so a field that must print as null holds this.
+Core.NULL = Core.NULL or {}
+-- Plain Lua value to JSON. Keys are sorted so the same state always prints the same line.
+-- An empty table prints as [] because every optional table in the percept is a list.
+-- Whole numbers print bare and others to two places, since 0.30000000000000004 is noise to a model.
+function Core.json(v)
+  local t = type(v)
+  if v == nil or v == Core.NULL then return "null" end
+  if t == "boolean" then return tostring(v) end
+  if t == "number" then
+    if v ~= v or v > 1e300 or v < -1e300 then return "0" end
+    if v == math.floor(v) and v > -1e15 and v < 1e15 then return tostring(v) end
+    return Core.n2(v)
+  end
+  if t == "string" then return '"' .. Core.esc(v) .. '"' end
+  if t ~= "table" then return "null" end
+  local n = #v
+  if n > 0 or next(v) == nil then
+    local out = {}
+    for i = 1, n do out[i] = Core.json(v[i]) end
+    return "[" .. table.concat(out, ",") .. "]"
+  end
+  local keys, byName = {}, {}
+  for k in pairs(v) do
+    local name = tostring(k)
+    byName[name] = k
+    table.insert(keys, name)
+  end
+  table.sort(keys)
+  local out = {}
+  for _, name in ipairs(keys) do table.insert(out, '"' .. Core.esc(name) .. '":' .. Core.json(v[byName[name]])) end
+  return "{" .. table.concat(out, ",") .. "}"
 end
 function Core.n2(x) return tostring(math.floor(((tonumber(x) or 0) * 100) + 0.5) / 100) end
 function Core.split(s, sep)
@@ -97,17 +131,36 @@ function Core.isWaterItem(it)
   return ok and water or false
 end
 -- Rotten, burnt, or poisoned food still counts as Food. Eating it is how a run ends.
-function Core.isEdible(it)
-  if not Core.isFoodItem(it) then return false end
+-- This is the double-click test from ISInventoryPane.lua. A sealed can is Food with CantEat set,
+-- so EAT on it fails. p is optional: without it a known poison is only caught by its power.
+function Core.isEdible(it, p)
+  local ok = false
+  pcall(function() ok = it:IsFood() and it:getHungChange() < 0 end)
+  if not ok then return false end
   local bad = false
-  -- Build 42 names this isRotten. IsRotten does not exist, and a pcall would hide that and eat it.
+  pcall(function() if it:getScriptItem():isCantEat() == true then bad = true end end)
   pcall(function() if it:isRotten() then bad = true end end)
   pcall(function() if it:isBurnt() then bad = true end end)
+  pcall(function() if it:isbDangerousUncooked() and not it:isCooked() then bad = true end end)
   pcall(function()
     local poison = it:getPoisonPower() or 0
     if poison > 0 then bad = true end
   end)
+  if p then pcall(function() if p:isKnownPoison(it) then bad = true end end) end
   return not bad
+end
+-- Sealed food needs its opening recipe first (a can opener, or a knife for some).
+function Core.isSealedFood(it)
+  local sealed = false
+  pcall(function()
+    local recipe = it:getOpeningRecipe()
+    sealed = it:IsFood() and recipe ~= nil and recipe ~= ""
+  end)
+  return sealed
+end
+-- What looting should still pick up: food to eat now and food to open later.
+function Core.isFoodSupply(it)
+  return Core.isEdible(it) or Core.isSealedFood(it)
 end
 -- A flashlight, a water bottle, or bare hands is not a weapon. A gun is the wrong tool here.
 function Core.isMeleeWeapon(it)

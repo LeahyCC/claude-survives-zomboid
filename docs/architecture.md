@@ -20,8 +20,9 @@ All code is in `mods/LocalSurvivor/42/media/lua/client/`. Every module hangs off
 LocalSurvivor.lua          entry: requires the modules, owns onTick, registers every event once
 LocalSurvivor/
   Core.lua      LocalSurvivor.*   state, constants, hudData, verbs, result, setResult
-                LocalSurvivor.Core  esc n2 split queueLength, item classification
-  Sense.lua     LocalSurvivor.Sense zombieScan scanBuildings buildPercept writePercept
+                LocalSurvivor.Core  esc n2 json split queueLength, item classification
+  Sense.lua     LocalSurvivor.Sense zombieScan scanBuildings step buildPercept writePercept,
+                                    and pure summarisers (summarizeWounds, summarizeZombies, ...)
   Move.lua      LocalSurvivor.Move  canStand stepWalk queuedWalkOnly doMove momentum
   Act.lua       LocalSurvivor.Act   the doX actions, manageLight, execIntent, pollIntent, the verbs
   Reflex.lua    LocalSurvivor.Reflex fleeVector nearestZombie engage reflex survive releaseDoor manageSpeed
@@ -37,14 +38,14 @@ Rules:
 - Every game call is in `pcall`. A failure in the mod must never stop the tick.
 - Lua here is 5.1 (Kahlua): no `goto`, no `//`, no bitwise operators.
 
-State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`.
+State on the namespace: `tick`, `lastSeq`, `lastError`, `announced`, `reflexTick`, `lastLootTick`, `travel`, `manualMode`, `lastHumanKeyTick`, `lastMoveTick`, `lastPX`, `lastPY`, `observing`, `autoSpeed`, `hudData`, `bldgDir`, `bldgDist`, `verbs`, `result`, `reflexState`. Sense also keeps `senseScan` (the place scan in progress), `seen` (what the last scan found), `bldgMemo` and `bldgMemoCount` (fixed facts per building), `visited`, and `itemTypes` (fixed facts per item type).
 
 ## Tick cadence
 
 `LocalSurvivor.onTick` runs every game tick. Order inside it is fixed.
 
 ```
-every tick   track movement; releaseDoor (not in manual mode)
+every tick   track movement; Sense.step (one slice of the place scan); releaseDoor (not in manual mode)
              manual mode: write percept each 60, stand down until idle 600 ticks, return
 %5           Reflex.survive          fight or flee; if it acted, skip momentum, glance and poll
 %30          sneak toggle
@@ -62,11 +63,17 @@ Dead: only a percept every 300 ticks.
 
 ## Percept
 
-One JSON line in `Zomboid/Lua/local_percept.txt`, about once a second. Fields in order:
+One JSON line in `Zomboid/Lua/local_percept.txt`, about once a second. Every field, its type and the game call behind it are in `docs/percept.md`.
+
+The v1 fields, which the current bridge reads, in order:
 
 `dead x y z hour day outside room hp hunger thirst fatigue endurance panic zTotal zNear zClose zDist zDir zdx zdy foods waters bldgDir bldgDist weapon items qlen reflexed lastSeq err`
 
-`zClose` is living zombies within 10 tiles, `zNear` within 30. `zdx,zdy` point at the nearest one. `err` is `LocalSurvivor.lastError`.
+v2 puts `v` first and `panic01` after `panic`, and adds after `err`:
+
+`kills hoursAlive moodle weight maxWeight bag weapons inv wounds bleeding zChasing zVisible zDowned zList inBldg water bed buildings dark res`
+
+`panic` is 0 to 100, the other stats 0 to 1. The bridge prompt sends only the v1 fields (`V1_FIELDS` in `bridge/decide.mjs`).
 
 ## Intent
 
@@ -92,7 +99,14 @@ Today's verbs: `MOVE EAT DRINK LOOT EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT`. 
 - `running` when `execIntent` starts a verb.
 - `failed` with `why = lastError` when the verb set `lastError` or threw.
 
-Nothing reads it yet. The next card puts it in the percept.
+The percept carries it as `res`.
+
+## Checking game names
+
+Lua calls Java by name, and a wrong name fails silently inside `pcall`. Check before you call.
+
+- `node tools/pz-api.mjs <java.class> [regex]` lists methods, walking the parent classes. The regex matches the bare name, so use `^name$`, not `name\(`.
+- `node tools/pz-consts.mjs <java.class> [regex]` lists the names in a class, for enum values like `MoodleType.THIRST`, `ItemTag.CAN_OPENER` or `IsoFlagType.bed`.
 
 ## Tests
 
