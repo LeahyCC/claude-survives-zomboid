@@ -57,6 +57,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `death.mjs` | Why she died: the cause and its facts, from the mod's death record. See `docs/eval.md`. | service |
 | `nudges.mjs` | Whether a nudge may go ahead, the frozen record, and the example lines for the prompt. | service |
 | `commentator.mjs` | The inner voice: spots moments, keeps a summary of the run, rate limits, asks the meme model for a first person line. Commentary only. See "Inner voice". | service |
+| `critic.mjs` | The second opinion: builds the request for Jev, checks the reply, writes the `critic` log line, keeps the pause and the one-call limit. Logging only. See "Critic". | service |
 | `jsonl.mjs` | Append-only log files with rotation, and a reader that skips bad lines. | I/O |
 | `reflexlog.mjs` | Follows the mod's reflex log and copies each stance and outcome into the decision log. See `docs/combat.md`. | I/O |
 | `llm.mjs` | Ollama calls, the fixed system message, the per-turn schema, the planner call. | I/O |
@@ -228,7 +229,7 @@ The line only says what happened. It does not tell her to fight: the model never
 
 ### The Reactions strip on /mind
 
-The last 8 orders as rows: time, choice, result, HP change (the order's start to its end; hover for HP lost on the way), and the choice that came next. A failed row is red, a running one teal, a cut-off one grey. The page refreshes every two seconds but rebuilds the strip only when a row changed, so a selection or a hover on it stays put. `/api/state` carries the rows as `reactions`.
+The last 8 orders as rows: time, choice, result, HP change (the order's start to its end; hover for HP lost on the way), and the choice that came next. A failed row is red, a running one teal, a cut-off one grey. The page refreshes every two seconds but rebuilds the strip only when a row changed, so a selection or a hover on it stays put. `/api/state` carries the rows as `reactions`. With the critic on, each row also has a Critic column (see "Critic").
 
 ### What it costs and what it changes
 
@@ -331,6 +332,57 @@ Measured on this PC on 2026-11-04 (`node bridge/tools/try-pepe.mjs`, `gemma4:12b
 | menu turn fired 0.7 s into a thought | 526 to 613 ms, median 577 ms, the thought cut every time |
 
 The longer prompt makes a line slower than before the summary (1.8 to 4.0 s). That is fine for commentary that speaks at most every 30 s. A menu turn that lands in the middle of a thought costs about 160 ms more than one on a quiet model, because the CPU is still winding down. It stayed under 650 ms in all five runs.
+
+## Critic
+
+A sober second opinion on each choice. The local model picks one id from a menu. The critic sends the same situation and the same menu to Jev, TypeSafe's hosted "System One" model, and logs how much Jev agrees. It never steers her. Nothing it says reaches the brain's prompt, the planner, or the order line. A test fails if any brain module imports it.
+
+It is not the inner voice. The inner voice is a meme model that talks. The critic is a calibrated outside view, kept as numbers so the review can check it against what happened.
+
+```
+decision made, order sent
+   |                                  (the bridge goes on at once)
+   +--> critic.review()  one call at a time, 3 s limit
+          |
+          v   POST https://api.typesafe.ai/v1/systemone
+          state      the digest she saw + how her last 3 orders went
+          pick       choice over this turn's menu: option id -> its label
+          danger     noul: is she in serious danger right now
+          treat      noul: should she treat wounds before anything else
+          mistake    noul: is the brain's pick a mistake here
+          |
+          v
+   one `critic` line in decisions.jsonl, same id as the decision
+```
+
+A `choice` answer gives a probability for every option. A `noul` answer is a yes probability from 0 to 1. Jev gives no reasons, only numbers.
+
+The log line (`t: critic`) has: `pick` (the brain's), `top` (Jev's), `pPick` and `pTop` (their probabilities), `confidence`, `danger`, `treat`, `mistake`, `agree` (top equals pick), `flag`, `flagAt`, `ms`, `inTokens`, `outTokens`, `model`.
+
+**The flag rule.** A decision is flagged when the brain's pick got less than 15% of Jev's probability. Exactly 15% is not a flag. `PZ_CRITIC_FLAG` changes the threshold (0 to 1). `agree` is separate: Jev can prefer another option and still give the brain's pick 40%, which is not a flag. The threshold is saved on each line, so the review reads old lines by the rule they were judged with.
+
+**How it stays out of her way.**
+
+- Fire and forget. The order is sent first. The critic runs after, in the background.
+- Short timeout: `PZ_CRITIC_TIMEOUT`, in milliseconds, default 3000. The request is aborted and also raced, so a hung socket cannot keep a call open.
+- At most one call in flight. A turn that finds one running is not reviewed. That is counted, not queued.
+- A failed call (network, 4xx, 5xx, a reply that fails validation) is skipped, with one log line per kind of trouble.
+- `429` and `529` pause the critic: 15 seconds, doubling on each repeat, up to 5 minutes. A `Retry-After` header is honored up to the same cap. A good answer resets it.
+- `401` turns it off for the session.
+- Every field of a reply is checked: the pick is on the menu, every option has a probability from 0 to 1 that sum to about 1, and each yes/no value is a number from 0 to 1. A reply that fails any check writes nothing.
+- Colin's own nudges are not reviewed. The critic looks at the brain.
+
+**What leaves this PC.** The situation text (the same digest the brain reads, plus up to three lines about her last orders) and the labels of this turn's options. Game facts only. No names, no paths. The key goes in the `Authorization` header and nowhere else: not the URL, not a log line (a server that echoed it back would be scrubbed), not a file.
+
+**Switches.** It is off until `TYPESAFE_API_KEY` is set. `PZ_CRITIC=0` turns it off even with a key. `PZ_CRITIC_FLAG` (default 0.15) and `PZ_CRITIC_TIMEOUT` (default 3000 ms) tune it. `PZ_CRITIC_URL` points it at another server and is only for tests.
+
+**Cost.** $0.042 per million input tokens, output free. A turn is about 470 input tokens, so a thousand reviewed decisions cost about 2 cents. A live test of the API on this PC took about 100 to 110 ms a call warm and 330 ms the first time, for a short state with two questions. Those are the API's numbers. They have not been measured through the bridge with the game running.
+
+**On /mind.** The Reactions strip has a Critic column: `agree` or `flag`, the probability Jev gave the brain's pick, Jev's own pick when it differs, and how much danger it sees. Hover for the wound and mistake numbers, confidence and time. A line above the strip says whether the critic is on, how many calls answered, failed or were skipped, and any pause. It is rebuilt only when a row changes, so a selection survives the two second refresh. The order of the strip is the orders sent, so a turn that kept the running job has a log line but no row.
+
+**What the review does with it.** `node bridge/tools/review.mjs` has a Critic section: how often Jev's top pick matched, flags by situation and by who decided, and how flagged and unflagged orders went (failed, lost 5 HP or more, a zombie started chasing, died within 5 minutes). That is how to find out whether a flag predicts trouble. Nothing here says yet that it does. A flag can also be Jev being wrong, which is why the first thing to read is the unflagged row beside the flagged one.
+
+`node bridge/eval/run.mjs --backend jev` scores Jev's choice on the eval scenarios (`docs/eval.md`).
 
 ## Examples from your nudges
 

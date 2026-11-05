@@ -166,12 +166,15 @@ export function reactionContext({ history, mem, p, now, run = null, options = []
 }
 
 // The rows of the Reactions strip on /mind: the last orders, oldest first, each with the one after it.
-export function reactionRows(history, p = null, max = STRIP_ROWS) {
+// critic: a function from an order's id to the critic's short summary, or nothing (critic.mjs).
+export function reactionRows(history, p = null, max = STRIP_ROWS, critic = null) {
   const all = (Array.isArray(history) ? history : []).filter(isObj);
   const from = Math.max(0, all.length - max);
   return all.slice(from).map((e, i) => {
     const next = all[from + i + 1];
     return {
+      id: typeof e.id === 'string' ? e.id : '',
+      critic: critic && e.id ? critic(e.id) : null,
       at: num(e.at),
       choice: nameOf(e),
       result: outcomeText(e, p),

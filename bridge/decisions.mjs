@@ -8,6 +8,8 @@
 //             a zombie starting to chase, and whether she died within 5 minutes of the choice
 //
 // A fourth line, death, is written when a run ends (tracker.death), with the cause from death.mjs.
+// A critic line (critic.mjs) can follow a decision a moment later, with the same id. It is not
+// written here: joinRecords just attaches it.
 //
 // Clocks are wall clock, not game time, so fast-forward shortens the windows in game hours.
 
@@ -188,10 +190,10 @@ export function joinRecords(lines) {
     if (!isObj(l) || typeof l.id !== 'string') continue;
     if (l.t === 'decision') {
       if (byId.has(l.id)) continue;
-      const rec = { ...l, outcome: null, after: null };
+      const rec = { ...l, outcome: null, after: null, critic: null };
       byId.set(l.id, rec);
       order.push(rec);
-    } else if (l.t === 'outcome' || l.t === 'after') {
+    } else if (l.t === 'outcome' || l.t === 'after' || l.t === 'critic') {
       const rec = byId.get(l.id);
       if (rec) rec[l.t] = l;
     }

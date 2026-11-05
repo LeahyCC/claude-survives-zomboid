@@ -160,6 +160,19 @@ test('joinRecords attaches the outcome and after lines by id, in decision order'
   assert.deepEqual(joinRecords(null), []);
 });
 
+test('joinRecords attaches a critic line to its decision, and leaves critic null without one', () => {
+  const { lines, tr, send } = setup();
+  const a = send(live(), 5, 0);
+  const b = send(live(), 6, 1_000);
+  const critic = { t: 'critic', id: a, flag: true, pPick: 0.04 };
+  const recs = joinRecords([...lines, critic, { t: 'critic', id: 'nobody' }]);
+  assert.deepEqual(recs.map((r) => r.id), [a, b]);
+  assert.equal(recs[0].critic, critic);
+  assert.equal(recs[1].critic, null);
+  // The tracker itself never writes a critic line.
+  assert.ok(!lines.some((l) => l.t === 'critic'));
+});
+
 test('the appender rotates to .1 past the size cap and keeps every line', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-log-'));
   try {

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLog } from '../jsonl.mjs';
 import { joinRecords, harm } from '../decisions.mjs';
+import { situationOfCompact, situationLabel } from '../nudges.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -158,6 +159,66 @@ export function reflexByStance(lines) {
   return [...rows.values()].sort((a, b) => b.calls - a.calls || a.stance.localeCompare(b.stance));
 }
 
+// How the outcomes of a set of decisions went. Failures count orders that reported; damage, chasing
+// and death count orders whose follow-up window has closed, because only those have an `after`.
+function outcomeTally(recs) {
+  const t = { orders: 0, reported: 0, failed: 0, followed: 0, damaged: 0, chased: 0, died: 0 };
+  for (const r of recs) {
+    if (!r.sent) continue;
+    t.orders += 1;
+    const o = r.outcome;
+    if (o && (o.result === 'done' || o.result === 'failed')) {
+      t.reported += 1;
+      if (o.result === 'failed') t.failed += 1;
+    }
+    if (r.after) {
+      t.followed += 1;
+      if (harm(r) >= DAMAGE_MIN) t.damaged += 1;
+      if (r.after.chased) t.chased += 1;
+      if (r.after.died) t.died += 1;
+    }
+  }
+  return t;
+}
+
+// The critic's lines (critic.mjs) against how things went. A decision with no critic line was not
+// reviewed (the critic was off, busy, paused or timed out) and is left out of every count.
+export function criticReview(records) {
+  const reviewed = records.filter((r) => isObj(r.critic));
+  const flagged = reviewed.filter((r) => r.critic.flag);
+  const calm = reviewed.filter((r) => !r.critic.flag);
+  const bySituation = new Map();
+  const byWho = new Map();
+  for (const r of reviewed) {
+    const s = situationLabel(situationOfCompact(r.percept));
+    const row = bySituation.get(s) || { n: 0, flagged: 0 };
+    row.n += 1;
+    if (r.critic.flag) row.flagged += 1;
+    bySituation.set(s, row);
+    const who = r.by === 'policy' && r.rule ? `policy (${r.rule})` : r.by || '?';
+    const w = byWho.get(who) || { n: 0, flagged: 0 };
+    w.n += 1;
+    if (r.critic.flag) w.flagged += 1;
+    byWho.set(who, w);
+  }
+  return {
+    decisions: records.length, reviewed: reviewed.length,
+    agreed: reviewed.filter((r) => r.critic.agree).length, flagged: flagged.length,
+    flagAt: reviewed.length ? num(reviewed[reviewed.length - 1].critic.flagAt) : null,
+    bySituation, byWho,
+    afterFlagged: outcomeTally(flagged), afterCalm: outcomeTally(calm),
+  };
+}
+
+function tallyText(t) {
+  if (!t.orders) return 'no orders sent';
+  const part = (a, b, what) => `${what} ${a} of ${b} (${pct(a, b)})`;
+  return [
+    `${t.orders} orders`, part(t.failed, t.reported, 'failed'), part(t.damaged, t.followed, `lost ${DAMAGE_MIN} hp or more`),
+    part(t.chased, t.followed, 'a zombie started chasing'), part(t.died, t.followed, 'died within 5 min'),
+  ].join('; ');
+}
+
 const since = (iso, from) => !from || (typeof iso === 'string' && Date.parse(iso) >= from);
 
 // decisions and nudges are the raw lines. from is a Date or null.
@@ -192,6 +253,27 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
   for (const r of stances) {
     const why = [...r.why].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${w} ${n}`).join(', ');
     line(`  ${r.stance}: ${r.calls} calls (${why || '-'}); escaped ${r.escaped} of ${r.outs} (${pct(r.escaped, r.outs)}), ${r.hits} hits, ${Math.round(r.hpLost)} hp lost, ${r.kills} kills`);
+  }
+
+  line();
+  line("Critic (Jev's second opinion, logged only, it never steers her)");
+  const c = criticReview(records);
+  if (!c.reviewed) {
+    line('  No critic lines. Set TYPESAFE_API_KEY to turn it on (docs/brain.md, "Critic").');
+  } else {
+    line(`  ${c.reviewed} of ${c.decisions} decisions were reviewed. Jev's top pick matched the brain's ${c.agreed} times (${pct(c.agreed, c.reviewed)}).`);
+    line(`  Flagged (the brain's pick got under ${Math.round(100 * c.flagAt)}% of Jev's probability): ${c.flagged} (${pct(c.flagged, c.reviewed)}).`);
+    line('  Flags by situation');
+    for (const [s, row] of [...c.bySituation].sort((a, b) => b[1].flagged - a[1].flagged || b[1].n - a[1].n).slice(0, TOP)) {
+      line(`    ${s}: ${row.flagged} of ${row.n} (${pct(row.flagged, row.n)})`);
+    }
+    line('  Flags by who decided');
+    for (const [who, row] of [...c.byWho].sort((a, b) => b[1].n - a[1].n).slice(0, TOP)) {
+      line(`    ${who}: ${row.flagged} of ${row.n} (${pct(row.flagged, row.n)})`);
+    }
+    line('  How it went after (a flag that predicts trouble shows up as a higher rate on the first line)');
+    line(`    flagged:   ${tallyText(c.afterFlagged)}`);
+    line(`    unflagged: ${tallyText(c.afterCalm)}`);
   }
 
   line();

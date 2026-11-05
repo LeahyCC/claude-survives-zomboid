@@ -51,6 +51,13 @@ node pz-bridge.mjs
 
 A slower planner writes a short day plan and a death review writes lessons (`docs/planner.md`). It uses `PZ_PLANNER_MODEL`. On this PC the default is `qwen3.6-35b_abliterated_pc:latest`, run on the CPU with thinking off: a plan takes about 6 seconds and the menu model stays fast beside it, game running or not. If that model is not installed the planner falls back to `PZ_MODEL`. Set `PZ_PLANNER_MODEL` to pick your own, which then runs the old way (Ollama places it, thinking on auto). `PZ_PLANNER_GPU_LAYERS` sets how many layers go on the GPU, and `node bridge/tools/planner-bench.mjs <model>` measures a planner. The table is in `docs/planner.md`.
 
+A hosted second opinion is optional. Set `TYPESAFE_API_KEY` before you start the bridge and every choice is sent, with the same menu, to Jev (TypeSafe's System One model). Its view is logged next to the decision and shown in the Critic column on `/mind`. It never changes what she does, and with no key nothing is sent. `PZ_CRITIC=0` turns it off, `PZ_CRITIC_FLAG` and `PZ_CRITIC_TIMEOUT` tune it. Only game facts leave the PC. See "Critic" in `docs/brain.md`. `node bridge/eval/run.mjs --backend jev` scores Jev on the eval scenarios.
+
+```
+$env:TYPESAFE_API_KEY = "<your key>"
+node pz-bridge.mjs
+```
+
 `node bridge/tools/try-brain.mjs` runs the test percepts through the real model and prints each choice and its time.
 
 `node bridge/eval/run.mjs --model gemma4:12b --n 3` scores the brain on 37 scenarios against Ollama and prints a table. See `docs/eval.md`.
