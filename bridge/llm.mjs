@@ -109,12 +109,20 @@ async function callOllama(prompt, model) {
 let tacticalCalls = 0;
 export const tacticalBusy = () => tacticalCalls > 0;
 
-// The plan in progress, if any. A menu turn cancels it rather than queue behind it on the
-// model: a plan can take a minute or more, and the plan is asked again after the usual gap.
+// The plan in progress, if any. A menu turn that arrives during a plan waits up to
+// PLAN_GRACE_MS for it, then cancels it, so a slow plan never holds a turn for long. A warm plan
+// on gemma4:12b takes 4 to 6 seconds, so most finish inside the grace; cancelling at once would
+// cut nearly every plan, since menu turns come every few seconds. A cancelled plan is asked again
+// after the usual gap.
+export const PLAN_GRACE_MS = Number(env.PZ_PLAN_GRACE || 15000);
 let planCancel = null;
+let graceTimer = null;
 function startTactical() {
   tacticalCalls += 1;
-  if (planCancel) planCancel.abort();
+  const cancel = planCancel;
+  if (cancel && !graceTimer) {
+    graceTimer = setTimeout(() => { graceTimer = null; cancel.abort(); }, PLAN_GRACE_MS);
+  }
 }
 
 export async function callLLM(prompt, model = MODEL) {
@@ -204,7 +212,10 @@ export async function callPlanner({ system, user, schema, model = PLANNER_MODEL,
       throw err2;
     }
   } finally {
-    if (planCancel === cancel) planCancel = null;
+    if (planCancel === cancel) {
+      planCancel = null;
+      if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
+    }
   }
   const msg = data.message || {};
   // Never fall back to msg.thinking: that is reasoning text, not the JSON the schema asked for.

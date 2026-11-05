@@ -7,7 +7,7 @@ import { loadFixture } from './fixtures/load.mjs';
 import { emptyMemory } from './memory.mjs';
 import { buildOptions } from './options.mjs';
 import { planTurn, userMessage } from './brain.mjs';
-import { callChoice, callPlanner, tacticalBusy, thinkRefused } from './llm.mjs';
+import { callChoice, callPlanner, tacticalBusy, thinkRefused, PLAN_GRACE_MS } from './llm.mjs';
 import {
   crossedHour, emptyWatch, detectEvents, parsePlan, planLines, planSchema, planPrompt, knownBuildings,
   createPlanner, MIN_GAP_MS, MAX_STEPS, INTERVAL_HOURS,
@@ -420,7 +420,7 @@ test('tacticalBusy is true while a menu turn is on the model, and clears after',
   assert.equal(tacticalBusy(), false, 'a failed call also clears it');
 });
 
-test('a menu turn cuts a plan short instead of waiting behind it', async () => {
+test('a menu turn cuts a plan short once the grace runs out', { timeout: PLAN_GRACE_MS + 10000 }, async () => {
   const real = globalThis.fetch;
   // The plan never answers on its own; only an abort ends it. The menu turn answers at once.
   globalThis.fetch = (url, init) => {
@@ -433,10 +433,13 @@ test('a menu turn cuts a plan short instead of waiting behind it', async () => {
     });
   };
   try {
+    const t0 = Date.now();
     const plan = callPlanner({ system: 's', user: 'u', schema: planSchema(), model: 'slow-plan' });
     const turn = await callChoice('pick', ['wait']);
     assert.match(turn.raw, /wait/);
     await assert.rejects(plan, (err) => err.preempted === true);
+    const took = Date.now() - t0;
+    assert.ok(took >= PLAN_GRACE_MS - 50 && took < PLAN_GRACE_MS + 2000, `cut after ${took} ms`);
     assert.equal(tacticalBusy(), false);
   } finally {
     globalThis.fetch = real;
@@ -455,4 +458,23 @@ test('a cut-short plan is not counted as a failure and keeps its events', async 
   assert.equal(planner.lastError, '');
   assert.ok(planner.pending.has('dawn'));
   assert.ok(logs.some((l) => /cut short/.test(l)));
+});
+
+test('a plan that ends inside the grace is not cut', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.format && body.format.properties && body.format.properties.choice) {
+      return Promise.resolve(okReply(JSON.stringify({ thought: 'go', choice: 'wait' })));
+    }
+    return new Promise((resolve) => setTimeout(() => resolve(okReply(JSON.stringify({ goal: 'g', steps: ['a'], home: '', why: 'w' }))), 300));
+  };
+  try {
+    const plan = callPlanner({ system: 's', user: 'u', schema: planSchema(), model: 'quick-plan' });
+    await callChoice('pick', ['wait']);
+    const r = await plan;
+    assert.match(r.raw, /goal/);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
