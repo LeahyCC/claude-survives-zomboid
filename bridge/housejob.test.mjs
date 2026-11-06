@@ -313,15 +313,18 @@ test('a SEARCH on its way back in from a step outside is left to it', () => {
   assert.equal(m.memory.job.reentries, 0);
 });
 
-test('the time limit: 15 game minutes a room, within limits, and then she leaves', () => {
-  assert.equal(jobLimit(4), 60 * MIN);
+test('the time limit: 30 game minutes a room, within limits, and then she leaves', () => {
+  assert.equal(jobLimit(4), 120 * MIN);
   assert.equal(jobLimit(1), MIN_LIMIT);
   assert.equal(jobLimit(50), MAX_LIMIT);
   const m = searching();
   const { seq } = sendPolicy(m);
   const busy = { res: { seq, verb: 'SEARCH', status: 'running', why: '', target: 'h1' } };
-  look(m, busy, 30);
-  assert.equal(stage(m), 'SEARCH');
+  // Looks half an hour apart: the limit for this house is 120 game minutes.
+  for (let i = 0; i < 3; i++) {
+    look(m, busy, 30);
+    assert.equal(stage(m), 'SEARCH');
+  }
   look(m, busy, 30);
   assert.equal(stage(m), 'LEAVE');
   assert.equal(drainJobEvents(m.memory).at(-1).why, 'time');

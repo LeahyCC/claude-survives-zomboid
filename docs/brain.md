@@ -139,7 +139,7 @@ LEAVE   fill and rest if on the menu, walk to the door, then the next house
 | LEAVE at dusk (17:00) or night | over, and she stays. The usual menu leads with home |
 | LEAVE after 15 game minutes | over (`time`) |
 
-**The time limit** is 15 game minutes a room, at least 30, at most 120 (BG42.20: "two hours of looting, not twelve"). Sleep and gaps in the clock over half an hour do not count. It is a number from the card, not a measurement: at the default day length 15 game minutes is about 37 real seconds. Check it against the review, because a limit that cuts searches short reads as `time` under "How they ended".
+**The time limit** is 30 game minutes a room, at least 60, at most 240 (BG42.20 says "two hours of looting, not twelve"; the card started at 15 a room, which is about 37 real seconds, too short for a full kitchen). Sleep and gaps in the clock over half an hour do not count. It is a number from the card, not a measurement: at the default day length 30 game minutes is about 75 real seconds. Check it against the review, because a limit that cuts searches short reads as `time` under "How they ended".
 
 **LEAVE.** She walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not crowded (3 or more zombies seen) and not given up on in the last 12 game hours, a house before a shop (`nextHouse`). With none she walks out to explore. `b.zombies` is only read while she stands inside a house, so it says little about a house she has not been in. The crowd map card is what would fix that.
 

@@ -18,11 +18,12 @@ import { dist, compass } from './geom.mjs';
 import { tiles, count } from './words.mjs';
 
 export const STAGES = ['IN', 'SHUT', 'LOOK', 'SEARCH', 'LEAVE'];
-// All in game hours. Guides say "two hours of looting, not twelve" (BG42.20).
+// All in game hours. Guides say "two hours of looting, not twelve" (BG42.20). 30 a room, not 15:
+// at the default day length 15 game minutes is about 37 real seconds, short for a full kitchen.
 const MIN = 1 / 60;
-export const PER_ROOM = 15 * MIN;
-export const MIN_LIMIT = 30 * MIN;
-export const MAX_LIMIT = 120 * MIN;
+export const PER_ROOM = 30 * MIN;
+export const MIN_LIMIT = 60 * MIN;
+export const MAX_LIMIT = 240 * MIN;
 const WALK_LIMIT = 60 * MIN;
 export const LOOK_MIN = 2 * MIN;
 export const LOOK_MAX = 10 * MIN;
