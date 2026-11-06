@@ -462,3 +462,52 @@ test('the memory slice carries the base, so the eval can rebuild the same menu',
   const again = buildScenario({ patch: { ...OUT, weight: 19, buildings: [listed('a')] }, memory: slice });
   assert.equal(buildOptions(again.percept, again.memory, { now: NOW }).find((o) => o.id === 'haul').target, 'a');
 });
+
+// ---------- taking it back out ----------
+const baseHere = (inv, patch = {}) => {
+  const m = {
+    percept: { outside: false, room: 'kitchen', hour: 11, hoursAlive: 40, x: 1, y: 1, zList: [], zChasing: 0, zDist: -1, zVisible: 0, hp: 100, thirst: 0, hunger: 0, fatigue: 0,
+      endurance: 1, bleeding: 0, wounds: [], weight: 1, maxWeight: 12, moodle: {}, inv, inBldg: { id: 'b', room: 'kitchen', rooms: 2, roomsLeft: 0 }, buildings: [], ...patch },
+    memory: loadMemory({ base: { id: 'b', at: 1 }, stashes: { b: { n: 9, at: 1 } }, buildings: { b: { id: 'b', visited: true, res: true, searched: true } } }),
+  };
+  return m;
+};
+
+test('low on food at her base with a stash: she takes a kit out', () => {
+  const m = baseHere({ bandages: 3, foodReady: 1, cans: 0 });
+  const opts = buildOptions(m.percept, m.memory, { now: 1000 });
+  const got = decidePolicy(m.percept, m.memory, opts);
+  assert.equal(got.rule, 'restock');
+  assert.equal(got.option.verb, 'SEARCH');
+  assert.equal(got.option.target, 'restock');
+  assert.equal(got.option.key, 'RESTOCK:b');
+});
+
+test('stocked, or nothing stashed: no trip', () => {
+  const full = baseHere({ bandages: 3, foodReady: 5, cans: 1 });
+  assert.ok(!buildOptions(full.percept, full.memory, { now: 1000 }).some((o) => o.id === 'restock'));
+  const none = baseHere({ bandages: 0, foodReady: 0, cans: 0 });
+  none.memory.stashes = {};
+  assert.ok(!buildOptions(none.percept, none.memory, { now: 1000 }).some((o) => o.id === 'restock'));
+});
+
+test('a restock counts down the stash, and an empty one stops the trips', () => {
+  const m = baseHere({ bandages: 0, foodReady: 0, cans: 0 });
+  recordOrder(m.memory, 5, { verb: 'SEARCH', key: 'RESTOCK:b', target: 'restock' }, m.percept, 1000);
+  updateMemory(m.memory, { ...m.percept, res: { seq: 5, verb: 'SEARCH', status: 'done', why: 'took 4: A, B, C, D' } }, 2000);
+  assert.equal(m.memory.stashes.b.n, 5);
+  assert.equal((m.memory.buildings.b.took || []).length, 0, 'it is not a search of the house');
+  recordOrder(m.memory, 6, { verb: 'SEARCH', key: 'RESTOCK:b', target: 'restock' }, m.percept, 3000);
+  updateMemory(m.memory, { ...m.percept, res: { seq: 6, verb: 'SEARCH', status: 'done', why: 'took nothing' } }, 4000);
+  assert.equal(m.memory.fails['RESTOCK:b'].why, 'nothing left');
+  assert.ok(!buildOptions(m.percept, m.memory, { now: 5000 }).some((o) => o.id === 'restock'));
+});
+
+test('low and away from home: the walk is on the menu', () => {
+  const m = baseHere({ bandages: 0, foodReady: 0, cans: 0 }, { inBldg: null, outside: true, room: '', x: 10, y: 10 });
+  m.memory.buildings.b.door = { x: 20, y: 10 };
+  const opts = buildOptions(m.percept, m.memory, { now: 1000 });
+  const walk = opts.find((o) => o.id === 'restockwalk');
+  assert.ok(walk, opts.map((o) => o.id).join());
+  assert.equal(walk.verb, 'GOTO');
+});

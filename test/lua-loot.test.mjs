@@ -132,10 +132,16 @@ test('the kinds she picks up, one by one', () => {
 
 test('planTake takes the best first and stays inside the weight budget', () => {
   const descs = [shirt, bread, axe, crowbar, beans];
-  const [picks, left] = plan(descs, {}, 2.5);
-  // The axe is better but does not fit. The crowbar does, then bread. Beans would go over.
-  assert.deepEqual(picks, [{ index: 4, key: 'weapon' }, { index: 2, key: 'food' }]);
-  assert.ok(Math.abs(left - 0.2) < 1e-9, String(left));
+  // The axe does not fit, and she takes it anyway: a better weapon beats the budget (the old one can
+  // go). The crowbar is then no gain, and with the budget gone the bread and beans stay.
+  const [picks, left, wanted] = plan(descs, {}, 2.5);
+  assert.deepEqual(picks, [{ index: 3, key: 'weapon' }]);
+  assert.equal(left, 0);
+  assert.equal(wanted, 2);
+  // Food alone stays inside the budget.
+  const [food, rest] = plan([bread, beans], {}, 0.5);
+  assert.deepEqual(food, [{ index: 1, key: 'food' }]);
+  assert.ok(Math.abs(rest - 0.2) < 1e-9, String(rest));
 });
 
 test('planTake takes the best weapon and leaves a second one that is no clear gain', () => {
@@ -407,4 +413,53 @@ test('describeLoot reads dye and perfume as junk, a soda as a drink, and when fo
   assert.equal(ice.frozen, true);
   const abx = read('{ type = "Base.Antibiotics", name = "Antibiotics", weight = 0.1 }');
   assert.equal(abx.antibiotic, true);
+});
+
+const bag = { name: 'School Bag', weight: 1, bag: { capacity: 15 } };
+const coat = { name: 'Leather Jacket', weight: 1, clothing: true, wear: { loc: 'jacket', scratch: 40, bite: 20, bullet: 0 } };
+const tee = { name: 'T-Shirt', weight: 0.2, clothing: true, wear: { loc: 'tshirt', scratch: 2, bite: 0, bullet: 0 } };
+
+test('a bag is taken whatever the budget says', () => {
+  const [picks, left, wanted] = plan([bag, bread], {}, 0.2);
+  assert.deepEqual(picks, [{ index: 1, key: 'bag' }]);
+  assert.equal(left, 0);
+  assert.equal(wanted, 1, 'the bread it had no room for counts as left behind');
+});
+
+test('at the cap, food is left alone unless she is hauling it home', () => {
+  const have = { food: 12 };
+  assert.equal(pick(bread, have), null);
+  assert.equal(pick(bread, { ...have, haul: true }), 'food');
+  assert.equal(pick(beans, { can: 12, haul: true }), 'can');
+  assert.equal(pick(water, { water: 4, haul: true }), null, 'water is heavy and the tap is free');
+  assert.equal(pick(hammer, { hammer: 1, weaponValue: 99, haul: true }), null, 'one hammer is enough');
+});
+
+test('out of the stash she takes a kit and leaves the tools', () => {
+  assert.equal(pick(bread, { food: 6, restock: true }), null);
+  assert.equal(pick(bread, { food: 5, restock: true }), 'food');
+  assert.equal(pick(beans, { can: 3, restock: true }), null);
+  assert.equal(pick(hammer, { weaponValue: 99, restock: true }), null);
+});
+
+test('clothing counts only when it protects more than what she wears there', () => {
+  assert.equal(pick(coat, {}), 'clothes', 'an empty slot');
+  assert.equal(pick(coat, { worn: { jacket: 10 } }), 'clothes');
+  assert.equal(pick(coat, { worn: { jacket: 68 } }), null, 'no real gain');
+  assert.equal(pick(tee, {}), null, 'a T-shirt protects nothing');
+  assert.equal(pick(shirt, {}), null, 'and with no facts it is junk');
+  const worn = { ...coat, wear: { ...coat.wear, cond: 0.1, holes: 3 } };
+  assert.equal(pick(worn, { worn: { jacket: 10 } }), null, 'worn through it is no better');
+});
+
+test('two jackets in one wardrobe: only the better one goes on', () => {
+  const better = { ...coat, name: 'Better', wear: { ...coat.wear, scratch: 60 } };
+  const [picks] = plan([coat, better], {}, 20);
+  assert.deepEqual(picks, [{ index: 2, key: 'clothes' }]);
+});
+
+test('something too heavy to be worth the walk does not count as left behind', () => {
+  const anvil = { name: 'Heavy Can', weight: 3.5, sealed: true };
+  assert.equal(plan([anvil], {}, 1)[2], 0);
+  assert.equal(plan([beans], {}, 0.1)[2], 1);
 });

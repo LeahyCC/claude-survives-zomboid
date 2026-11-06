@@ -848,6 +848,7 @@ function Sense.perceptV2(p, px, py, room, weaponScore, heldGun, byHand)
   add("moodle", Sense.moodles(p))
   add("weight", try(function() return math.floor(p:getInventoryWeight() * 100 + 0.5) / 100 end, 0))
   add("maxWeight", try(function() return p:getMaxWeight() end, 0))
+  if LS.searchStat then add("searchStat", LS.searchStat) end
   add("bag", try(function()
     local back = p:getClothingItem_Back()
     return back and back:getDisplayName() or "none"

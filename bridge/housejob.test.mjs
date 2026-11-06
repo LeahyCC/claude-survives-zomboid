@@ -757,3 +757,36 @@ test('holdReason: an idle one in the house past the reflex line lets the order o
   assert.match(holdReason({ ...p, zList: [p.zList[0], { d: 1, dx: 1, dy: 0, chase: false, inside: true }] }), /inside 3/);
   assert.match(holdReason({ zVisible: 1, zDist: 2.5 }), /inside 3/, 'with no list, distance alone');
 });
+
+test('SEARCH done (full) hauls the load: the job leaves full and the house waits for her', () => {
+  const m = searching({}, { base: { id: 'next', at: 1 }, buildings: { next: { id: 'next', visited: true, res: true, x: 10662, y: 9830, door: { x: 10662, y: 9830 } } } });
+  const search = sendPolicy(m);
+  assert.equal(search.got.option.verb, 'SEARCH');
+  done(m, search.seq, 'SEARCH', 'took 2: Beans, Beans (full)');
+  assert.equal(stage(m), 'LEAVE');
+  assert.equal(m.memory.job.leftFull, true);
+  assert.ok(m.memory.haul, 'the load run is on');
+  assert.equal(m.memory.fails['SEARCH:h1'].why, 'full');
+  assert.equal(m.memory.buildings.h1.searched, false);
+});
+
+test('an old full mark has run out by the time she comes back', () => {
+  const m = searching();
+  m.memory.fails['SEARCH:h1'] = { why: 'full', at: m.at - 6 * 60_000 };
+  look(m, inHouse(), 0.1);
+  assert.equal(stage(m), 'SEARCH');
+});
+
+test('with the load home she goes back to the house she left full, by day', () => {
+  const m = scene({ ...inHouse({ inBldg: { id: 'next', room: 'kitchen', rooms: 2, roomsLeft: 0 } }), hour: 10 }, {
+    buildings: { h1: { id: 'h1', visited: true, res: true, fullAt: 30 } },
+  });
+  m.memory.job = null;
+  const opts = menu(m);
+  const got = decidePolicy(m.percept, m.memory, opts);
+  assert.equal(got && got.option.target, 'h1', JSON.stringify(got));
+  assert.match(got.thought, /back for the rest/);
+  const late = { ...m.percept, hour: 18 };
+  const dusk = decidePolicy(late, m.memory, buildOptions(late, m.memory, { now: m.at }));
+  assert.notEqual(dusk && dusk.rule, 'house-job');
+});

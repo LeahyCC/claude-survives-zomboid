@@ -292,10 +292,11 @@ function advance(mem, job, p, now, threat) {
     setStage(mem, job, 'LEAVE', 'searched');
     return true;
   }
-  const failed = mem.fails && mem.fails[`SEARCH:${job.id}`];
+  // Through blockedWhy so the mark runs out: read raw, one she never came back to held for ever.
+  const failedFull = mem.fails && blockedWhy(mem, `SEARCH:${job.id}`, now) === 'full';
   const base = baseBuilding(mem);
   const stashHere = base && base.id === job.id && !blockedWhy(mem, `STASH:${base.id}`, now);
-  if ((failed && failed.why === 'full' && !stashHere) || (heavy(p) && fullHere(mem, job, p, now))) {
+  if ((failedFull && !stashHere) || (heavy(p) && fullHere(mem, job, p, now))) {
     leaveFull(mem, job);
     return true;
   }
@@ -483,7 +484,14 @@ export function jobPick(p, mem, opts) {
   // The load run. The two options only exist when she is too full to search and has a base. It is
   // here and not a rule of its own so it comes ahead of the overloaded rule's drop.
   const load = by('stash') || by('haul');
-  if (!job) return load ? [load, load.id === 'stash' ? 'Home, and too full. Putting the spare gear away.' : 'Too full to search. Taking the load home.'] : null;
+  if (!job) {
+    if (load) return [load, load.id === 'stash' ? 'Home, and too full. Putting the spare gear away.' : 'Too full to search. Taking the load home.'];
+    // The load is off, and there is more where it came from. Left to the model she waits or wanders.
+    const hour = num(p.hour, 12);
+    if (heavy(p) || isNight(p) || hour >= DUSK_HOUR) return null;
+    const back = opts.find((o) => o.verb === 'ENTER' && (building(mem, o.target) || {}).fullAt != null);
+    return back ? [back, 'The load is home. Going back for the rest.'] : null;
+  }
   if (job.stage === 'IN') {
     const way = opts.find((o) => o.verb === 'ENTER' && o.target === job.id);
     return way ? [way, job.reentries ? 'I walked out of there with rooms left. Going back in.' : 'Going into this house.'] : null;

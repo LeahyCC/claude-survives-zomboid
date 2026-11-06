@@ -106,6 +106,12 @@ export function heavy(p) {
   return moodle(p, 'heavy') >= 1 || (max > 0 && num(p.weight) >= share * max);
 }
 
+// Low enough that a trip to the stash is worth it: under a day of food, or nothing to bind a wound.
+export function lowSupplies(p) {
+  const inv = (p && p.inv) || {};
+  return num(inv.foodReady) + num(inv.cans) < 3 || num(inv.bandages) < 2;
+}
+
 export function untreated(p) {
   const ws = (p && Array.isArray(p.wounds)) ? p.wounds : [];
   return ws.filter((w) => w.bleed || w.deep || w.glass || w.bite || ((w.scratch || w.lac) && (!w.bandaged || w.dirty)));

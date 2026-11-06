@@ -16,6 +16,17 @@ Two fixes went in during the first hour of the soak, with the game and bridge re
 
 The character playing at the start of the soak kept gear from a rich-loot run, so her stats are flattered. Every character after her is a fair test. The best run so far reached day 6.
 
+## Soak 5 read (2026-11-06)
+
+**Do not trust the soak 5 numbers before 07:35 UTC.** The bridge started at 05:58 with the old 60% line and was not restarted until 07:35, while the game took the 85% line at 06:14. So at 7.3 of 12 kg the bridge said "too heavy" and the mod said "not heavy": 27 `SEARCH > full` lines, DROP 17 times `not heavy`. Restart the bridge and the game together, or the two lines part.
+
+What was really behind "she barely loots", in order:
+
+- **Caps.** 12 food, 12 cans, 6 bandages counted what she carried, and she carried them. Then every kitchen was `took nothing` and the room was marked done.
+- **Rooms closed on weight.** A room went on the searched list whatever she left in it.
+- **Nothing took gear back out,** so a stocked base did nothing for her.
+- **Bags are rare, not missed.** About 3 wardrobes in 100 on normal loot. One `Duffel Bag` in every log so far. Bodies are the other source, and she only opens the ones in a room. `searchstat` lines now say how many she opened and how many bags she saw.
+
 ## First thing next session
 
 1. Read the soak report and the death lines in `bridge/decisions.jsonl`: deaths by cause, reflex by stance, critic flags against outcomes.

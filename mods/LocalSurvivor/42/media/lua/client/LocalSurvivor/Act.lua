@@ -339,6 +339,7 @@ Act.LOOT = {
   { key = "bottle", max = 2, keep = 70 },
   { key = "drink", max = 2, keep = 25 },
   { key = "food", max = 12, keep = 60 },
+  { key = "clothes", max = 99, keep = 1 },  -- what she takes she wears; a spare is the first thing to go
   { key = "box", max = 2, keep = 60 },
   { key = "can", max = 12, keep = 55 },
   { key = "opener", max = 1, keep = 50 },
@@ -352,6 +353,18 @@ Act.LOOT = {
 }
 Act.MAX = {}
 for _, row in ipairs(Act.LOOT) do Act.MAX[row.key] = row.max end
+-- With a base to take it to, the caps above are no reason to leave food in a house: only her weight
+-- limits what she carries home. At 12 food and 12 cans she was walking past whole kitchens. Water and
+-- tools are left out: heavy, or one is enough.
+Act.HAUL = { bandage = true, sheet = true, disinfectant = true, antibiotic = true, painkiller = true,
+  splint = true, food = true, can = true, box = true }
+-- What she takes back out of her own stash (SEARCH with TARGET = restock): a kit to go out with, not the
+-- whole store. Tools stay home, or the next STASH just carries them back.
+Act.KIT = { food = 6, can = 3, sheet = 3, disinfectant = 1, antibiotic = 1, painkiller = 1, splint = 1, drink = 1,
+  hammer = 0, saw = 0, screwdriver = 0, battery = 0, opener = 1 }
+Act.RESTOCK = "restock"
+-- A wanted thing this heavy is not worth a walk home and back.
+Act.LEFT_MAX_KG = 3
 
 -- What kind of thing a described item is, ignoring what is carried. These count what she holds.
 Act.IS = {
@@ -382,6 +395,7 @@ Act.IS = {
   lighter = function(d) return d.lighter == true end,
   flashlight = function(d) return d.flashlight == true end,
   battery = function(d) return d.battery == true end,
+  clothes = function(d) return type(d.wear) == "table" and not d.bag end,
 }
 
 -- Pure. The score of a described item's weapon facts, 0 when it has none.
@@ -413,7 +427,15 @@ end
 -- The facts Core.lootKinds reads, taken from a have table.
 local function lootCtx(have)
   return { weaponBest = have.weaponValue, bagWorn = have.bagWorn, bagCapacity = have.bagCapacity,
-    hunger = have.hunger, foodReady = have.food, ammoOf = have.ammoOf, magOf = have.magOf, boxOf = have.boxOf }
+    hunger = have.hunger, foodReady = have.food, ammoOf = have.ammoOf, magOf = have.magOf, boxOf = have.boxOf,
+    worn = have.worn }
+end
+
+-- Pure. How many of a kind she may hold, by what the search is for (have.haul, have.restock).
+local function capOf(kind, have)
+  if have.restock and Act.KIT[kind] then return Act.KIT[kind] end
+  if have.haul and Act.HAUL[kind] then return 999 end
+  return Act.MAX[kind] or 99
 end
 
 -- Pure. Why to take d given what is carried: the best kind it is worth that is not full yet.
@@ -423,7 +445,7 @@ function Act.lootPick(d, have)
   if type(d) ~= "table" then return nil end
   have = have or {}
   for _, k in ipairs(Core.lootKinds(d, lootCtx(have))) do
-    if (tonumber(have[k.kind]) or 0) < (Act.MAX[k.kind] or 99) then
+    if (tonumber(have[k.kind]) or 0) < capOf(k.kind, have) then
       return k.kind, k.value - (tonumber(d.weight) or 0) / 100
     end
   end
@@ -433,7 +455,7 @@ end
 local function copyHave(have)
   local out = {}
   for k, v in pairs(have) do out[k] = v end
-  for _, set in ipairs({ "ammoOf", "magOf", "boxOf" }) do
+  for _, set in ipairs({ "ammoOf", "magOf", "boxOf", "worn" }) do
     if have[set] then
       out[set] = {}
       for k, v in pairs(have[set]) do out[set][k] = v end
@@ -443,7 +465,9 @@ local function copyHave(have)
 end
 
 -- Pure. descs: described items in one container. Returns { {index, key} } best first, inside
--- the weight budget, and the budget left. have is updated as if every pick was taken, so a
+-- the weight budget, the budget left, and how many wanted things the weight kept her from. A bag and
+-- a better weapon are never refused for weight: the bag carries more than it weighs, and the old
+-- weapon can go. have is updated as if every pick was taken, so a
 -- second crowbar or a second can opener is left behind. total is the budget at the start of the
 -- search: as it drains, a pick has to earn more per kilo (Core.lootWorth), so a full pack takes
 -- bandages and rounds and leaves a saw.
@@ -470,24 +494,33 @@ function Act.planTake(descs, have, budget, total)
     if a.score ~= b.score then return a.score > b.score end
     return a.i < b.i
   end)
-  local picks = {}
+  local picks, left = {}, 0
   for _, c in ipairs(cands) do
     local d = descs[c.i]
     local key, score = Act.lootPick(d, work)
     local w = tonumber(d.weight) or 0
     local room = total > 0 and budget / total or 1
-    if key and w <= budget and Core.lootWorth(score, w, room) then
+    local must = key == "bag" or key == "weapon"
+    if key and (must or (w <= budget and Core.lootWorth(score, w, room))) then
       table.insert(picks, { index = c.i, key = key })
-      budget = budget - w
+      budget = math.max(0, budget - w)
       Act.countInto(work, d)
       Act.countInto(have, d)
+      if key == "clothes" then
+        for _, h in ipairs({ work, have }) do
+          h.worn = h.worn or {}
+          h.worn[d.wear.loc] = Core.clothesScore(d.wear)
+        end
+      end
       -- A bag taken is a bag worn: the next one has to beat this one.
       if key == "bag" then
         for _, h in ipairs({ work, have }) do h.bagWorn, h.bagCapacity = true, tonumber(d.bag.capacity) or 0 end
       end
+    elseif key and key ~= "fresh" and w <= Act.LEFT_MAX_KG then
+      left = left + 1
     end
   end
-  return picks, budget
+  return picks, budget, left
 end
 
 -- Pure. "took 3: Crowbar, Beans, Bandage", capped so the percept stays small.
@@ -518,6 +551,27 @@ local function lootType(it)
   return t
 end
 
+-- A piece of clothing's protection, for Core.clothesScore, with the slot it goes on. nil when it has
+-- no slot. locObj is the game's own value, for asking what she wears there.
+function Act.wearFacts(it)
+  local w = nil
+  pcall(function()
+    local loc = it:getBodyLocation()
+    local name = loc and tostring(loc) or ""
+    if name == "" or name == "nil" then return end
+    w = { loc = name, locObj = loc, scratch = 0, bite = 0, bullet = 0, holes = 0, cond = 1 }
+    pcall(function() w.scratch = tonumber(it:getScratchDefense()) or 0 end)
+    pcall(function() w.bite = tonumber(it:getBiteDefense()) or 0 end)
+    pcall(function() w.bullet = tonumber(it:getBulletDefense()) or 0 end)
+    pcall(function() w.holes = tonumber(it:getHolesNumber()) or 0 end)
+    pcall(function()
+      local max = tonumber(it:getConditionMax()) or 0
+      if max > 0 then w.cond = (tonumber(it:getCondition()) or max) / max end
+    end)
+  end)
+  return w
+end
+
 -- One game item as the plain table lootPick reads. Every call guarded on its own.
 function Act.describeLoot(it, p)
   local t = LS.Sense.itemType(it)
@@ -528,6 +582,7 @@ function Act.describeLoot(it, p)
   pcall(function() d.weight = it:getActualWeight() end)
   pcall(function() d.broken = it:isBroken() == true end)
   pcall(function() d.clothing = it:IsClothing() == true end)
+  if d.clothing then d.wear = Act.wearFacts(it) end
   if t.melee then d.weapon = Core.weaponFacts(it, t) end
   -- A gun is gear, not a melee weapon: it has its own facts and no weapon score.
   if t.gun then d.gun = Core.gunFacts(it) end
@@ -597,6 +652,18 @@ function Act.carried(p)
     end
   end)
   pcall(function() have.hunger = p:getStats():get(CharacterStat.HUNGER) or 0 end)
+  -- What each slot protects now, so a find only counts when it beats that.
+  have.worn = {}
+  pcall(function()
+    local worn = p:getWornItems()
+    for i = 0, worn:size() - 1 do
+      local it = worn:getItemByIndex(i)
+      local isClothing = false
+      pcall(function() isClothing = it:IsClothing() == true end)
+      local w = isClothing and Act.wearFacts(it) or nil
+      if w then have.worn[w.loc] = math.max(have.worn[w.loc] or 0, Core.clothesScore(w)) end
+    end
+  end)
   for _, it in ipairs(LS.Sense.carriedItems(p)) do
     local ok, d = pcall(Act.describeLoot, it, p)
     if ok and d then Act.countInto(have, d) end
@@ -616,6 +683,7 @@ Act.YIELD_TICKS = 30        -- quiet ticks after the reflex acted before a skill
 Act.PAUSE_MAX = 1800        -- a fight this long and the target is not worth it
 Act.UNSAFE_R = 4            -- a living zombie this close to the target on resume: give up
 Act.LOOT_ZOMBIE_R = 8
+Act.FULL_TRIES = 4            -- visits to a room she keeps leaving wanted things in, then it counts as done
 Act.ROOM_TRIES = 2            -- a room with a container she could not reach is looked at this many times
 Act.WEIGHT_CAP = 0.85         -- SEARCH stops and DROP sheds down to this share of the carry limit with a bag
 -- The same with no bag. It was 0.6, and with water, a bat and bandages (6 of 9 kg, all on the keep
@@ -987,6 +1055,11 @@ function Act.roomContainers(room)
           pcall(function() add(o:getContainerByIndex(k), sq) end)
         end
       end
+      -- A body on the floor. Zombies carry bags and wear better clothes than most wardrobes hold.
+      pcall(function()
+        local bodies = sq:getDeadBodys()
+        for j = 0, bodies:size() - 1 do add(bodies:get(j):getContainer(), sq) end
+      end)
       -- Items on the floor, and the contents of a bag lying there.
       local floor, bags = Act.floorContainer(sq)
       if floor then
@@ -1081,6 +1154,41 @@ end
 -- weapon score line (WEAK_WEAPON in senses.mjs), so a saucepan still sends her to the garage.
 Act.HUNT_BELOW = 20
 
+-- Pure. How likely a room is to hold a bag, 1 best. In the 42.21 tables a wardrobe and a closet shelf
+-- roll them, and only about 3 wardrobes in 100 hold one, so she has to open a lot of them.
+function Act.bagRoomRank(key)
+  local name = string.lower(string.match(tostring(key), "^[^@]*") or "")
+  if string.find(name, "closet", 1, true) or string.find(name, "bedroom", 1, true) then return 1 end
+  return 3
+end
+
+-- Her worn bag takes what is loose in her pack: a bag only softens the weight of what is in it. With
+-- a school bag that is 70% off, so this is most of why a bag matters. Worn things, what is in her hands,
+-- a hotbar slot and other bags stay where they are. Returns how many it queued.
+function Act.packBag(p)
+  local n = 0
+  pcall(function()
+    local back = p:getClothingItem_Back()
+    if not back or not back:IsInventoryContainer() then return end
+    local inv, main = back:getInventory(), p:getInventory()
+    local list, items = main:getItems(), {}
+    for i = 0, list:size() - 1 do items[#items + 1] = list:get(i) end
+    for _, it in ipairs(items) do
+      local stay = it == back
+      if not stay then
+        pcall(function() stay = it:isWorn() == true or p:isEquippedClothing(it) == true or p:isHandItem(it) == true end)
+      end
+      if not stay then pcall(function() stay = it:IsInventoryContainer() == true end) end
+      if not stay then pcall(function() stay = it:getAttachedSlot() > -1 end) end
+      if not stay and inv:hasRoomFor(p, it) then
+        ISTimedActionQueue.add(ISInventoryTransferAction:new(p, it, main, inv, 10))
+        n = n + 1
+      end
+    end
+  end)
+  return n
+end
+
 local function startSearch(p, s, rooms, bid)
   s.bid = bid
   s.phase = "room"
@@ -1090,6 +1198,12 @@ local function startSearch(p, s, rooms, bid)
   -- The weight there was to fill at the start: the bar a pick has to clear rises as it drains.
   s.total = math.max(Act.searchLeft(p), 0.1)
   s.skipRoom = {}
+  s.stat = { opened = 0, seen = 0, left = 0, bags = 0 }
+  local target = s.args and s.args.target
+  s.restock = target == Act.RESTOCK
+  -- A base to take it to, and this is not it: only her weight limits the take, and what the weight
+  -- kept her from brings her back. With no base there is nowhere to put it, so the caps stand.
+  s.haul = target ~= nil and target ~= "" and not s.restock and target ~= bid
 end
 
 Act.SKILL.SEARCH = {
@@ -1155,12 +1269,17 @@ Act.SKILL.LOOT = {
 local function endSearch(s, full)
   local why = Act.tookText(s.names)
   if full then why = why .. " (full)" end
+  -- What the search saw, for the soak review: the percept carries it, the bridge logs it.
+  local st = s.stat or {}
+  LS.searchSeq = (LS.searchSeq or 0) + 1
+  LS.searchStat = { n = LS.searchSeq, opened = st.opened or 0, seen = st.seen or 0, left = st.left or 0, bags = st.bags or 0 }
   Act.finish(s, "done", why)
 end
 
 -- A search that took a better weapon takes it up before it reports, so the next order does not
 -- find the old one still in hand. The result text stays "took N: ..." because the bridge reads it.
 local function finishSearch(p, s, full)
+  full = full or s.full
   if s.tookWeapon and not s.equipTried then
     local c = Act.equipPlan(p)
     if c then
@@ -1285,11 +1404,18 @@ searchStep = function(p, s)
     -- the same kind are taken nearest first, and once a weapon is in the pack the order is just
     -- the walk again.
     local hunt = (tonumber(s.have and s.have.weaponValue) or 0) < Act.HUNT_BELOW
+    -- With no bag the closets and bedrooms join them: nothing she finds changes her day as much.
+    local noBag = not (s.have and s.have.bagWorn)
     local best, bestD, bestRank = nil, 99999, 99
     for _, r in ipairs(s.rooms) do
       if not done[r.key] and not s.skipRoom[r.key] then
         local d = roomDistance(p, r)
         local rank = hunt and Act.weaponRoomRank(r.key) or 0
+        -- A weapon still comes first: bare hands kill her sooner than a light pack does.
+        if noBag then
+          local bagRank = Act.bagRoomRank(r.key)
+          rank = hunt and math.min(rank, bagRank + 1) or bagRank
+        end
         if rank < bestRank or (rank == bestRank and d < bestD) then best, bestD, bestRank = r, d, rank end
       end
     end
@@ -1327,7 +1453,16 @@ searchStep = function(p, s)
         LS.searchTries = LS.searchTries or {}
         local tries = (LS.searchTries[s.bid .. "/" .. s.room.key] or 0) + 1
         LS.searchTries[s.bid .. "/" .. s.room.key] = tries
-        if not skipped or tries >= Act.ROOM_TRIES then
+        -- Too full for all of it and a base to take it to: the room stays open and the result says
+        -- (full), so the bridge sends her home with the load and back. A few times, then it is done.
+        local leftHere = s.leftBehind and s.leftBehind[s.room.key]
+        if leftHere then
+          LS.fullTries = LS.fullTries or {}
+          local visits = (LS.fullTries[s.bid .. "/" .. s.room.key] or 0) + 1
+          LS.fullTries[s.bid .. "/" .. s.room.key] = visits
+          if visits >= Act.FULL_TRIES then leftHere = false else s.full = true end
+        end
+        if not leftHere and (not skipped or tries >= Act.ROOM_TRIES) then
           LS.searched[s.bid] = LS.searched[s.bid] or {}
           LS.searched[s.bid][s.room.key] = true
         end
@@ -1379,17 +1514,40 @@ searchStep = function(p, s)
     end)
     local have = {}
     for k, v in pairs(s.have) do have[k] = v end
-    local picks = Act.planTake(descs, have, Act.searchLeft(p), s.total)
+    have.haul, have.restock = s.haul, s.restock
+    local picks, _, leftNow = Act.planTake(descs, have, Act.searchLeft(p), s.total)
+    local st = s.stat
+    if st then
+      st.opened, st.seen, st.left = st.opened + 1, st.seen + #descs, st.left + (leftNow or 0)
+      for _, d in ipairs(descs) do if d.bag then st.bags = st.bags + 1 end end
+    end
+    if s.haul and (leftNow or 0) > 0 and s.room then
+      s.leftBehind = s.leftBehind or {}
+      s.leftBehind[s.room.key] = true
+    end
     s.pending = {}
     ISTimedActionQueue.clear(p)
     for _, pick in ipairs(picks) do
       local it = items[pick.index]
-      local dest = pick.key == "bag" and p:getInventory() or Act.destFor(p, it)
+      local dest = (pick.key == "bag" or pick.key == "clothes") and p:getInventory() or Act.destFor(p, it)
       ISTimedActionQueue.add(ISInventoryTransferAction:new(p, it, c.c, dest, 10))
       -- A bag taken is worn, in place of a smaller one: only taken when none is worn or this is bigger.
       if pick.key == "bag" then
         pcall(function() ISTimedActionQueue.add(ISWearClothing:new(p, it)) end)
         s.have.bagWorn, s.have.bagCapacity = true, tonumber(descs[pick.index].bag.capacity) or 0
+        s.tookBag = true
+      end
+      -- Worn straight away, and what it replaces is left here: an old shirt is only weight.
+      if pick.key == "clothes" then
+        local old, loc = nil, descs[pick.index].wear.locObj
+        pcall(function() old = p:getWornItem(loc) end)
+        pcall(function() ISTimedActionQueue.add(ISWearClothing:new(p, it)) end)
+        if old then
+          pcall(function()
+            ISInventoryPaneContextMenu.dropItem(old, p:getPlayerNum())
+            if Act.noteDropped then Act.noteDropped(old) end
+          end)
+        end
       end
       table.insert(s.pending, { it = it, name = descs[pick.index].name, weapon = pick.key == "weapon" })
     end
@@ -1420,6 +1578,16 @@ searchStep = function(p, s)
       Act.newLeg(s)
       s.phase = "walk"
       return
+    end
+    -- The bag is on: everything loose goes into it, which is what frees the weight.
+    if s.tookBag and not s.packed then
+      s.packed = true
+      if Act.packBag(p) > 0 then
+        s.pending = {}
+        LS.lastLootTick = LS.tick
+        s.waitTick = LS.tick
+        return
+      end
     end
     c.done = true
     s.have = Act.carried(p)

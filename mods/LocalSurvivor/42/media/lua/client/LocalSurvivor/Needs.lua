@@ -40,7 +40,7 @@ Needs.N = {
   CLEAR_LEG = 600,      -- a leg of the walk still going after this many ticks is cut
   CLEAR_CHASE_R = 15,   -- a chaser outside the house counts as woken this close (REACH_CHASE_R in senses.mjs)
   STASH_BOXES = 2,      -- containers one stash may fill
-  STASH_ROOM = 0.2,     -- share of the carry limit she sheds past the search line, so there is room to search
+  STASH_ROOM = 0.6,     -- share of the carry limit she sheds past the search line, so there is room to search
   STASH_FOOD = 2,       -- hunger she keeps food for. A day is about 1, a guide number: 3 meals of about 0.3
   STASH_TRIES = 2,      -- transfers of one item before it is left on her
 }
@@ -308,8 +308,14 @@ function Needs.planStash(descs, over)
   over = tonumber(over) or 0
   local keep = Needs.stashKeeps(descs or {})
   local cands = {}
+  -- She keeps her bandages, but not all of them now the haul has no cap: what is past a body's kit goes in.
+  local wraps, wrapsMax = 0, LS.Act.MAX.bandage
   for i, d in ipairs(descs or {}) do
     local value, w = Needs.stashValue(d), tonumber(d.weight) or 0
+    if value == nil and (d.bandage or d.sheet) and not d.held and not d.worn then
+      wraps = wraps + 1
+      if wraps > wrapsMax then value = d.sheet and 40 or 45 end
+    end
     if value ~= nil and not keep[i] and w > 0 then table.insert(cands, { i = i, value = value, w = w }) end
   end
   table.sort(cands, function(a, b)
@@ -1553,7 +1559,10 @@ skills.WEARBAG = function(p, job)
     return v
   end
   if job.target then
-    if worn and id(worn) == id(job.target) then return Needs.done(job, "wearing " .. itemName(worn)) end
+    if worn and id(worn) == id(job.target) then
+      pcall(function() LS.Act.packBag(p) end)
+      return Needs.done(job, "wearing " .. itemName(worn))
+    end
     return Needs.fail(job, "could not wear it")
   end
   local function describe(it)

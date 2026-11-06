@@ -381,8 +381,10 @@ Core.LOOT = {
     bandage = 78, disinfectant = 76, antibiotic = 74, painkiller = 72, splint = 70, sheet = 64,
     water = 68, bottle = 56, drink = 50,
     food = 60, can = 58, opener = 58, fresh = 52,
+    clothes = 48,
     hammer = 46, saw = 45, screwdriver = 44, lighter = 43, flashlight = 42, battery = 40,
   },
+  CLOTHES_GAIN = 5,   -- protection points a piece must add over what she wears there: a hat yes, a nicer shirt no
   GUN_BARE = 56,      -- a gun with no ammo found yet: worth a kilo and a half, not a place over medicine
   FRESH_SOON = 36,    -- food that spoils soon, taken when she will be hungry within the day
   WEAPON_MIN = 8,     -- the least melee score worth carrying: a saucepan (9) yes, a plunger (6) no
@@ -411,7 +413,15 @@ function Core.lootKinds(d, ctx)
   ctx = ctx or {}
   local L, V = Core.LOOT, Core.LOOT.VALUE
   local function add(kind, value) table.insert(out, { kind = kind, value = value }) end
-  if d.clothing and not d.bag then return out end
+  if d.clothing and not d.bag then
+    -- Clothes are junk unless they protect more than what she wears on that part of her.
+    if type(d.wear) == "table" and d.wear.loc then
+      local v = Core.clothesScore(d.wear)
+      local worn = tonumber(ctx.worn and ctx.worn[d.wear.loc]) or 0
+      if v >= worn + L.CLOTHES_GAIN then add("clothes", V.clothes + math.min(v, 100) / 50) end
+    end
+    return out
+  end
 
   if d.bag then
     local cap = tonumber(d.bag.capacity) or 0
@@ -474,6 +484,14 @@ function Core.lootKinds(d, ctx)
 
   table.sort(out, byValue)
   return out
+end
+
+-- Pure. How much a piece of clothing protects: a bite counts for more than a scratch, a bullet hardly
+-- matters, and wear and holes take it away. w: { scratch, bite, bullet, cond (0 to 1), holes }.
+function Core.clothesScore(w)
+  if type(w) ~= "table" then return 0 end
+  local base = (tonumber(w.scratch) or 0) + (tonumber(w.bite) or 0) * 1.5 + (tonumber(w.bullet) or 0) * 0.25
+  return math.max(0, base * (tonumber(w.cond) or 1) - (tonumber(w.holes) or 0) * 2)
 end
 
 -- Pure. The best value of d, 0 for junk.

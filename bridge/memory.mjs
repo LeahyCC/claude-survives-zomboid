@@ -22,7 +22,7 @@ const RETRY_MS = {
   'no water': 3 * 60_000, 'no food': 3 * 60_000, 'need can opener': 10 * 60_000, 'too full': 5 * 60_000,
   'no bandage': 3 * 60_000, 'no bag': 5 * 60_000, 'could not wear it': 10 * 60_000, 'no empty bottle': 3 * 60_000,
   'not heavy': 3 * 60_000, 'nothing to drop': 10 * 60_000, 'equip: no weapon': 10 * 60_000,
-  'not at base': 60_000, 'nothing to stash': 10 * 60_000,
+  'not at base': 60_000, 'nothing to stash': 10 * 60_000, 'nothing left': 10 * 60_000,
 };
 const DEFAULT_RETRY_MS = 45_000;
 // A failed ENTER with "zombie" means the way in is not clear. Thirty seconds sent her straight back
@@ -103,6 +103,24 @@ export function recordOrder(mem, seq, option, p, now = Date.now()) {
   if (option.verb === 'EQUIP') mem.fails[key] = { why: 'just sent', at: now };
 }
 
+// A trip to her own stash. It is not a search of the house, so the house's marks stay as they are.
+// Empty when it came back with nothing: the stash count on the map only ever guessed.
+function applyRestock(mem, order, r, why, now) {
+  const id = order.key.slice('RESTOCK:'.length);
+  const st = mem.stashes[id];
+  if (r.status === 'failed') {
+    mem.fails[order.key] = { why, at: now };
+    if (why === 'nothing left') delete mem.stashes[id];
+    return;
+  }
+  const m = /^took (\d+)/.exec(why);
+  const took = m ? Number(m[1]) : 0;
+  if (st) st.n = Math.max(0, num(st.n) - took);
+  // Nothing fit the kit, so asking again straight away would only walk the same crates.
+  if (!took) mem.fails[order.key] = { why: 'nothing left', at: now };
+  else delete mem.fails[order.key];
+}
+
 function applyResult(mem, p, now, hours) {
   const r = p.res;
   if (!r || (r.status !== 'done' && r.status !== 'failed')) return;
@@ -111,6 +129,7 @@ function applyResult(mem, p, now, hours) {
   mem.handled = tag;
   const order = mem.orders.find((o) => o.seq === num(r.seq));
   const why = String(r.why || '');
+  if (order && String(order.key).startsWith('RESTOCK:')) return applyRestock(mem, order, r, why, now);
   const bldgId = (order && order.bldg) || (p.inBldg ? String(p.inBldg.id) : null);
   const b = bldgId ? entry(mem, bldgId, hours) : null;
   if (r.status === 'done') {
@@ -127,6 +146,12 @@ function applyResult(mem, p, now, hours) {
       b.searched = !why.includes('(full)') && !moreToDo;
       b.took = [...b.took, ...tookItems(why)].slice(-12);
       if (!why.includes('(full)')) forgetOldStash(mem, b.id);
+      // Left things behind for weight, or stopped on the line. Either way the load goes home first:
+      // the house job reads this and leaves full, and a STASH lifts it (noteStash).
+      else if (order) {
+        mem.fails[order.key] = { why: 'full', at: now };
+        mem.haul = { from: b.id, at: hours };
+      }
     } else if (r.verb === 'LOOT' && b) {
       b.partly = true;
       b.took = [...b.took, ...tookItems(why)].slice(-12);

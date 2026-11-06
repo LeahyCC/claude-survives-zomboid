@@ -97,7 +97,12 @@ No arguments. Searches the building the survivor stands in.
 - **She stays in the house.** The pathfinder takes the shortest way, which can be out of one door and in by another. So a walk of more than 6 squares goes in legs along a way that stays on the building's own squares (`Move.insideRoute`, `Move.ROUTE_LEG`). A shut door counts as a way, a wall or a window does not, and stairs are not followed. With no inside way known she walks straight there and the next rule catches it.
 - **A step outside stops the walk.** Every step of SEARCH checks she is still in the building. On the first square outside, the queue is cleared, that room's containers count as out of reach, and she walks back to the last square she stood on inside and shuts the door behind her. The room gets its one more try (`Act.ROOM_TRIES`) and is then done. So one step out is the most a walk can cost, not a way to prevent it. More than 4 tiles out, or more than 3 walks back in one SEARCH, it fails `not inside`.
 - **Her own stash stays.** An item marked with the building id in `TARGET` (`Act.ownStash`, see STASH) is left where it is. A stash marked with any other id is free to take, by the loot table as usual, and a SEARCH at that old base opens its stash room again first (`Act.reopenOldStash`), so `nothing left` does not hide it. An order with no `TARGET` leaves nothing out.
-- Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`), in place of a smaller one.
+- Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`), in place of a smaller one, and then everything loose goes into it (`Act.packBag`, WEARBAG too): a bag only softens what is in it, 70% off with a school bag. It reads "worn or in her hands or on the hotbar stays". Not seen live.
+- **Why she takes what she takes.** The order's `TARGET` sets it. Her base, in another house: `haul`, the caps on food, cans and medicine are off (`Act.HAUL`) and only her weight stops her. It was 12 food and 12 cans: she walked past whole kitchens. `restock`: her own stash opens and she takes a kit (`Act.KIT`), not the store. Nothing, or her base itself: the caps stand.
+- **A room she left wanted things in stays open.** In `haul`, a wanted thing the weight refused (`Act.planTake`'s third value, not fresh food and nothing over 3 kg) keeps the room off `LocalSurvivor.searched` and the result ends `(full)`, so the bridge takes the load home and comes back. Four visits at most (`Act.FULL_TRIES`), then it counts as done.
+- **Bodies.** A body on a square of the room is a container too (`IsoGridSquare:getDeadBodys`, `getContainer`). Only in rooms: she does not yet go out to the bodies she leaves in the street. Not seen live.
+- With no bag worn, closets and bedrooms come first (`Act.bagRoomRank`), behind the weapon rooms while she has no real weapon. The 42.21 tables give a wardrobe about 0.85 per 4 rolls of a bag, so about 3 wardrobes in 100 hold one, and a satchel is left out because it sits on its own slot (`base:satchel`) that nothing here reads.
+- The percept carries `searchStat` for the last SEARCH (opened, seen, left, bags) and the bridge writes it as a `searchstat` line in `decisions.jsonl`.
 - A transfer that did not happen (the reflex clears the queue when it fights or flees) gets one more try.
 - When the search took a weapon, the skill takes it up before it reports (see EQUIP below), unless the weapon in her hand is one Colin chose. It queues the equip, waits for it, and tries once more if the reflex cut it off. The `why` text stays `took 4: ...` because the bridge reads it. The percept's `weapon` and `weaponScore` show the result. A gun is never taken up.
 - Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them. The percept shows how many are left as `inBldg.roomsLeft` (`Act.roomsLeft`).
@@ -192,14 +197,14 @@ check    gone from her pack: it counts and stays marked. Still there twice: it s
 
 - the weapon in hand and the best spare, or the two best with empty hands
 - worn clothes and the worn bag. A carried bag only goes once it is empty, since its contents are listed apart from it
-- water, bandages, ripped sheets and any cloth that binds a wound
+- water, the first 6 bandages and ripped sheets, and any other cloth that binds a wound
 - one gun, the held one or the one with the most rounds, with the rounds, magazines and boxes that fit it
 - food for 2 days: what rots soonest first, sealed cans last. A day is hunger 1.0, about 3 meals of 0.3, a guide number. `getHungChange` is a fraction (vanilla multiplies it by 100 to show it). A can with no figure counts as 0.25
 - a key
 
 **The rest goes in** on DROP's scale (`keep` in `Act.LOOT`), lowest first, the heaviest first among equals: junk, an empty carried bag, batteries, tools, fresh food, drinks, a spare weapon, splints and pills, cans, food, bottles.
 
-**How far.** To 20% of the carry limit under the search line (`Needs.N.STASH_ROOM`). The card said under the line, but a SEARCH with a few hundred grams of room takes nothing, marks every room done, and burns the house she came back for.
+**How far.** To 60% of the carry limit under the search line (`Needs.N.STASH_ROOM`, 20% until 2026-11-06: she hauled most of the load back out). The card said under the line, but a SEARCH with a few hundred grams of room takes nothing, marks every room done, and burns the house she came back for.
 
 **Where.** One or two containers in the building, on her floor (`Needs.N.STASH_BOXES`), from `Act.roomContainers`:
 
@@ -216,7 +221,7 @@ Nearest first inside a rank. One that is full moves her on to the next. One she 
 **The record.** Each item gets `getModData().lsStash = <building id>`. Not a table of item objects as DROP uses: the stash is somewhere she walks away from, and a chunk that unloads gives her new objects when it loads. `LS.stashSpots` and `LS.stashRooms` keep the containers and rooms in use, and last until the game restarts, when `LS.searched` goes too.
 
 - Done: `stashed 6`, with ` (still heavy)` when she is still at the search line with nothing more to put in.
-- Failed: `not at base` (at the start, or carried out of the building, or no `TARGET`), `nothing to stash` (nothing left to go, or already 20% under the line, or the game refused it all).
+- Failed: `not at base` (at the start, or carried out of the building, or no `TARGET`), `nothing to stash` (nothing left to go, or already that far under the line, or the game refused it all).
 - The usual pause for the reflex (`docs/needs.md`).
 
 The calls were checked with `node tools/pz-api.mjs`: `InventoryItem:getModData`, `getContainer`, `ItemContainer:getType`, `hasRoomFor`, `isEmpty`, `Food:getHungChange`. None of it has run in a live game. Check first: that the transfer into a world container lands (the destination has only been a bag so far), that the mark is still there after walking away and back, and that a wardrobe's `getType` reads as these names.
@@ -245,7 +250,8 @@ water        a litre of clean water, then an empty bottle, then another drink
 food         food that keeps: dry, canned (with a can opener in mind)
 fresh food   only when she is hungry now, or will be within the day
 tools        can opener (above the rest), hammer, saw, screwdriver, lighter, flashlight, batteries
-junk         worth nothing: dye, perfume, plungers, decorations, clothes, anything with no use
+clothes      that protect more than what she wears on that part of her, 48
+junk         worth nothing: dye, perfume, plungers, decorations, plain clothes, anything with no use
 ```
 
 | Kind | Value | Max | Test |
@@ -272,7 +278,7 @@ junk         worth nothing: dye, perfume, plungers, decorations, clothes, anythi
 | flashlight | 42 | 1 | tag `FLASHLIGHT` |
 | battery | 40 | 2 | `Base.Battery` |
 
-Clothes (`IsClothing`), broken items and anything that matches no kind are left. Hunger is read once at the start of the search.
+Clothes count by `Core.clothesScore` (scratch + bite x 1.5 + bullet x 0.25, times condition, less 2 a hole), and must beat what she wears in that slot by 5 (`CLOTHES_GAIN`). She puts one on at once and drops what it replaces. Broken items and anything that matches no kind are left. Hunger is read once at the start of the search.
 
 How long food keeps is read from the item: `getOffAgeMax` (the days until it is totally rotten) minus `getAge`. A figure in the millions means it does not spoil. Frozen food counts as spoiling soon, since it melts when it leaves the freezer.
 
@@ -280,7 +286,7 @@ How long food keeps is read from the item: `getOffAgeMax` (the days until it is 
 
 **Guns.** A pistol is taken whether or not ammo is known, since ammo is often in another room. With ammo it ranks above medicine, without it just under food that keeps. When a gun and its rounds lie in one container, the gun makes the rounds worth taking in the same stop. Rounds for a gun she does not have are left.
 
-**Weight.** The weight budget is 85% of the carry limit, with a back bag or without (`Act.searchLeft`). The game has no cost under the limit, so a lower line with no bag only kept her from finding one. Inside the budget a pick has to be worth its weight (`Core.lootWorth`): the bar is value per kilo, and it rises as the budget drains. An empty pack takes anything with a value. At 25% of the room left the bar is 34 per kilo: a litre of water (68) and a bandage pass, a 3 kg saw (15) stays.
+**Weight.** A bag and a better weapon are taken whatever the budget says: the bag carries more than it weighs, and the old weapon can go. For the rest, the weight budget is 85% of the carry limit, with a back bag or without (`Act.searchLeft`). The game has no cost under the limit, so a lower line with no bag only kept her from finding one. Inside the budget a pick has to be worth its weight (`Core.lootWorth`): the bar is value per kilo, and it rises as the budget drains. An empty pack takes anything with a value. At 25% of the room left the bar is 34 per kilo: a litre of water (68) and a bandage pass, a 3 kg saw (15) stays.
 
 The class comes from the item script's `Categories`, read with `Item:containsWeaponCategory(WeaponCategory.X)` the way `XpUpdate.lua` does.
 

@@ -212,3 +212,181 @@ test('LOOT reads the same containers: the room it stands in, freezer and floor i
   assert.equal(result(lua).verb, 'LOOT');
   assert.deepEqual(taken(result(lua).why), ['9mm Bullets', 'Bandage', 'Bread', 'Crowbar', 'Pistol']);
 });
+
+// ---------- too full for all of it ----------
+const HEAVY_ROOM = `
+  BEANS1 = __makeItem({ type = "Base.Beans", name = "Beans", food = true, canned = true, hung = -30, weight = 2 })
+  BEANS2 = __makeItem({ type = "Base.Bread", name = "Loaf", food = true, hung = -30, weight = 2 })
+  BEANS3 = __makeItem({ type = "Base.Bread", name = "Loaf", food = true, hung = -30, weight = 2 })
+  BEANS4 = __makeItem({ type = "Base.Bread", name = "Loaf", food = true, hung = -30, weight = 2 })
+  FRIDGE.items = { BEANS2, BEANS3, BEANS4 }
+  FREEZER.items = {}
+  COUNTER.loot = {}
+  __squares["12,13,0"].opts.world = {}
+  P.weight = 3
+  -- Her real weight follows what she takes.
+  P.getInventoryWeight = function(self) return self.weight + #self.__items.items * 2 end
+`;
+
+test('a room with wanted things left for weight stays open and the result says (full)', () => {
+  const lua = world(HEAVY_ROOM);
+  order(lua, '1|SEARCH|0|0||||BASE');
+  runSearch(lua);
+  const r = result(lua);
+  assert.equal(r.status, 'done', JSON.stringify(r));
+  assert.match(r.why, /^took 1: Loaf \(full\)$/);
+  assert.notEqual(lua.get('LocalSurvivor.searched.B1')?.['kitchen@10,10,0'], true, 'she comes back for the rest');
+  assert.deepEqual(lua.get('LocalSurvivor.searchStat.left'), 2);
+});
+
+test('after enough visits the room counts as done, so it cannot hold a house for ever', () => {
+  const lua = world(HEAVY_ROOM + 'LocalSurvivor.fullTries = { ["B1/kitchen@10,10,0"] = 3 }');
+  order(lua, '1|SEARCH|0|0||||BASE');
+  runSearch(lua);
+  assert.doesNotMatch(result(lua).why, /\(full\)/);
+  assert.equal(lua.get('LocalSurvivor.searched.B1')['kitchen@10,10,0'], true);
+});
+
+test('in her own base, and with no base, nothing is kept open for weight', () => {
+  for (const line of ['1|SEARCH|0|0||||B1', '1|SEARCH|0|0|||']) {
+    const lua = world(HEAVY_ROOM);
+    order(lua, line);
+    runSearch(lua);
+    assert.doesNotMatch(result(lua).why, /\(full\)/, line);
+    assert.equal(lua.get('LocalSurvivor.searched.B1')['kitchen@10,10,0'], true, line);
+  }
+});
+
+test('hauling, she takes past the food cap until the weight stops her', () => {
+  const foods = Array.from({ length: 14 }, (_, i) => `__makeItem({ type = "Base.Bread", name = "Bread", food = true, hung = -30, weight = 0.1 })`).join(',');
+  const stock = `
+    FRIDGE.items = { ${foods} }
+    for i = 1, 12 do table.insert(P.__items.items, __makeItem({ type = "Base.Bread", name = "Old", food = true, hung = -30, weight = 0.1 })) end
+  `;
+  const home = world(stock);
+  order(home, '1|SEARCH|0|0|||');
+  runSearch(home);
+  assert.doesNotMatch(result(home).why, /Bread/, 'with no base the cap stands');
+  const haul = world(stock);
+  order(haul, '1|SEARCH|0|0||||BASE');
+  runSearch(haul);
+  assert.match(result(haul).why, /^took \d+: Bread/);
+  assert.equal(haul.run('return #FRIDGE.items'), 0);
+});
+
+test('a bag found goes on, and what she carries goes in it', () => {
+  const lua = world(`
+    LOOSE = __makeItem({ type = "Base.Spiffo", name = "Spiffo", weight = 2 })
+    table.insert(P.__items.items, LOOSE)
+    SCHOOLBAG = __makeItem({ type = "Base.Bag_Schoolbag", name = "School Bag", items = {}, back = true, capacity = 15, weight = 1 })
+    BAGINV = { getItems = function() return __javaList({}) end, hasRoomFor = function() return true end }
+    SCHOOLBAG.getInventory = function() return BAGINV end
+    WARDROBE.items = { SCHOOLBAG }
+    P.weight = 6
+  `);
+  order(lua, '1|SEARCH|0|0|||');
+  // Wearing and packing are stood in for: run until the wear action is queued, then put it on.
+  for (let i = 0; i < 400 && result(lua).status === 'running'; i++) {
+    lua.run(`
+      LocalSurvivor.tick = LocalSurvivor.tick + 1
+      LocalSurvivor.Act.update(P, false)
+      local q = __queueTypes(P)
+      for _, a in ipairs(ISTimedActionQueue.getTimedActionQueue(P).queue) do
+        if a.Type == "ISInventoryTransferAction" and a.args[2] == LOOSE and P.back and a.args[4] == P.back:getInventory() then PACKED = true end
+        -- The stub's transfer empties the queue, so the wear behind it is done here.
+        if a.Type == "ISWearClothing" then P.back = SCHOOLBAG end
+      end
+      if PACKED then ISTimedActionQueue.clear(P)
+      elseif q[1] == "ISWalkToTimedAction" then __arrive(P)
+      elseif q[1] == "ISInventoryTransferAction" then __finishTransfers(P)
+      elseif q[1] == "ISWearClothing" then
+        P.back = SCHOOLBAG
+        table.remove(ISTimedActionQueue.getTimedActionQueue(P).queue, 1)
+      elseif q[1] then ISTimedActionQueue.clear(P) end
+    `);
+  }
+  assert.match(result(lua).why, /School Bag/);
+  assert.equal(lua.get('LocalSurvivor.searchStat.bags'), 1);
+  assert.equal(lua.get('PACKED'), true, 'what was loose went into the bag');
+});
+
+test('a better jacket goes on and the old one stays behind', () => {
+  const lua = world(`
+    function __coat(name, scratch)
+      local c = __makeItem({ type = "Base." .. name, name = name, clothing = true, weight = 1 })
+      c.getBodyLocation = function() return "jacket" end
+      c.getScratchDefense = function() return scratch end
+      c.getBiteDefense = function() return 0 end
+      return c
+    end
+    OLD = __coat("Old", 10)
+    NEW = __coat("New", 40)
+    WARDROBE.items = { NEW }
+    P.getWornItems = function()
+      return { size = function() return 1 end, getItemByIndex = function() return OLD end }
+    end
+    P.getWornItem = function(_, loc) return loc == "jacket" and OLD or nil end
+  `);
+  order(lua, '1|SEARCH|0|0|||');
+  const seen = new Set();
+  for (let i = 0; i < 400 && result(lua).status === 'running'; i++) {
+    lua.run(`
+      LocalSurvivor.tick = LocalSurvivor.tick + 1
+      LocalSurvivor.Act.update(P, false)
+    `);
+    const q = lua.run('return __queueTypes(P)') || [];
+    for (const t of q) seen.add(t);
+    lua.run(`
+      local q = __queueTypes(P)
+      if q[1] == "ISWalkToTimedAction" then __arrive(P)
+      elseif q[1] == "ISInventoryTransferAction" then __finishTransfers(P)
+      elseif q[1] then ISTimedActionQueue.clear(P) end
+    `);
+  }
+  assert.match(result(lua).why, /New/);
+  assert.ok(seen.has('ISWearClothing'));
+  assert.ok(seen.has('Menu:dropItem'), [...seen].join());
+});
+
+test('a coat no better than hers stays in the wardrobe', () => {
+  const lua = world(`
+    SAME = __makeItem({ type = "Base.Same", name = "Same", clothing = true, weight = 1 })
+    SAME.getBodyLocation = function() return "jacket" end
+    SAME.getScratchDefense = function() return 12 end
+    WARDROBE.items = { SAME }
+    WORN = __makeItem({ type = "Base.Worn", name = "Worn", clothing = true, weight = 1 })
+    WORN.getBodyLocation = function() return "jacket" end
+    WORN.getScratchDefense = function() return 10 end
+    P.getWornItems = function()
+      return { size = function() return 1 end, getItemByIndex = function() return WORN end }
+    end
+  `);
+  order(lua, '1|SEARCH|0|0|||');
+  runSearch(lua);
+  assert.doesNotMatch(result(lua).why, /Same/);
+});
+
+test('with no bag, closets and bedrooms come before the rest once she has a weapon', () => {
+  const lua = world();
+  assert.equal(lua.call('LocalSurvivor.Act.bagRoomRank', 'bedroom@1,1,0'), 1);
+  assert.equal(lua.call('LocalSurvivor.Act.bagRoomRank', 'closet@1,1,0'), 1);
+  assert.equal(lua.call('LocalSurvivor.Act.bagRoomRank', 'bathroom@1,1,0'), 3);
+});
+
+test('a restock SEARCH opens her own stash and stops at the kit', () => {
+  const lua = world(`
+    local foods = {}
+    for i = 1, 10 do
+      local f = __makeItem({ type = "Base.Bread", name = "Bread", food = true, hung = -30, weight = 0.1 })
+      f.getModData = function() return { lsStash = "B1" } end
+      foods[i] = f
+    end
+    FRIDGE.items = foods
+    LocalSurvivor.searched.B1 = { ["kitchen@10,10,0"] = true }
+    LocalSurvivor.stashRooms = { B1 = { ["kitchen@10,10,0"] = true } }
+  `);
+  order(lua, '1|SEARCH|0|0||||restock');
+  runSearch(lua);
+  assert.match(result(lua).why, /^took \d+/);
+  assert.equal(lua.run('return #FRIDGE.items'), 4, 'six out, four stay');
+});

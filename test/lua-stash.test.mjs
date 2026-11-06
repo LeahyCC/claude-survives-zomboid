@@ -190,8 +190,8 @@ test('STASH walks to the crate, puts the junk in and says how many', () => {
   assert.equal(result(lua).target, 'B1');
   assert.deepEqual(lua.run('return __queueTypes(P)'), ['ISWalkToTimedAction']);
   run(lua);
-  assert.deepEqual(names(lua, 'CRATE.items'), ['Dumb Bell']);
-  assert.deepEqual(result(lua), { seq: 1, verb: 'STASH', status: 'done', why: 'stashed 1', target: 'B1' });
+  assert.deepEqual(names(lua, 'CRATE.items').sort(), ['Dumb Bell', 'Spiffo']);
+  assert.deepEqual(result(lua), { seq: 1, verb: 'STASH', status: 'done', why: 'stashed 2', target: 'B1' });
   assert.equal(lua.run('return FRIDGE.items[1]'), undefined, 'the crate wins, nothing near the fridge');
 });
 
@@ -232,7 +232,7 @@ test('STASH fails "nothing to stash" when all she carries is on the keep list', 
 });
 
 test('STASH with nothing over the line has nothing to do', () => {
-  const lua = world('table.insert(P.__items.items, SPIFFO); P.weight = 3');
+  const lua = world('table.insert(P.__items.items, SPIFFO); P.weight = 2');
   order(lua, stashLine);
   run(lua);
   assert.equal(result(lua).why, 'nothing to stash');
@@ -386,4 +386,11 @@ test('at her own base the stash room stays searched', () => {
   lua.run('LocalSurvivor.searched.B1 = { ["bedroom@10,10,0"] = true }');
   order(lua, '2|SEARCH|0|0||||B1');
   assert.deepEqual(result(lua), { seq: 2, verb: 'SEARCH', status: 'failed', why: 'nothing left' });
+});
+
+test('planStash: bandages past a body\'s kit go in, the kit stays', () => {
+  const lua = world();
+  const descs = Array.from({ length: 8 }, () => ({ name: 'Bandage', weight: 0.1, bandage: true }));
+  const [picks] = lua.callMulti('LocalSurvivor.Needs.planStash', descs, 5);
+  assert.equal(picks.length, 2);
 });

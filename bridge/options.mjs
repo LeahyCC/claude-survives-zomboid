@@ -5,7 +5,7 @@
 
 import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
-import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor, heldGun } from './senses.mjs';
+import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor, heldGun, lowSupplies } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore, baseBuilding, baseTag, MAX_BASE_WALK } from './memory.mjs';
 import { openJob, jobThreat, jobMenu, leaveOption, clearOption, nextHouse, doneWith, crowded } from './housejob.mjs';
 import { crowdFor, isCrowded, areaCrowded, crowdText } from './crowd.mjs';
@@ -191,6 +191,27 @@ function loadOption(p, mem, now, avoid) {
   if (!way) return null;
   const { d, tx, ty, ...order } = way;
   return { prio: 2.4, id: 'haul', ...order, label: `take the load home: walk ${tiles(d)} ${compass(tx, ty)} to your base and stash it${load}` };
+}
+
+// Low on food or bandages with a stash at home: take a kit back out, or walk home for it. Nothing
+// used to take gear back out of her base, and now most of what she finds goes in there.
+function restockOption(p, mem, now, avoid) {
+  const base = baseBuilding(mem);
+  const stash = base && mem.stashes && mem.stashes[base.id];
+  if (!stash || num(stash.n) <= 0 || heavy(p) || !lowSupplies(p)) return null;
+  const key = `RESTOCK:${base.id}`;
+  if (blockedWhy(mem, key, now) || num(p.zChasing) > 0 || num(p.hp, 100) < DROP_MIN_HP) return null;
+  const zs = zombies(p);
+  if (zs.some((z) => z.chase)) return null;
+  if (inside(p) && String(p.inBldg.id) === base.id) {
+    if (zs.some((z) => reaches(z, SEARCH_ZOMBIE_R))) return null;
+    return { prio: 5.3, id: 'restock', verb: 'SEARCH', a: 0, b: 0, target: 'restock', key, label: `take food and bandages out of your stash (${count(stash.n, 'thing')} there)` };
+  }
+  if (isNight(p) && inside(p)) return null;
+  const way = wayTo(p, mem, now, avoid, base, `RESTOCKWALK:${base.id}`);
+  if (!way) return null;
+  const { d, tx, ty, ...order } = way;
+  return { prio: 2.6, id: 'restockwalk', ...order, label: `walk ${tiles(d)} ${compass(tx, ty)} to your base, you are low and the stash has ${count(stash.n, 'thing')}` };
 }
 
 // The nearest old base she could go back to for what she left there. The stash stays on the map when
@@ -384,6 +405,8 @@ export function buildOptions(p, mem, ctx = {}) {
   if (load) out.push(load);
   const oldBase = oldBaseOption(p, mem, now, avoid);
   if (oldBase) out.push(oldBase);
+  const restock = restockOption(p, mem, now, avoid);
+  if (restock) out.push(restock);
   const job = openJob(mem);
   const heldByJob = job && !jobThreat(p);
   const wantsHome = isNight(p) || num(p.fatigue) >= 0.6 || panic01(p) >= 0.3;
@@ -396,7 +419,7 @@ export function buildOptions(p, mem, ctx = {}) {
   const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(withoutGun(p)))
     .filter((o) => !bounce.has(o.key) || chasers.length > 0 || (wantsHome && o.target === plannedId))
     // The same house under two names is a wasted line on the menu.
-    .filter((o) => !(o.target && ((load && load.target === o.target) || (oldBase && oldBase.target === o.target))));
+    .filter((o) => !(o.target && ((load && load.target === o.target) || (oldBase && oldBase.target === o.target) || (restock && restock.id === 'restockwalk' && restock.target === o.target))));
   for (const o of shelters) out.push({ prio: outdoors ? 2.5 : 8, ...o });
   const home = homeOption(p, mem, now, avoid, plannedId, shelters);
   if (home && !(load && load.key === `HAUL:${plannedId}`)) out.push({ prio: homeId ? (outdoors ? 2.4 : 8.5) : 9.5, a: 0, b: 0, target: '', ...home });

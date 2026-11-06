@@ -86,6 +86,14 @@ export const POLICY_RULES = [
     },
   },
   {
+    id: 'restock',
+    pick(p, mem, opts) {
+      // Her base holds what she found, and it is no use to her there. Night and sleep came first.
+      const o = opts.find((x) => x.id === 'restock') || opts.find((x) => x.id === 'restockwalk');
+      return o ? [o, o.id === 'restock' ? 'Taking a kit out of the stash.' : 'Low on supplies. Going home for some.'] : null;
+    },
+  },
+  {
     id: 'house-job',
     pick(p, mem, opts) {
       // Holds a house to the end: in, shut, look, search, leave. The rules above still come first, so

@@ -363,6 +363,16 @@ async function decideV1() {
 
 // The house job's stage changes, one line each in decisions.jsonl. review.mjs counts them. The log
 // must never stop her, so a failure is swallowed.
+// What each SEARCH saw: containers opened, items seen, wanted things left for weight, bags seen.
+// The numbers that say whether she leaves loot because of the rules or because it was not there.
+let lastSearchStat = 0;
+function logSearchStat(p) {
+  const st = p && p.searchStat;
+  if (!st || !(st.n > 0) || st.n === lastSearchStat) return;
+  lastSearchStat = st.n;
+  appendDecisionLine({ t: 'searchstat', at: new Date().toISOString(), run: runId(), opened: st.opened, seen: st.seen, left: st.left, bags: st.bags, day: p.day, load: [p.weight, p.maxWeight], bag: p.bag });
+}
+
 function logJobEvents() {
   try {
     for (const e of drainJobEvents(map)) {
@@ -453,6 +463,7 @@ async function decideV2() {
   const seen = percept;
   updateMemory(map, percept, now, { home: planner.plan && planner.plan.home });
   logJobEvents();
+  logSearchStat(percept);
   // The reflex owns a chase, but not forever: after a minute of it, or when the reflex says it
   // has no way out left, the brain gets a turn with the escape menu (chase.mjs).
   chase.observe(percept, now);

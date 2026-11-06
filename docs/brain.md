@@ -208,7 +208,9 @@ too full to search -- base known, not chased --> haul: ENTER the base, or GOTO i
 
 **Coming back.** A house left full is not "given up on": it gets `fullAt`, not `leftAt`, so the 12 hour wait does not apply. It ranks ahead of houses she has never seen, says `you left it full, more to take`, and the mark goes when she walks back in. A stash lifts any `full` failure on SEARCH, or she could not search it on arrival.
 
-**Not done.** Nothing takes gear back out of the stash at her current base, so food put away there is not eaten. Only an old base gives things back, through SEARCH.
+**A full SEARCH.** A done SEARCH ending `(full)` sets `fails[SEARCH:id] = full` and `map.haul`, so the job goes to LEAVE `full` and the load run starts. With the load home and no job open, `jobPick` sends her back into the house she left full, by day, when it is on the menu. `fails` is read through `blockedWhy`, so the mark runs out.
+
+**Taking it back out.** `restock` (`restockOption` in `options.mjs`, its own rule in `policy.mjs`, after sleep): under 3 meals or under 2 bandages (`lowSupplies`) with a stash at her base. In the base it is SEARCH with `TARGET` restock and key `RESTOCK:id`, and she takes a kit (`Act.KIT`, `docs/skills.md`). Away from it, `restockwalk` walks her home. The result counts down `map.stashes`, marks nothing on the house, and `took nothing` keeps it off the menu for 10 minutes.
 
 ## Options
 
