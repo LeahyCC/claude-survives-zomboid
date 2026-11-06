@@ -1,6 +1,6 @@
 {
  "name": "gun-in-hand-saucepan-in-bag",
- "note": "A pistol in hand with a saucepan in the bag, a house nearby. She is armed. Do not put the gun away for the pan: go look at the house.",
+ "note": "A pistol in hand with a saucepan in the bag, a house nearby. The reflex puts the gun away and takes the pan out by itself, so EQUIP is not the brain's to send: go look at the house.",
  "patch": {
   "weapon": "none",
   "weaponScore": 0,

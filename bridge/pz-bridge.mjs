@@ -28,6 +28,7 @@ import { createTracker } from './decisions.mjs';
 import { reactionRows } from './reactions.mjs';
 import { createAppender, readLog, DEFAULT_MAX_BYTES } from './jsonl.mjs';
 import { createReflexFollower } from './reflexlog.mjs';
+import { markShot } from './crowd.mjs';
 import { createCommentator, linesFromLog } from './commentator.mjs';
 import { createCritic, situationText } from './critic.mjs';
 import { parseNudgeBody, planNudge, planSlice, indexNudges, indexOne, examplesEnabled, MAX_BODY, MAX_INDEX } from './nudges.mjs';
@@ -223,8 +224,9 @@ setInterval(readDeath, 1000);
 // How long the reflex has had a chase to itself, and when the brain gets a turn anyway.
 const chase = createChaseClock();
 
-// The reflex's calls and outcomes go into decisions.jsonl as reflex lines. Never stops her.
-const pollReflex = createReflexFollower({ file: REFLEX_FILE, write: appendDecisionLine });
+// The reflex's calls and outcomes go into decisions.jsonl as reflex lines. Never stops her. A shot
+// also marks its area on the crowd map, so the menu steers her off what the noise brings.
+const pollReflex = createReflexFollower({ file: REFLEX_FILE, write: appendDecisionLine, onShot: (l) => markShot(map, l.x, l.y) });
 setInterval(() => {
   try {
     pollReflex();

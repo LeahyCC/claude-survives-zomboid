@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildScenario } from './eval/scenarios.mjs';
-import { buildOptions, runningKey, setSearchLog } from './options.mjs';
+import { buildOptions, runningKey, setSearchLog, withoutGun } from './options.mjs';
 import { decidePolicy, POLICY_RULES } from './policy.mjs';
 import { planTurn, resolveChoice } from './brain.mjs';
 import { selectRules } from './playbook.mjs';
@@ -238,7 +238,23 @@ test('policy: equip a carried weapon that scores clearly better, or any real one
   assert.equal(betterWeapon(moment({ weapon: 'none', weapons: [] }).percept), null);
 });
 
-test('policy: a gun in hand is armed, and no melee weapon is swapped in for it', () => {
+test('a gun does not count as armed for weaponPoor, the search label, or the weapon search', () => {
+  const only = moment({ ...INSIDE, weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [], guns: [{ n: 'Pistol', ammo: 12, loaded: 8, held: true }] }, INSIDE_MEM);
+  assert.equal(weaponPoor(withoutGun(only.percept)), true, 'weaponPoor with only a gun');
+  assert.match(byId(menu(only), 'search').label, /no real weapon yet: kitchen and garage first/);
+  const got = policy(only);
+  assert.equal(got.rule, 'find-weapon', 'she goes on looking for a melee weapon');
+  // A real melee weapon is what ends it, gun or no gun.
+  const axe = { n: 'Axe', cond: 1, dmg: 2, reach: 1.2, score: 51 };
+  assert.equal(weaponPoor(withoutGun(moment({ weapon: 'Axe', weaponScore: 51, heldGun: 'none', weapons: [axe] }).percept)), false);
+  assert.equal(weaponPoor(withoutGun(moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [axe] }).percept)), false, 'an axe in the bag counts');
+  // withoutGun touches nothing else, and leaves a percept with no gun as it is.
+  const bare = moment({ weapon: 'none', heldGun: 'none' }).percept;
+  assert.equal(withoutGun(bare), bare);
+  assert.equal(withoutGun(only.percept).weapon, 'none');
+});
+
+test('policy: no equip order for a gun in hand: the reflex holsters it by itself', () => {
   const saucepan = { n: 'Saucepan', cond: 0.7, dmg: 0.7, reach: 1, score: 9.2 };
   const axe = { n: 'Axe', cond: 1, dmg: 2, reach: 1.2, score: 51 };
   // The live run: a pistol in hand, a saucepan in the bag. The old percept read as unarmed.
@@ -254,9 +270,7 @@ test('policy: a gun in hand is armed, and no melee weapon is swapped in for it',
   // A gun carried in the bag with empty hands is not held: the melee weapon is still offered.
   const bagged = moment({ weapon: 'none', weaponScore: 0, heldGun: 'none', weaponByHand: false, weapons: [saucepan], guns: [{ n: 'Pistol', ammo: 0, loaded: 4, held: false }] });
   assert.equal(policy(bagged).rule, 'equip');
-  // She is not unarmed, so no house is sold as "no real weapon yet" and the playbook does not say so.
-  assert.equal(weaponPoor(pistol.percept), false);
-  assert.equal(weaponPoor(moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [] }).percept), false);
+  // The playbook reads senses.mjs, which still takes a held gun as armed, for the second it is in hand.
   const rules = selectRules(moment({ weapon: 'none', weaponScore: 0, heldGun: 'Pistol', weapons: [] }).percept, {}).map((r) => r.id);
   assert.ok(!rules.includes('no-weapon') && !rules.includes('weak-weapon'));
   assert.ok(selectRules(moment({ weapon: 'none', weaponScore: 0, heldGun: 'none', weapons: [] }).percept, {}).some((r) => r.id === 'no-weapon'));
@@ -501,13 +515,13 @@ test('policy: find-weapon waits for what is more urgent, and for a safe moment',
   assert.equal(policy(moment({ ...BARE, outside: true, inBldg: null }, HOME_MEM)), null);
 });
 
-test('policy: find-weapon is not for anyone with something in hand, a gun or a weapon in the bag', () => {
+test('policy: find-weapon is not for anyone with a melee weapon in hand or in the bag', () => {
   const saucepan = { n: 'Saucepan', cond: 0.7, dmg: 0.7, reach: 1, score: 12 };
   const weak = moment({ ...BARE, weapon: 'Saucepan', weaponScore: 12, weapons: [saucepan] }, INSIDE_MEM);
   assert.notEqual(policy(weak) && policy(weak).rule, 'find-weapon', 'a weak weapon stays the model call');
   assert.match(byId(menu(weak), 'search').label, /kitchen and garage first/, 'but the menu still says where to look');
   const gun = moment({ ...BARE, heldGun: 'Pistol' }, INSIDE_MEM);
-  assert.equal(policy(gun), null);
+  assert.equal(policy(gun).rule, 'find-weapon', 'a gun is not one');
   const bagged = moment({ ...BARE, weapons: [saucepan] }, INSIDE_MEM);
   assert.equal(policy(bagged).rule, 'equip', 'a weapon in the bag is held first');
 });

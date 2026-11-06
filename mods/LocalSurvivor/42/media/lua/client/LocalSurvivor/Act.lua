@@ -57,8 +57,9 @@ end
 -- If the item in her main hand changes and the mod did not queue the change, Colin did it by
 -- hand. That item is then his choice and the mod never swaps it away. The lock ends when the item
 -- breaks, leaves her pack, is replaced by another weapon Colin picks, or the character dies (a
--- new player object starts a fresh watch). A gun is always his choice: the mod never equips one.
--- Only a weapon can be chosen. Food, a bottle or a bandage in the hand while she eats or
+-- new player object starts a fresh watch). This lock is for melee weapons. A gun Colin puts there
+-- is not locked: the reflex holsters any gun the fire rule has no use for (docs/combat.md, Guns).
+-- Only a melee weapon can be chosen. Food, a bottle or a bandage in the hand while she eats or
 -- drinks is not a choice, and does not end one.
 Act.HAND_GRACE = 1800     -- ticks an equip the mod queued may take to show up in the hand
 Act.HAND_CHECK = 30       -- ticks between looks to see the chosen item is still carried
@@ -69,11 +70,9 @@ function Act.markModEquip(item)
   LS.hand.modItem, LS.hand.modUntil = item, (LS.tick or 0) + Act.HAND_GRACE
 end
 
--- A gun, or a melee weapon that scores over the floor: something that can be chosen.
+-- A melee weapon that scores over the floor: something that can be chosen.
 local function isChoice(it)
-  if it == nil then return false end
-  if Core.isGun(it) then return true end
-  if not Core.isMeleeWeapon(it) then return false end
+  if it == nil or not Core.isMeleeWeapon(it) then return false end
   local ok, w = pcall(Core.weaponFacts, it, LS.Sense.itemType(it))
   return ok and Core.isRealWeapon(w)
 end
@@ -96,15 +95,14 @@ function Act.watchHand(p)
   local cur = nil
   pcall(function() cur = p:getPrimaryHandItem() end)
   if not h.seen then
-    -- The first look only sets the baseline. A gun already in hand is his: the mod never equips one.
+    -- The first look only sets the baseline.
     h.seen, h.item = true, cur
-    if Core.isGun(cur) then h.locked = cur end
     return h.locked
   end
   if cur ~= h.item then
     h.item = cur
     if isChoice(cur) and cur ~= h.locked then
-      local mine = h.modItem == cur and (LS.tick or 0) <= (h.modUntil or 0) and not Core.isGun(cur)
+      local mine = h.modItem == cur and (LS.tick or 0) <= (h.modUntil or 0)
       if mine then h.locked = nil else h.locked = cur end
     end
     if h.modItem == cur then h.modItem = nil end
@@ -133,7 +131,7 @@ end
 
 -- The weapon worth taking up now, or nil. Second value: every melee weapon carried.
 -- What he chose by hand is never swapped away; if it is out of his hand (he ate, he drank) it is
--- put back. A gun in hand counts as armed: no melee weapon replaces it.
+-- put back. A gun in hand scores 0, so the best melee weapon replaces it.
 function Act.equipPlan(p)
   local cands = Act.weaponsCarried(p)
   local lock = Act.watchHand(p)
@@ -164,9 +162,6 @@ function Act.doEquip(p)
   local c, cands = Act.equipPlan(p)
   if c then Act.queueEquip(p, c); return "queued" end
   if Act.handChosen(p) then return "held", "holding the one you picked" end
-  local gun = false
-  pcall(function() gun = Core.isGun(p:getPrimaryHandItem()) end)
-  if gun then return "held", "holding a gun" end
   for _, x in ipairs(cands) do
     if x.score >= Core.WEAPON.MIN_SCORE then return "held", "already holding the best" end
   end
@@ -176,8 +171,9 @@ end
 -- A weapon in the pack and nothing in her hands: take it up without waiting for a brain turn.
 -- The brain only gets a turn between jobs, and a job can run for minutes, so she walked past a
 -- crowbar she was carrying. Only empty hands (or a pen) are filled here; swapping for a better
--- weapon stays with EQUIP. A gun in hand and a weapon Colin picked are never touched, because
--- equipPlan returns nothing for them, and a pick that is out of her hand is put back as before.
+-- weapon stays with EQUIP. A weapon Colin picked is never touched, because equipPlan returns nothing
+-- for it, and a pick that is out of her hand is put back as before. A gun in hand is left to the
+-- reflex, which holsters it and takes the melee weapon out (Reflex.holster).
 -- It waits for a quiet moment: no job running, nothing queued, the reflex idle, awake.
 Act.AUTO_EQUIP_EVERY = 60     -- ticks between looks, about a second
 Act.AUTO_EQUIP_BACKOFF = 600  -- ticks to wait after one try, so an equip that never lands is not retried every second

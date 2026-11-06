@@ -47,6 +47,24 @@ test('the follower copies only new lines, waits for a half-written one, and rest
   assert.equal(got[2].id, 'n-1');
 });
 
+test('a shot line is copied like the others and heard by onShot', () => {
+  const shot = { t: 'shot', tick: 900, gun: 'Pistol', noiseR: 100, x: 10662, y: 9831 };
+  const l = toLogLine(shot, Date.parse('2026-11-06T12:00:00Z'));
+  assert.equal(l.t, 'reflex');
+  assert.equal(l.kind, 'shot');
+  assert.deepEqual([l.gun, l.noiseR, l.x, l.y], ['Pistol', 100, 10662, 9831]);
+
+  const file = tmpFile();
+  fs.writeFileSync(file, call('a-1') + '\n' + JSON.stringify(shot) + '\n');
+  const got = [];
+  const heard = [];
+  const poll = createReflexFollower({ file, write: (o) => got.push(o), readFrom: 'start', onShot: (o) => heard.push(o) });
+  assert.equal(poll(), 2);
+  assert.deepEqual(got.map((g) => g.kind), ['call', 'shot']);
+  assert.equal(heard.length, 1, 'only the shot');
+  assert.equal(heard[0].x, 10662);
+});
+
 test('no file yet is not an error', () => {
   const poll = createReflexFollower({ file: path.join(os.tmpdir(), 'no-such-dir-xyz', 'local_reflex.txt'), write: () => {} });
   assert.equal(poll(), 0);

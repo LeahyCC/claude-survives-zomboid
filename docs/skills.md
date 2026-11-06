@@ -119,22 +119,22 @@ No arguments. Wields the best weapon he carries, one level into bags.
 - Already holding the best: nothing is queued and the order is `done` with `already holding the best`.
 - Failed: `equip: no weapon` (nothing carried scores above the floor).
 
-A gun is gear, not a melee weapon, and EQUIP treats it so:
+A gun is a last resort, not a melee weapon, and EQUIP treats it so:
 
 - A gun is never a candidate. `Core.isMeleeWeapon` leaves it out, so EQUIP never wields one, and a gun in the pack does not count as a weapon for `equip: no weapon`.
-- A gun in her hand counts as armed. She does not swap it for a saucepan, a crowbar or an axe. The order is `done` with `holding the one you picked`. (Before this, a held pistol scored 0, she counted as unarmed, and the rule swapped it for a saucepan.)
+- A gun in her hand scores 0. EQUIP takes the best melee weapon up over it, and with no melee weapon it fails `equip: no weapon`. The bridge does not send this order for a gun in hand, because the reflex holsters a gun by itself and takes the melee weapon out (`docs/combat.md`, "Guns"). Only the reflex's fire rule ever draws one.
 
-Her hands are filled without a brain turn (`Act.autoEquip`, from `Act.update`). Once a second, when her hands are empty or hold a pen, nothing is queued, no skill or need job is running, the reflex did not act this tick and she is awake, the best weapon she carries is queued, exactly as EQUIP would. It only fills empty hands: a swap for a better weapon stays with EQUIP and its 25% rule. A try is not repeated for 600 ticks (10 seconds), so an equip that never lands is not retried every second. A gun in hand and a weapon Colin picked are left alone for the same reasons as below, and a pick that is out of her hand (she ate) is put back.
+Her hands are filled without a brain turn (`Act.autoEquip`, from `Act.update`). Once a second, when her hands are empty or hold a pen, nothing is queued, no skill or need job is running, the reflex did not act this tick and she is awake, the best weapon she carries is queued, exactly as EQUIP would. It only fills empty hands: a swap for a better weapon stays with EQUIP and its 25% rule. A try is not repeated for 600 ticks (10 seconds), so an equip that never lands is not retried every second. A weapon Colin picked is left alone for the same reasons as below, and a pick that is out of her hand (she ate) is put back. A gun in hand is the reflex's to holster, not this rule's.
 
 The weapon Colin put there himself is never swapped away (`Act.watchHand`, every tick and whenever the percept is built):
 
 ```
 hand changes, the mod queued nothing   ->  Colin's pick, locked
 hand changes to what EQUIP queued      ->  the mod's own, no lock
-a gun in hand                          ->  always his: the mod never equips a gun
+a gun in hand                          ->  no lock: the reflex holsters it, even one he put there
 ```
 
-- Only a weapon can be a pick: a gun, or a melee weapon over the score floor. Food, a bottle or a bandage in her hand while she eats or drinks is not a pick, and does not end one.
+- Only a melee weapon over the score floor can be a pick. A gun drawn over a pick does not end it: holstering puts the pick back. Food, a bottle or a bandage in her hand while she eats or drinks is not a pick, and does not end one.
 - The lock ends when the item breaks, leaves the pack (checked every 30 ticks while it is out of her hand), Colin puts another weapon in her hand, or the character dies (a new player object starts a fresh watch, and its first look only sets the baseline).
 - While it is locked, EQUIP and the weapon step of SEARCH do nothing if it is in her hand. If it is out of her hand (she ate, she drank) EQUIP puts it back, not the best weapon.
 - The percept shows it as `weaponByHand` and the HUD line says `(your pick)`.
