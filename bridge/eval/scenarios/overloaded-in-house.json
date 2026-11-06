@@ -1,6 +1,6 @@
 {
  "name": "overloaded-in-house",
- "note": "Heavy load inside an unsearched house. More looting is the wrong move. Drop the junk.",
+ "note": "Heavy load inside an unsearched house, the one house she has been in, so it is her base. More looting is the wrong move. Put the spare gear away here.",
  "patch": {
   "weight": 8.5,
   "moodle": {
@@ -58,10 +58,11 @@
   }
  },
  "accept": [
-  "drop"
+  "stash"
  ],
  "wrong": [
   "search",
-  "b1"
+  "b1",
+  "drop"
  ]
 }

@@ -432,7 +432,18 @@ function __makeItem(opts)
   function it:IsDrainable() return opts.drainable or false end
   function it:getAlcoholPower() return opts.alcoholPower or 0 end
   function it:IsInventoryContainer() return opts.items ~= nil end
-  function it:getInventory() return { getItems = function() return __javaList(opts.items or {}) end } end
+  function it:getInventory()
+    return {
+      getItems = function() return __javaList(opts.items or {}) end,
+      isEmpty = function() return #(opts.items or {}) == 0 end,
+    }
+  end
+  function it:getModData()
+    self.modData = self.modData or {}
+    return self.modData
+  end
+  -- Where it is now. A test sets opts.inside to a container, or it is on the player.
+  function it:getContainer() return opts.inside or { getType = function() return "none" end } end
   function it:getType() return (it:getFullType():gsub("^.-%.", "")) end
   function it:getID() return opts.id or 0 end
   function it:getBandagePower() return opts.power or 0 end
@@ -638,6 +649,8 @@ function __makeContainer(opts)
   function c:isExplored() return self.explored end
   function c:setExplored(v) self.explored = v end
   function c:AddItem(it) table.insert(self.items, it); return it end
+  -- opts.full: the container takes nothing more.
+  function c:hasRoomFor() return not (opts.full or self.full) end
   function c:DoRemoveItem(it)
     for i, x in ipairs(self.items) do if x == it then table.remove(self.items, i); return end end
   end
@@ -687,6 +700,20 @@ function __finishTransfers(p)
   end
   ISTimedActionQueue.clear(p)
   return names
+end
+
+-- Finish every queued put-away: the item leaves the player's list and lands in the container it
+-- was sent to, weight and all, and the queue empties.
+function __finishStash(p)
+  for _, a in ipairs(ISTimedActionQueue.getTimedActionQueue(p).queue) do
+    if a.Type == "ISInventoryTransferAction" then
+      local item, dest = a.args[2], a.args[4]
+      for i, x in ipairs(p.__items.items) do if x == item then table.remove(p.__items.items, i); break end end
+      dest:AddItem(item)
+      p.weight = (p.weight or 0) - item:getActualWeight()
+    end
+  end
+  ISTimedActionQueue.clear(p)
 end
 
 -- Finish every queued pick-up from the floor: the item leaves the square it lay on, as the

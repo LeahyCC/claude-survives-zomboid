@@ -42,7 +42,7 @@ An action still queued after 1500 ticks is cut off and the step runs again.
 
 ## Verbs
 
-None of the verbs read `A`, `B` or `TARGET` yet.
+None of the verbs below read `A`, `B` or `TARGET`. `STASH` is a job in the same file and reads `TARGET` as her base: see `docs/skills.md`.
 
 ### DRINK
 

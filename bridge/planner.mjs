@@ -11,7 +11,7 @@
 import { extractJSON } from './decide.mjs';
 import { digest } from './digest.mjs';
 import { holdReason } from './senses.mjs';
-import { memoryStats, safehouseScore } from './memory.mjs';
+import { memoryStats, safehouseScore, baseTag } from './memory.mjs';
 import { compass } from './geom.mjs';
 import { tiles } from './words.mjs';
 
@@ -119,7 +119,7 @@ export function knownBuildings(mem, p, limit = KNOWN_LIMIT) {
   rows.sort((x, y) => y.score - x.score || x.d - y.d);
   return rows.slice(0, limit).map(({ b, d, dx, dy, score }) => {
     const kind = b.shop ? 'shop' : b.res ? 'house' : 'building';
-    const tags = [b.visited ? 'visited' : 'not visited', b.searched ? 'searched' : '', b.water ? 'water' : '', b.bed ? 'bed' : '', score >= 5 ? 'safe house' : '']
+    const tags = [b.visited ? 'visited' : 'not visited', b.searched ? 'searched' : '', b.water ? 'water' : '', b.bed ? 'bed' : '', score >= 5 ? 'safe house' : '', baseTag(mem, b.id)]
       .filter(Boolean).join(', ');
     return { id: String(b.id), text: `${b.id}: ${kind}, ${d < 1 ? 'here' : `${tiles(d)} ${compass(dx, dy)}`}, ${tags}` };
   });

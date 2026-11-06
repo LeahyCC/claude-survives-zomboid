@@ -7,6 +7,13 @@ import { emptyCrowd, loadCrowd, updateCrowd, areaKey } from './crowd.mjs';
 
 const MAX_BUILDINGS = 300;
 const MAX_ORDERS = 12;
+// The base: one building for her gear. Colin, 2026-11-05: "which is the best base for putting gear,
+// but should be dynamic if finding a new one". Clearly better is a guide number from the card.
+export const BASE_MOVE = 2;
+// A house counts from the start (residential is 2). A shop or a house full of zombies does not.
+export const BASE_MIN_SCORE = 2;
+// The same reach as the walk to the plan's home. A base further off than this is no use to her.
+export const MAX_BASE_WALK = 120;
 
 // How long a failed order stays off the menu. "stuck" must not be resent straight away.
 const RETRY_MS = {
@@ -15,6 +22,7 @@ const RETRY_MS = {
   'no water': 3 * 60_000, 'no food': 3 * 60_000, 'need can opener': 10 * 60_000, 'too full': 5 * 60_000,
   'no bandage': 3 * 60_000, 'no bag': 5 * 60_000, 'could not wear it': 10 * 60_000, 'no empty bottle': 3 * 60_000,
   'not heavy': 3 * 60_000, 'nothing to drop': 10 * 60_000, 'equip: no weapon': 10 * 60_000,
+  'not at base': 60_000, 'nothing to stash': 10 * 60_000,
 };
 const DEFAULT_RETRY_MS = 45_000;
 // A failed ENTER with "zombie" means the way in is not clear. Thirty seconds sent her straight back
@@ -27,7 +35,7 @@ export const STRIKE_MEMORY_MS = 60 * 60_000;
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 export function emptyMemory() {
-  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [], crowd: emptyCrowd(), strikes: {} };
+  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [], crowd: emptyCrowd(), strikes: {}, base: null, stashes: {}, haul: null };
 }
 
 // An old or hand-edited pz-state.json must not crash the bridge.
@@ -47,6 +55,13 @@ export function loadMemory(raw) {
       if (v && Number.isFinite(Number(v.n)) && Number.isFinite(Number(v.at))) m.strikes[k] = { n: Number(v.n), at: Number(v.at) };
     }
   }
+  if (raw.base && typeof raw.base.id === 'string') m.base = { id: raw.base.id, at: num(raw.base.at) };
+  if (raw.stashes && typeof raw.stashes === 'object') {
+    for (const [k, v] of Object.entries(raw.stashes)) {
+      if (v && Number(v.n) > 0) m.stashes[k] = { n: Number(v.n), at: num(v.at) };
+    }
+  }
+  if (raw.haul && typeof raw.haul === 'object') m.haul = raw.haul;
   return m;
 }
 
@@ -108,6 +123,7 @@ function applyResult(mem, p, now, hours) {
       const moreToDo = left > 0 && order && order.left != null && left < order.left;
       b.searched = !why.includes('(full)') && !moreToDo;
       b.took = [...b.took, ...tookItems(why)].slice(-12);
+      if (!why.includes('(full)')) forgetOldStash(mem, b.id);
     } else if (r.verb === 'LOOT' && b) {
       b.partly = true;
       b.took = [...b.took, ...tookItems(why)].slice(-12);
@@ -115,13 +131,19 @@ function applyResult(mem, p, now, hours) {
       b.securedAt = hours;
     } else if (r.verb === 'SLEEP' && /^asleep/.test(why)) {
       mem.sleep = { at: now, hours, x: num(p.x), y: num(p.y) };
+    } else if (r.verb === 'STASH' && b) {
+      noteStash(mem, b.id, why, hours);
+    } else if (r.verb === 'DROP') {
+      mem.haul = null;
     }
     return;
   }
   if ((r.verb === 'SEARCH' || r.verb === 'LOOT') && why === 'nothing left' && b) {
     b.searched = true;
     b.partly = true;
+    forgetOldStash(mem, b.id);
   }
+  if (r.verb === 'STASH' && why === 'nothing to stash') mem.haul = null;
   if (order) {
     mem.fails[order.key] = { why, at: now };
     if (r.verb === 'ENTER' && why === 'zombie') {
@@ -146,10 +168,71 @@ function updateSleep(mem, p, hours) {
   if (!stillSleepResult || moved || num(p.fatigue) < 0.1 || hours - num(s.hours) > 12) mem.sleep = null;
 }
 
-export function updateMemory(mem, p, now = Date.now()) {
+// What went in stays on the map. The load is off her, so a SEARCH that stopped on "full" may go again.
+function noteStash(mem, id, why, hours) {
+  const m = /^stashed (\d+)/.exec(why);
+  mem.haul = null;
+  if (!m) return;
+  const old = mem.stashes[id];
+  mem.stashes[id] = { n: num(old && old.n) + Number(m[1]), at: hours };
+  for (const [k, f] of Object.entries(mem.fails)) {
+    if (k.startsWith('SEARCH:') && f && f.why === 'full') delete mem.fails[k];
+  }
+}
+
+// She has been back through an old base and taken what she could. Her own base keeps its count.
+function forgetOldStash(mem, id) {
+  if (mem.stashes[id] && !(mem.base && mem.base.id === id)) delete mem.stashes[id];
+}
+
+const baseSpot = (b) => (b.door && Number.isFinite(b.door.x) ? b.door : Number.isFinite(b.x) && Number.isFinite(b.y) ? b : null);
+
+// True when the walk to b is one she could make from where she stands. A building with no position
+// on record is given the benefit of the doubt, and the walk itself is what fails.
+export function withinBaseWalk(b, p) {
+  const at = baseSpot(b);
+  return !at || Math.hypot(at.x - num(p.x), at.y - num(p.y)) <= MAX_BASE_WALK;
+}
+
+// Which building is the base now, or null. The planner's home leads while nothing is stashed in the
+// old one, unless the old one is clearly the better. Once gear is there it takes a clearly better
+// house to move: the planner writes a new plan every couple of hours, and a base that followed each
+// one would scatter her gear over the map. A base out of reach loses to anything in reach.
+export function pickBase(mem, p, home = '') {
+  const planned = home ? building(mem, home) : null;
+  const usable = (b) => !!b && withinBaseWalk(b, p);
+  let best = null;
+  for (const b of Object.values(mem.buildings)) {
+    if (!b.visited || !usable(b) || safehouseScore(b) < BASE_MIN_SCORE) continue;
+    if (!best || safehouseScore(b) > safehouseScore(best)) best = b;
+  }
+  const cur = mem.base ? building(mem, mem.base.id) : null;
+  if (!usable(cur)) return usable(planned) ? planned.id : best ? best.id : cur ? cur.id : null;
+  const score = safehouseScore(cur);
+  if (usable(planned) && planned !== cur) {
+    if (!(num(mem.stashes[cur.id] && mem.stashes[cur.id].n) > 0) && safehouseScore(planned) + BASE_MOVE > score) return planned.id;
+    if (safehouseScore(planned) >= score + BASE_MOVE) return planned.id;
+  }
+  return best && safehouseScore(best) >= score + BASE_MOVE ? best.id : cur.id;
+}
+
+function updateBase(mem, p, home, hours) {
+  const id = pickBase(mem, p, home);
+  if (!id) return;
+  if (!mem.base || mem.base.id !== id) mem.base = { id: String(id), at: hours };
+}
+
+// The building her gear goes to, or null.
+export function baseBuilding(mem) {
+  return mem && mem.base ? building(mem, mem.base.id) : null;
+}
+
+// ctx.home is the planner's home building, when there is a plan.
+export function updateMemory(mem, p, now = Date.now(), ctx = {}) {
   if (!p || typeof p !== 'object' || p.dead) return mem;
   const hours = num(p.hoursAlive);
   if (!mem.strikes) mem.strikes = {};
+  if (!mem.stashes) mem.stashes = {};
   const here = p.inBldg && p.inBldg.id != null && !p.outside ? String(p.inBldg.id) : null;
   // Read before the list below marks it: the job log counts walking back into a house.
   const wasVisited = !!(here && mem.buildings[here] && mem.buildings[here].visited);
@@ -175,7 +258,10 @@ export function updateMemory(mem, p, now = Date.now()) {
     if (p.inBldg.water || p.water) b.water = true;
     if (p.bed) b.bed = true;
     b.zombies = (Array.isArray(p.zList) ? p.zList : []).filter((z) => num(z.d, 99) <= 15).length;
-    if (mem.current !== here) b.enteredAt = hours;
+    if (mem.current !== here) {
+      b.enteredAt = hours;
+      delete b.fullAt;
+    }
   }
   mem.current = here;
   applyResult(mem, p, now, hours);
@@ -187,6 +273,7 @@ export function updateMemory(mem, p, now = Date.now()) {
   }
   updateSleep(mem, p, hours);
   updateCrowd(mem, p);
+  updateBase(mem, p, ctx.home, hours);
   stepHouseJob(mem, p, now, { entered, wasVisited });
   prune(mem, now);
   return mem;
@@ -246,6 +333,7 @@ export function memorySlice(mem, p) {
       securedAt: b.securedAt ?? null, enteredAt: b.enteredAt ?? null,
       ...(b.door ? { door: b.door } : {}),
       ...(b.leftAt != null ? { leftAt: b.leftAt } : {}),
+      ...(b.fullAt != null ? { fullAt: b.fullAt } : {}),
     };
   }
   // The crowd entries for these buildings and their areas, so the eval rebuilds the same labels.
@@ -259,15 +347,35 @@ export function memorySlice(mem, p) {
     if (c && k && c.areas[k]) crowd.areas[k] = c.areas[k];
   }
   const hasCrowd = Object.keys(crowd.buildings).length || Object.keys(crowd.areas).length;
-  return { current: mem.current || null, buildings, ...(hasCrowd ? { crowd } : {}), ...(mem.job ? { job: mem.job } : {}) };
+  return {
+    current: mem.current || null, buildings, ...(hasCrowd ? { crowd } : {}), ...(mem.job ? { job: mem.job } : {}),
+    ...(mem.base ? { base: mem.base, stashes: mem.stashes } : {}), ...(mem.haul ? { haul: mem.haul } : {}),
+  };
+}
+
+// What the map says about a building as her base or an old one, for a menu label. '' for any other.
+export function baseTag(mem, id) {
+  const n = num(mem.stashes && mem.stashes[String(id)] && mem.stashes[String(id)].n);
+  const things = n === 1 ? '1 thing stashed' : `${n} things stashed`;
+  if (mem.base && mem.base.id === String(id)) return n > 0 ? `your base, ${things}` : 'your base';
+  return n > 0 ? `your old base, ${things}` : '';
 }
 
 export function memoryStats(mem) {
   const all = Object.values(mem.buildings);
+  const base = baseBuilding(mem);
+  const stashed = (id) => num(mem.stashes && mem.stashes[id] && mem.stashes[id].n);
+  const spot = base ? baseSpot(base) : null;
   return {
     buildings: all.length,
     visited: all.filter((b) => b.visited).length,
     searched: all.filter((b) => b.searched).length,
     safe: all.filter((b) => safehouseScore(b) >= 5).length,
+    // For the digest's one line, which only formats.
+    base: base ? {
+      id: base.id, kind: base.shop ? 'shop' : base.res ? 'house' : 'building', x: spot ? spot.x : null, y: spot ? spot.y : null,
+      stashed: stashed(base.id),
+      old: Object.keys(mem.stashes || {}).filter((id) => id !== base.id).reduce((sum, id) => sum + stashed(id), 0),
+    } : null,
   };
 }

@@ -14,7 +14,7 @@
 // pauses the job while she stays inside and ends it if it drives her out. docs/brain.md has the rules.
 
 import { zombies, reaches, chasing, heavy, isNight, inside, running, heldGun, REACH_CHASE_R, STRONG_WEAPON } from './senses.mjs';
-import { blockedWhy, building, securedThisVisit } from './memory.mjs';
+import { blockedWhy, building, securedThisVisit, baseBuilding, withinBaseWalk } from './memory.mjs';
 import { dist, compass } from './geom.mjs';
 import { tiles, count } from './words.mjs';
 import { crowdOfBuilding, isCrowded, areaCrowded } from './crowd.mjs';
@@ -126,8 +126,14 @@ function endJob(mem, why) {
   if (!job) return;
   const finished = job.stage === 'LEAVE';
   const b = building(mem, job.id);
-  // A house left with rooms in it is not the next house to walk back to.
-  if (b && job.arrived && !b.searched) b.leftAt = job.lastHours;
+  // A house left with rooms in it is not the next house to walk back to. One she only left because
+  // her arms were full is the opposite: there is more to take, once the load is off.
+  if (b && job.arrived && !b.searched) {
+    if (job.leftFull) {
+      b.fullAt = job.lastHours;
+      delete b.leftAt;
+    } else b.leftAt = job.lastHours;
+  }
   const roomsSearched = job.leftStart !== null && job.left !== null ? Math.max(0, job.leftStart - job.left) : 0;
   event(mem, {
     kind: 'end', bldg: job.id, stage: job.stage, why, finished, rooms: job.rooms, roomsSearched,
@@ -168,6 +174,21 @@ function toClear(mem, job, p) {
 }
 
 const standingInHouse = (p) => zombies(p).filter((z) => z.inside && !z.down && !z.crawl).length;
+
+// Too full to search and nothing more to be done about it in this house. Soak 3: 9 of 32 unsearched
+// houses went to LEAVE this way. With a base in reach the load goes home, and this house waits.
+function fullHere(mem, job, p, now) {
+  const base = baseBuilding(mem);
+  const canStash = base && !blockedWhy(mem, `STASH:${base.id}`, now);
+  if (canStash && base.id !== job.id && withinBaseWalk(base, p) && !isCrowded(crowdOfBuilding(mem, base.id))) return true;
+  return !(canStash && base.id === job.id) && !!blockedWhy(mem, 'DROP', now);
+}
+
+function leaveFull(mem, job) {
+  job.leftFull = true;
+  mem.haul = { from: job.id, at: job.lastHours };
+  setStage(mem, job, 'LEAVE', 'full');
+}
 
 // One step along the stages. True when something changed and it is worth looking again.
 function advance(mem, job, p, now, threat) {
@@ -272,12 +293,10 @@ function advance(mem, job, p, now, threat) {
     return true;
   }
   const failed = mem.fails && mem.fails[`SEARCH:${job.id}`];
-  if (failed && failed.why === 'full') {
-    setStage(mem, job, 'LEAVE', 'full');
-    return true;
-  }
-  if (heavy(p) && blockedWhy(mem, 'DROP', now)) {
-    setStage(mem, job, 'LEAVE', 'full');
+  const base = baseBuilding(mem);
+  const stashHere = base && base.id === job.id && !blockedWhy(mem, `STASH:${base.id}`, now);
+  if ((failed && failed.why === 'full' && !stashHere) || (heavy(p) && fullHere(mem, job, p, now))) {
+    leaveFull(mem, job);
     return true;
   }
   // A zombie in the house holds SEARCH (senses.mjs, reaches), so the stall clock would run out on it.
@@ -459,8 +478,12 @@ const BEFORE_LEAVING = ['fill', 'rest'];
 // and the model.
 export function jobPick(p, mem, opts) {
   const job = openJob(mem);
-  if (!job || running(p) || jobThreat(p)) return null;
+  if (running(p) || jobThreat(p)) return null;
   const by = (id) => opts.find((o) => o.id === id);
+  // The load run. The two options only exist when she is too full to search and has a base. It is
+  // here and not a rule of its own so it comes ahead of the overloaded rule's drop.
+  const load = by('stash') || by('haul');
+  if (!job) return load ? [load, load.id === 'stash' ? 'Home, and too full. Putting the spare gear away.' : 'Too full to search. Taking the load home.'] : null;
   if (job.stage === 'IN') {
     const way = opts.find((o) => o.verb === 'ENTER' && o.target === job.id);
     return way ? [way, job.reentries ? 'I walked out of there with rooms left. Going back in.' : 'Going into this house.'] : null;
@@ -472,11 +495,14 @@ export function jobPick(p, mem, opts) {
   if (job.stage === 'SHUT') return [by('secure'), 'Shutting this house up before I look around.'];
   if (job.stage === 'LOOK') return [by('wait'), 'Listening for anything moving in here.'];
   if (job.stage === 'SEARCH') {
-    // Too heavy: the overloaded rule comes next and sends the drop. Then the search goes on.
-    return by('search') ? [by('search'), 'Searching this house, room by room.'] : null;
+    if (by('search')) return [by('search'), 'Searching this house, room by room.'];
+    // Too heavy, and this is the base. With no base the overloaded rule comes next and sends the
+    // drop. Either way the search goes on after.
+    return by('stash') ? [by('stash'), 'Too full to go on. Putting the spare gear away here.'] : null;
   }
   const last = BEFORE_LEAVING.map(by).find(Boolean);
   if (last) return [last, 'One more thing before I head out.'];
+  if (load) return [load, 'My arms are full. Taking this home, then coming back.'];
   if (by('leave')) return [by('leave'), 'This house is done. Heading for the door.'];
   const next = nextHouse(opts, mem, job, num(p.hoursAlive));
   if (next) return [next, 'On to the next house.'];

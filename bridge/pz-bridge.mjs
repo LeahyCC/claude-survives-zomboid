@@ -258,7 +258,7 @@ setInterval(() => {
   if (!percept || Date.now() - perceptAt > 15000 || !isV2(percept)) return;
   // The first plan can come before the first tactical turn has filled the map, and the plan's
   // home has to be a building the map knows. Updating twice on one percept changes nothing.
-  updateMemory(map, percept, Date.now());
+  updateMemory(map, percept, Date.now(), { home: planner.plan && planner.plan.home });
   planner.tick(percept, map);
 }, 2000);
 
@@ -451,7 +451,7 @@ async function decideV2() {
   const now = Date.now();
   // What the plan was built from. The model reply can arrive after a newer percept has.
   const seen = percept;
-  updateMemory(map, percept, now);
+  updateMemory(map, percept, now, { home: planner.plan && planner.plan.home });
   logJobEvents();
   // The reflex owns a chase, but not forever: after a minute of it, or when the reflex says it
   // has no way out left, the brain gets a turn with the escape menu (chase.mjs).
@@ -579,10 +579,12 @@ async function decide() {
       state.goal = '';
       state.subtask = '';
       state.memory = `Died on day ${percept.day}.`;
-      // Places stay known for the next character. Orders, fails and sleep belonged to this one.
+      // Places stay known for the next character, and the base and its stash with them: the gear is
+      // still in the world. Orders, fails, sleep and her load belonged to this one.
       map.orders = [];
       map.fails = {};
       map.sleep = null;
+      map.haul = null;
       dropJob(map, 'died');
       logJobEvents();
       pending = null;

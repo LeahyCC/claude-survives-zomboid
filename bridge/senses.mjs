@@ -7,7 +7,7 @@ export const HOLD_ANY_R = 3;
 export const REFLEX_UNAWARE_R = 2;
 // The skills and needs verbs report done or failed themselves. MOVE and the older one-shot
 // verbs stay "running" forever, so they never count as busy.
-export const LONG_VERBS = new Set(['GOTO', 'ENTER', 'SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP', 'CLEAR']);
+export const LONG_VERBS = new Set(['GOTO', 'ENTER', 'SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP', 'CLEAR', 'STASH']);
 // Weapon scores come from Core.weaponScore (docs/combat.md): a kitchen knife is 9 and a hammer
 // 19, a crowbar 30. Under 20 is a weapon only in name. SWAP_GAIN is the mod's own swap rule.
 export const WEAK_WEAPON = 20;

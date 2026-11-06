@@ -550,7 +550,8 @@ test('bleeding beats drop, secure, enter and goto when nothing is on her', () =>
     ...INSIDE, ...WOUND, hp: 70, hour: 23, weight: 7.5, moodle: { heavy: 2 }, inv: { bandages: 2, canRip: false },
   }, { current: '4021', buildings: { 4021: { visited: true, res: true, enteredAt: 38 } } });
   const opts = menu(m);
-  assert.ok(byId(opts, 'drop') && byId(opts, 'secure'), 'the other rules have their options');
+  // She is in the one house she has been in, her base, so the load option here is the stash.
+  assert.ok(byId(opts, 'stash') && byId(opts, 'secure'), 'the other rules have their options');
   const got = policy(m);
   assert.equal(got.rule, 'bleeding');
   assert.equal(got.option.id, 'bandage');

@@ -39,6 +39,10 @@ Needs.N = {
   CLEAR_HIT = 1.5,      -- tiles: close enough to swing, the reflex's own bite line (Stance.N.BITE)
   CLEAR_LEG = 600,      -- a leg of the walk still going after this many ticks is cut
   CLEAR_CHASE_R = 15,   -- a chaser outside the house counts as woken this close (REACH_CHASE_R in senses.mjs)
+  STASH_BOXES = 2,      -- containers one stash may fill
+  STASH_ROOM = 0.2,     -- share of the carry limit she sheds past the search line, so there is room to search
+  STASH_FOOD = 2,       -- hunger she keeps food for. A day is about 1, a guide number: 3 meals of about 0.3
+  STASH_TRIES = 2,      -- transfers of one item before it is left on her
 }
 
 -- ---------- pure choices ----------
@@ -227,6 +231,114 @@ function Needs.behindRank(ox, oy, fx, fy)
   return (ox * fx + oy * fy) / (ol * fl)
 end
 
+-- Pure. Which items STASH leaves on her, as a set of indexes: the weapon in hand and the best spare
+-- (the two best with empty hands), one gun with the ammo that fits it, and food for STASH_FOOD, what
+-- rots soonest first, since a stash is the place for what keeps.
+function Needs.stashKeeps(descs)
+  local keep, melee, gun, gunRounds = {}, {}, nil, -1
+  local heldMelee = false
+  local rounds = {}
+  for _, d in ipairs(descs) do
+    if d.ammo then rounds[d.ammo] = (rounds[d.ammo] or 0) + (tonumber(d.count) or 1) end
+  end
+  for i, d in ipairs(descs) do
+    if Core.isRealWeapon(d.weapon) and not d.broken then
+      if d.held then
+        keep[i], heldMelee = true, true
+      else
+        table.insert(melee, { i = i, score = tonumber(d.weapon.score) or Core.weaponScore(d.weapon) })
+      end
+    end
+    if type(d.gun) == "table" and not d.broken then
+      local n = d.held and 100000 or (tonumber(d.gun.loaded) or 0) + (rounds[d.gun.ammoKey] or 0)
+      if n > gunRounds then gun, gunRounds = i, n end
+    end
+  end
+  table.sort(melee, function(a, b) return a.score > b.score end)
+  for k = 1, math.min(#melee, heldMelee and 1 or 2) do keep[melee[k].i] = true end
+  if gun then
+    keep[gun] = true
+    local g = descs[gun].gun
+    for i, d in ipairs(descs) do
+      if (d.ammo and d.ammo == g.ammoKey) or (type(d.mag) == "table" and d.mag.key == g.magKey) or (d.box and d.box == g.boxKey) then keep[i] = true end
+    end
+  end
+  local foods = {}
+  for i, d in ipairs(descs) do
+    if d.edible or d.sealed then
+      table.insert(foods, { i = i, sealed = d.sealed and true or false, shelf = tonumber(d.shelf) or 99999, hunger = tonumber(d.hunger) or 0 })
+    end
+  end
+  table.sort(foods, function(a, b)
+    if a.sealed ~= b.sealed then return b.sealed end
+    if a.shelf ~= b.shelf then return a.shelf < b.shelf end
+    return a.i < b.i
+  end)
+  local kept = 0
+  for _, f in ipairs(foods) do
+    if kept >= Needs.N.STASH_FOOD then break end
+    keep[f.i] = true
+    -- A sealed can reads no hunger on some items. Count it as a small meal, not as nothing.
+    kept = kept + (f.hunger > 0 and f.hunger or 0.25)
+  end
+  return keep
+end
+
+-- Pure. How much she needs a described item on her: higher goes into the stash later, and nil means
+-- it never goes. The scale is DROP's (keep in Act.LOOT), with food on it, since a stash does not lose
+-- the food the way a floor does.
+function Needs.stashValue(d)
+  if type(d) ~= "table" or d.held or d.worn then return nil end
+  if d.container and not d.empty then return nil end
+  if (tonumber(d.waterL) or 0) > 0 or d.bandage or d.sheet or d.cloth then return nil end
+  -- A key opens a door she may need on the way back in. "Key" with a capital: not a turkey.
+  if string.find(tostring(d.type), "Key", 1, true) then return nil end
+  if d.container then return 5 end
+  if Core.isRealWeapon(d.weapon) then return 25 + math.min(tonumber(d.weapon.score) or Core.weaponScore(d.weapon), 100) / 10 end
+  local Act = LS.Act
+  for _, row in ipairs(Act.LOOT) do
+    if row.key ~= "weapon" and row.key ~= "bag" and Act.IS[row.key](d) then return row.keep end
+  end
+  return 0
+end
+
+-- Pure. descs: described items. over: the weight to shed. Returns { index } in the order they go,
+-- least needed first and the heaviest first among equals, and stops once enough has gone.
+function Needs.planStash(descs, over)
+  over = tonumber(over) or 0
+  local keep = Needs.stashKeeps(descs or {})
+  local cands = {}
+  for i, d in ipairs(descs or {}) do
+    local value, w = Needs.stashValue(d), tonumber(d.weight) or 0
+    if value ~= nil and not keep[i] and w > 0 then table.insert(cands, { i = i, value = value, w = w }) end
+  end
+  table.sort(cands, function(a, b)
+    if a.value ~= b.value then return a.value < b.value end
+    if a.w ~= b.w then return a.w > b.w end
+    return a.i < b.i
+  end)
+  local picks, shed = {}, 0
+  for _, c in ipairs(cands) do
+    if shed >= over then break end
+    table.insert(picks, c.i)
+    shed = shed + c.w
+  end
+  return picks, shed
+end
+
+-- Pure. How good a container is for a stash, 1 best, from the game's name for it. nil: not one for
+-- gear. A fridge, a stove or a bin is somewhere food rots, gear burns or nobody looks. A crate, a
+-- shelf and a wardrobe are what the guides mean.
+function Needs.stashRank(kind)
+  local s = string.lower(tostring(kind or ""))
+  for rank, words in ipairs({ { "crate", "storage" }, { "shelves", "shelf", "wardrobe", "dresser", "locker", "cabinet", "drawer" }, { "counter", "sidetable", "desk" } }) do
+    for _, w in ipairs(words) do
+      if string.find(s, w, 1, true) then return rank end
+    end
+  end
+  return nil
+end
+
 -- ---------- job engine ----------
 local function playerNum(p)
   local n = 0
@@ -315,7 +427,7 @@ function Needs.start(p, args, verb)
     LS.aim(job.seq, job.what)
     return
   end
-  job = { verb = verb, seq = args.seq, startTick = LS.tick, lastUpdate = LS.tick, lastActed = -99999,
+  job = { verb = verb, seq = args.seq, base = args.target, startTick = LS.tick, lastUpdate = LS.tick, lastActed = -99999,
     queuedCount = 0, busy = false }
   LS.needsJob = job
   LS.hudData.action = verb
@@ -1011,11 +1123,206 @@ function Needs.lockedOnRoute(p, route)
   return false
 end
 
+-- ---------- STASH engine ----------
+if LS.stashSpots == nil then LS.stashSpots = {} end   -- building id -> spots of the containers in use
+if LS.stashRooms == nil then LS.stashRooms = {} end   -- building id -> room keys holding a stash
+
+local function spotKey(sq, kind)
+  local key = ""
+  pcall(function() key = sq:getX() .. "," .. sq:getY() .. "," .. sq:getZ() .. "|" .. tostring(kind) end)
+  return key
+end
+
+-- Containers fit for a stash on her floor of the building, best first: the ones she already uses,
+-- then by Needs.stashRank, then nearest.
+function Needs.stashContainers(p, m)
+  local Act, out = LS.Act, {}
+  local pz = math.floor(p:getZ())
+  local spots = LS.stashSpots[m.id] or {}
+  for _, row in ipairs(Act.buildingRooms(m)) do
+    local room = nil
+    pcall(function() room = row.def:getIsoRoom() end)
+    if room and row.z == pz then
+      for _, c in ipairs(Act.roomContainers(room)) do
+        local kind = nil
+        pcall(function() kind = c.c:getType() end)
+        local rank = Needs.stashRank(kind)
+        if rank and not c.floor then
+          local key = spotKey(c.sq, kind)
+          table.insert(out, { c = c.c, sq = c.sq, key = key, room = row.key, rank = spots[key] and 0 or rank,
+            d = distTo(p, c.sq:getX() + 0.5, c.sq:getY() + 0.5, c.sq:getZ()) })
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.rank ~= b.rank then return a.rank < b.rank end
+    return a.d < b.d
+  end)
+  return out
+end
+
+-- What she carries as STASH reads it. A worn bag is worn whatever the item says about it, and a
+-- carried one only goes in once it is empty, or its contents would go with it unseen.
+local function stashFacts(p, skip)
+  local all, things = LS.Act.dropFacts(p)
+  local back = nil
+  pcall(function() back = p:getClothingItem_Back() end)
+  local descs, items = {}, {}
+  for i, it in ipairs(things) do
+    if not skip[it] then
+      local d = all[i]
+      if it == back then d.worn = true end
+      pcall(function() d.hunger = math.abs(it:getHungChange()) end)
+      if d.container then pcall(function() d.empty = it:getInventory():isEmpty() == true end) end
+      table.insert(descs, d)
+      table.insert(items, it)
+    end
+  end
+  return descs, items
+end
+
+local function stashEnd(p, job)
+  if job.count == 0 then return Needs.fail(job, "nothing to stash") end
+  local why = "stashed " .. job.count
+  if LS.Act.searchLeft(p) <= 0 then why = why .. " (still heavy)" end
+  Needs.done(job, why)
+end
+
+-- The container to use now, or nil with no more to use. With none in the building at all she falls
+-- back on the floor of the room she stands in.
+local function stashBox(p, job)
+  if job.box or job.floor then return job.box end
+  if not job.cands then
+    job.cands = Needs.stashContainers(p, job.memo)
+    if #job.cands == 0 then
+      job.floor = true
+      return nil
+    end
+  end
+  if (job.boxes or 0) >= Needs.N.STASH_BOXES then return nil end
+  local box = table.remove(job.cands, 1)
+  if box then
+    job.box = box
+    job.boxes = (job.boxes or 0) + 1
+  end
+  return box
+end
+
+local function noteStashSpot(p, job, it)
+  pcall(function() it:getModData().lsStash = job.memo.id end)
+  local rooms = LS.stashRooms[job.memo.id] or {}
+  LS.stashRooms[job.memo.id] = rooms
+  if job.box then
+    rooms[job.box.room] = true
+    local spots = LS.stashSpots[job.memo.id] or {}
+    LS.stashSpots[job.memo.id] = spots
+    spots[job.box.key] = true
+  else
+    pcall(function() rooms[LS.Act.roomKey(p:getSquare():getRoom():getRoomDef())] = true end)
+  end
+end
+
+-- Whether the last item left her. One that did not, twice, stays on her: the game will not have it.
+-- A full box is the likely reason, so she moves on to the next one first.
+local function stashCheck(p, job)
+  local it = job.pending
+  if not it then return end
+  job.pending = nil
+  for _, x in ipairs(Sense.carriedItems(p)) do
+    if x == it then
+      job.tries[it] = (job.tries[it] or 0) + 1
+      if job.tries[it] >= Needs.N.STASH_TRIES then
+        job.skip[it] = true
+        pcall(function() it:getModData().lsStash = nil end)
+      end
+      return
+    end
+  end
+  job.count = job.count + 1
+end
+
 -- ---------- skills ----------
 -- Each is function(p, job). It reads the world, then either queues one thing (Needs.queued),
 -- finishes the job (Needs.done / Needs.fail), or returns to be stepped again.
 Needs.skills = Needs.skills or {}
 local skills = Needs.skills
+
+-- Put what she does not need on her into a container in her base, one item a step, reading the
+-- weight again each time because a bag softens what is in it. It sheds past the search line by
+-- STASH_ROOM: stopping on the line leaves her a few hundred grams, and a SEARCH with that much room
+-- takes nothing and marks every room done. Her base comes with the order, and the mod has no other
+-- idea which building that is.
+skills.STASH = function(p, job)
+  local here = nil
+  pcall(function() here = p:getSquare() end)
+  if not job.building then
+    local b, m = Sense.currentBuilding(p)
+    if not b or not m or job.base == nil or job.base == "" or m.id ~= job.base then return Needs.fail(job, "not at base") end
+    job.building, job.memo = b, m
+    job.count, job.tries, job.skip = 0, {}, {}
+    aim(job, m.id)
+    think(job, "Home. Putting the spare gear away.")
+  end
+  local stillIn = false
+  pcall(function() stillIn = here:getBuilding() == job.building end)
+  if not stillIn then return Needs.fail(job, "not at base") end
+  stashCheck(p, job)
+  local Act = LS.Act
+  local max = 0
+  pcall(function() max = p:getMaxWeight() end)
+  local over = Needs.N.STASH_ROOM * max - Act.searchLeft(p)
+  if over <= 0 then return stashEnd(p, job) end
+  local descs, items = stashFacts(p, job.skip)
+  local picks = Needs.planStash(descs, over)
+  if #picks == 0 then return stashEnd(p, job) end
+  local it = items[picks[1]]
+  local box = stashBox(p, job)
+  if not box and not job.floor then return stashEnd(p, job) end
+  if box then
+    local near = false
+    pcall(function() near = LS.Move.distTo(p, box.sq:getX(), box.sq:getY()) <= 1.6 and box.sq:getZ() == math.floor(p:getZ()) and Act.canReach(p, box.sq) end)
+    if not near then
+      local dest = LS.Move.adjacent(p, box.sq)
+      local leg, partWay = nil, false
+      if dest then leg, partWay = LS.Move.insideLeg(p, dest, job.building) end
+      if partWay then box.legs = (box.legs or 0) + 1 else box.walks = (box.walks or 0) + 1 end
+      if not leg or (box.walks or 0) > 2 or (box.legs or 0) > Needs.N.LEGS_MAX then
+        -- It cannot be reached, so it does not count as one of the two.
+        job.box, job.boxes = nil, job.boxes - 1
+        return
+      end
+      ISTimedActionQueue.clear(p)
+      ISTimedActionQueue.add(ISWalkToTimedAction:new(p, leg))
+      if not Needs.queued(p, job) then
+        job.box, job.boxes = nil, job.boxes - 1
+      end
+      return
+    end
+    -- The game rolls a container's loot the first time it is opened. Better now than on top of the stash.
+    Act.explore(box.c)
+    local room = false
+    pcall(function() room = box.c:hasRoomFor(p, it) == true end)
+    if not room then
+      job.box = nil
+      return
+    end
+    local src = nil
+    pcall(function() src = it:getContainer() end)
+    if not src then
+      job.skip[it] = true
+      return
+    end
+    ISTimedActionQueue.clear(p)
+    ISTimedActionQueue.add(ISInventoryTransferAction:new(p, it, src, box.c, 10))
+  else
+    ISTimedActionQueue.clear(p)
+    ISInventoryPaneContextMenu.dropItem(it, playerNum(p))
+  end
+  noteStashSpot(p, job, it)
+  job.pending = it
+  if not Needs.queued(p, job) then job.pending = nil; job.skip[it] = true end
+end
 
 skills.DRINK = function(p, job)
   if job.drank then return Needs.done(job, job.drank) end
@@ -1366,6 +1673,6 @@ skills.REST = function(p, job)
 end
 
 -- ---------- verbs ----------
-for _, verb in ipairs({ "DRINK", "FILL", "EAT", "SLEEP", "BANDAGE", "WEARBAG", "SECURE", "REST", "CLEAR" }) do
+for _, verb in ipairs({ "DRINK", "FILL", "EAT", "SLEEP", "BANDAGE", "WEARBAG", "SECURE", "REST", "CLEAR", "STASH" }) do
   LS.verbs[verb] = function(p, args) Needs.start(p, args, verb) end
 end
