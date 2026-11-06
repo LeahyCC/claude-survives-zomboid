@@ -105,13 +105,21 @@ test('endurance under 0.3 with one chasing: back off', () => {
 });
 
 test('every gate backs off, and a cornered gate shoves', () => {
-  for (const [field, value, why] of [['panic', 3, 'panic'], ['heavy', 2, 'heavy'], ['tired', 3, 'tired'], ['bleeding', 1, 'bleeding'], ['hp', 45, 'hurt']]) {
+  for (const [field, value, why] of [['panic', 3, 'panic'], ['heavy', 2, 'heavy'], ['bleeding', 1, 'bleeding'], ['hp', 45, 'hurt']]) {
     const a = decide({ [field]: value, zombies: [zed(1.4)] });
     assert.equal(a.kind, 'backoff', field);
     assert.equal(a.why, why);
   }
   assert.equal(decide({ panic: 4, zombies: [zed(1.0)] }).kind, 'shove');
   assert.equal(decide({ panic: 2, heavy: 1, tired: 2, endurance: 0.31, zombies: [zed(1.4)] }).kind, 'swing');
+});
+
+test('tired and armed with one zombie: she fights it; with two she still backs off', () => {
+  assert.equal(decide({ tired: 3, zombies: [zed(1.4)] }).kind, 'swing');
+  const two = decide({ tired: 3, zombies: [zed(1.4), west(3)] });
+  assert.equal(two.kind, 'backoff');
+  assert.equal(two.why, 'tired');
+  assert.notEqual(decide({ tired: 3, armed: false, zombies: [zed(1.4)] }).kind, 'swing', 'bare hands do not fight it');
 });
 
 // One on her used to be a flee at hp under 30. Turning away from one in reach gets her bitten,

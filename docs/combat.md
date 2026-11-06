@@ -78,7 +78,7 @@ the next look, within 4 s of a crowd shove, one still standing
 
 "On her" is within 1.2 tiles. Turning to walk away there gets her bitten, so she swings or shoves. This now comes before the pack and hp rules, which used to turn her away from one in reach.
 
-**Gates.** She must not start a fight when any of these hold, in this order: endurance under 0.3 (`winded`), panic moodle 3 or more (`panic`), heavy load moodle 2 or more (`heavy`), tired moodle 3 or more (`tired`), a part bleeding (`bleeding`), hp under 50 (`hurt`). The `why` of the decision names the first one.
+**Gates.** She must not start a fight when any of these hold, in this order: endurance under 0.3 (`winded`), panic moodle 3 or more (`panic`), heavy load moodle 2 or more (`heavy`), tired moodle 3 or more (`tired`), a part bleeding (`bleeding`), hp under 50 (`hurt`). The `why` of the decision names the first one. Tired does not hold against one standing zombie when she is armed: running from it while exhausted never ended (35 minutes of window climbs in the 2026-11-06 soak), and the chase kept her from the sleep that cures it.
 
 **How many she takes on.** A weapon scoring under 30 takes on one standing chaser within 7 tiles. 30 or more (a crowbar, a bat, an axe) takes on two. With no score in the snapshot an armed hand counts as 30, which is how the old rules behaved.
 
