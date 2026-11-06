@@ -101,7 +101,8 @@ export function inside(p) {
 // search nor drop, and waited.
 export function heavy(p) {
   const max = num(p && p.maxWeight);
-  const share = p && typeof p.bag === 'string' && p.bag !== 'none' && p.bag !== '' ? 0.85 : 0.6;
+  // The mod's search line (Act.WEIGHT_CAP, Act.WEIGHT_CAP_NO_BAG), 85% with a bag or without.
+  const share = 0.85;
   return moodle(p, 'heavy') >= 1 || (max > 0 && num(p.weight) >= share * max);
 }
 

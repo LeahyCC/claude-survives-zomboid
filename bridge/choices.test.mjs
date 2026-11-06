@@ -473,11 +473,11 @@ test('a dry drink keeps DRINK off the menu for 5 minutes', async () => {
   assert.equal(blockedWhy(mem, 'DRINK', 6 * 60_000), '');
 });
 
-test('heavy matches the mod: 60% of the limit with no bag, 85% with one', async () => {
+test('heavy matches the mod: 85% of the limit, with a bag or without', async () => {
   const { heavy } = await import('./senses.mjs');
   const p = (weight, bag) => ({ weight, maxWeight: 9, bag, moodle: {} });
-  assert.equal(heavy(p(7.3, 'none')), true, 'the soak run: 7.3 of 9 kg, no bag');
-  assert.equal(heavy(p(5.0, 'none')), false);
+  assert.equal(heavy(p(6.0, 'none')), false, 'the 2026-11-06 run: 6 of 9 kg of water, bat and bandages is not full');
+  assert.equal(heavy(p(7.8, 'none')), true);
   assert.equal(heavy(p(7.3, 'School Bag')), false);
   assert.equal(heavy(p(7.8, 'School Bag')), true);
 });

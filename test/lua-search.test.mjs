@@ -191,12 +191,15 @@ test('what she dropped herself is not picked up again from the floor', () => {
   assert.ok(taken(result(lua).why).includes('Bread'), 'the rest of the room is still searched');
 });
 
-test('with no bag SEARCH stops well short of overloaded, and with one it goes further', () => {
-  // maxWeight 8: no bag stops at 60% (4.8), a bag at 85% (6.8).
+test('SEARCH stops at 85% of the limit, with a bag or without', () => {
+  // maxWeight 8: the line is 6.8. 5 kg with no bag used to be "full" at the old 60% line.
   const none = world('P.weight = 5');
   order(none, '1|SEARCH|0|0|||');
-  assert.equal(result(none).status, 'failed');
-  assert.equal(result(none).why, 'full');
+  assert.equal(result(none).status, 'running');
+  const full = world('P.weight = 7');
+  order(full, '1|SEARCH|0|0|||');
+  assert.equal(result(full).status, 'failed');
+  assert.equal(result(full).why, 'full');
   const bag = world('P.weight = 5; P.back = __makeItem({ name = "School Bag", items = {}, back = true, capacity = 15 })');
   order(bag, '1|SEARCH|0|0|||');
   assert.equal(result(bag).status, 'running');

@@ -233,7 +233,7 @@ test('SEARCH: all rooms done goes to LEAVE, "nothing left" does too', () => {
 });
 
 test('SEARCH: too heavy in her base goes to the stash, then the drop rule, and with nothing to shed she leaves', () => {
-  const heavy = { weight: 15, bag: 'none' };
+  const heavy = { weight: 18, bag: 'none' };
   const m = searching();
   look(m, heavy);
   // The one house she has been in is her base, so the load goes in the stash here.

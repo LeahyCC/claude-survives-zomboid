@@ -102,7 +102,7 @@ No arguments. Searches the building the survivor stands in.
 - When the search took a weapon, the skill takes it up before it reports (see EQUIP below), unless the weapon in her hand is one Colin chose. It queues the equip, waits for it, and tries once more if the reflex cut it off. The `why` text stays `took 4: ...` because the bridge reads it. The percept's `weapon` and `weaponScore` show the result. A gun is never taken up.
 - Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them. The percept shows how many are left as `inBldg.roomsLeft` (`Act.roomsLeft`).
 - A container she could not reach (no free square beside it, or the walk failed) is skipped. The room is then not marked finished, so the next SEARCH tries it once more (`Act.ROOM_TRIES`, 2), and after that it counts as done so one blocked cupboard cannot keep a building open for ever.
-- Done when every room is searched or the weight reaches the search line: 85% of `getMaxWeight()` with a back bag worn, 60% with none (`Act.searchLeft`). `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
+- Done when every room is searched or the weight reaches the search line: 85% of `getMaxWeight()`, with a back bag or without (`Act.searchLeft`). `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
 - Failed: `not inside` (at the start, or carried out of the house, above), `nothing left` (every room was already searched), `full` (at the search line before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
 
 A room that is not loaded is left for a later SEARCH.
@@ -164,7 +164,7 @@ a gun in hand                          ->  no lock: the reflex holsters it, even
 
 ## DROP
 
-No arguments. Sheds weight until he is under the same line SEARCH stops at (`Act.searchLeft`: 85% of `getMaxWeight()` with a back bag, 60% with none). It used to shed only to 85%, so with no bag she could sit between the two lines, too full to search and not heavy enough to drop.
+No arguments. Sheds weight until he is under the same line SEARCH stops at (`Act.searchLeft`: 85% of `getMaxWeight()`, with a back bag or without). The no-bag line was 60% until 2026-11-06: her water, bat and bandages alone passed it, so every house was "full" before she found a bag.
 
 - Takes the least valuable items first, the heaviest first among equals. Junk goes before anything useful: a pen, spare clothes, toys, weights, food he cannot eat.
 - After junk come tools, then a spare weapon, then sealed food, then empty bottles. Guns and ammo go last of all. DROP has its own scale (`keep` in `Act.LOOT`), not the loot value.
@@ -280,7 +280,7 @@ How long food keeps is read from the item: `getOffAgeMax` (the days until it is 
 
 **Guns.** A pistol is taken whether or not ammo is known, since ammo is often in another room. With ammo it ranks above medicine, without it just under food that keeps. When a gun and its rounds lie in one container, the gun makes the rounds worth taking in the same stop. Rounds for a gun she does not have are left.
 
-**Weight.** The weight budget is 85% of the carry limit with a back bag worn and 60% with none, so with no bag she stops well before she is overloaded (`Act.searchLeft`). Inside the budget a pick has to be worth its weight (`Core.lootWorth`): the bar is value per kilo, and it rises as the budget drains. An empty pack takes anything with a value. At 25% of the room left the bar is 34 per kilo: a litre of water (68) and a bandage pass, a 3 kg saw (15) stays.
+**Weight.** The weight budget is 85% of the carry limit, with a back bag or without (`Act.searchLeft`). The game has no cost under the limit, so a lower line with no bag only kept her from finding one. Inside the budget a pick has to be worth its weight (`Core.lootWorth`): the bar is value per kilo, and it rises as the budget drains. An empty pack takes anything with a value. At 25% of the room left the bar is 34 per kilo: a litre of water (68) and a bandage pass, a 3 kg saw (15) stays.
 
 The class comes from the item script's `Categories`, read with `Item:containsWeaponCategory(WeaponCategory.X)` the way `XpUpdate.lua` does.
 

@@ -618,7 +618,10 @@ Act.UNSAFE_R = 4            -- a living zombie this close to the target on resum
 Act.LOOT_ZOMBIE_R = 8
 Act.ROOM_TRIES = 2            -- a room with a container she could not reach is looked at this many times
 Act.WEIGHT_CAP = 0.85         -- SEARCH stops and DROP sheds down to this share of the carry limit with a bag
-Act.WEIGHT_CAP_NO_BAG = 0.6   -- the same with no bag: every kilo is on her back
+-- The same with no bag. It was 0.6, and with water, a bat and bandages (6 of 9 kg, all on the keep
+-- list) every house was "full" before she could find the bag that would fix it (2026-11-06). The
+-- game has no cost under the carry limit, so there is no reason to stop sooner without a bag.
+Act.WEIGHT_CAP_NO_BAG = 0.85
 Act.LOOT_RADIUS = 10
 
 function Act.startSkill(p, verb, args, def)
@@ -1026,7 +1029,7 @@ function Act.weightLeft(p, share)
   return cap - now
 end
 
--- The weight SEARCH and LOOT may still pick up. With no bag it stops well short of overloaded.
+-- The weight SEARCH and LOOT may still pick up.
 function Act.searchLeft(p)
   local bag = false
   pcall(function() bag = p:getClothingItem_Back() ~= nil end)
