@@ -244,3 +244,21 @@ test('the shove memory runs out', () => {
   h.run('LocalSurvivor.tick = 110');
   assert.equal(h.run('return (LocalSurvivor.Reflex.snapshot(__players[0])).crowdShoved'), true);
 });
+
+// Live 2026-11-06: one in the next room, behind a wall, not after her. The reflex stood in FIGHT
+// at it and SECURE never finished.
+test('an unaware zombie behind a wall is left out of the reflex; a chaser behind one is not', () => {
+  const h = body();
+  const count = () => h.run('return #(LocalSurvivor.Reflex.snapshot(__players[0])).zombies');
+  addZombie(h, 8.8, 10);
+  h.run('__zombies[1].getTarget = function() return nil end');
+  assert.equal(count(), 1, 'no wall: it counts');
+  h.run('__los["8,10"] = "Blocked"');
+  assert.equal(count(), 0, 'behind a wall and unaware: left out');
+  h.run('__los["8,10"] = "ClearThroughClosedDoor"');
+  assert.equal(count(), 0, 'a closed door is a wall too');
+  h.run('__los["8,10"] = "ClearThroughWindow"');
+  assert.equal(count(), 1, 'glass is not');
+  h.run('__los["8,10"] = "Blocked"; __zombies[1].getTarget = function() return __players[0] end');
+  assert.equal(count(), 1, 'a chaser behind a wall still counts');
+});

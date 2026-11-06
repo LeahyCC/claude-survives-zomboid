@@ -134,7 +134,7 @@ So BREAK asks for a sprint (`setSprinting(true)` each time it acts, false when t
 
 | field | what it is |
 | --- | --- |
-| `zombies` | living zombies within 22 tiles on her floor: `{ d, dx, dy, down, crawl, chase, sees, across, outside }` |
+| `zombies` | living zombies within 22 tiles on her floor, less any that is not chasing her and is behind a wall or closed door within 6 tiles (`WALL_R`, `Sense.wallBetween`; one in the next room once held her in FIGHT for 5 minutes): `{ d, dx, dy, down, crawl, chase, sees, across, outside }` |
 | `armed` | holding a real melee weapon (a pen, fork or anything else under the weapon score floor counts as bare hands) |
 | `weaponScore` | `Core.weaponScore` of the weapon in hand, read again every 300 ticks or when the item changes |
 | `reach` | weapon range, the same sum the game uses (`getMaxRange * getRangeMod`) |

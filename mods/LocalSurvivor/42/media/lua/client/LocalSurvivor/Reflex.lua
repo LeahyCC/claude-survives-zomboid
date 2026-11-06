@@ -50,6 +50,7 @@ Reflex.CLIMB_ANIM = 120      -- the climb happens in the animation after its act
 Reflex.CLIMB_GIVEUP = 300    -- a climb not started by then (the walk failed, the game refused) is dropped
 Reflex.CLIMB_AGAIN = 600     -- the same fence or window is not tried again for this long
 Reflex.WEAPON_TICKS = 300    -- the weapon score is read again this often
+Reflex.WALL_R = 6            -- tiles: an unaware zombie this close is checked for a wall between (Sense.wallBetween)
 Reflex.HANDBACK_TICKS = 1200 -- a new walking order with a chaser in range is the brain's way out: let it run this long
 -- The orders that walk her somewhere. A WAIT or a posture change leaves the reflex in charge.
 Reflex.HANDBACK_VERBS = { GOTO = true, ENTER = true, SECURE = true, MOVE = true }
@@ -422,10 +423,18 @@ function Reflex.snapshot(p)
           if not e.down and d <= N.BARRIER_R then
             e.across = Reflex.barrierBetween(cx, cy, math.floor(z:getX()), math.floor(z:getY()), cz)
           end
-          table.insert(snap.zombies, e)
-          table.insert(objs, z)
-          if e.chase and e.outside and d <= N.HOLD_R and (not chaserOutside or d < chaserOutside.d) then
-            chaserOutside = { d = d, x = z:getX(), y = z:getY() }
+          -- One that has not noticed her, on the far side of a wall or a closed door, cannot reach
+          -- her yet. Without this the reflex stood in FIGHT at one in the next room and kept
+          -- SECURE from ever finishing (live 2026-11-06, five minutes). A chaser stays: it will
+          -- come round, and the door hold is for that.
+          local walled = false
+          if not e.chase and not e.down and d <= Reflex.WALL_R then walled = LS.Sense.wallBetween(p, z) end
+          if not walled then
+            table.insert(snap.zombies, e)
+            table.insert(objs, z)
+            if e.chase and e.outside and d <= N.HOLD_R and (not chaserOutside or d < chaserOutside.d) then
+              chaserOutside = { d = d, x = z:getX(), y = z:getY() }
+            end
           end
         end
       end
