@@ -232,14 +232,20 @@ test('SEARCH: all rooms done goes to LEAVE, "nothing left" does too', () => {
   assert.equal(stage(m), 'LEAVE');
 });
 
-test('SEARCH: too heavy leaves the turn to the drop rule, and with nothing to drop she leaves', () => {
+test('SEARCH: too heavy in her base goes to the stash, then the drop rule, and with nothing to shed she leaves', () => {
   const heavy = { weight: 15, bag: 'none' };
   const m = searching();
   look(m, heavy);
+  // The one house she has been in is her base, so the load goes in the stash here.
+  const stash = policy(m);
+  assert.equal(stash.option.verb, 'STASH');
+  const seq = send(m, stash.option);
+  failed(m, seq, 'STASH', 'nothing to stash');
+  assert.equal(stage(m), 'SEARCH');
   const drop = policy(m);
   assert.equal(drop.rule, 'overloaded');
-  const seq = send(m, drop.option);
-  failed(m, seq, 'DROP', 'nothing to drop');
+  const seq2 = send(m, drop.option);
+  failed(m, seq2, 'DROP', 'nothing to drop');
   assert.equal(stage(m), 'LEAVE');
 });
 

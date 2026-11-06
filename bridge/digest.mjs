@@ -79,6 +79,18 @@ function lastOrder(p) {
   return `Last order: ${r.verb} ${r.status}${why}.`;
 }
 
+function baseLine(p, b) {
+  if (!b) return '';
+  const dx = num(b.x) - num(p.x);
+  const dy = num(b.y) - num(p.y);
+  let where = `a ${b.kind}`;
+  if (p.inBldg && !p.outside && String(p.inBldg.id) === b.id) where = 'this building';
+  else if (b.x !== null && b.y !== null) where = `${b.kind} ${tiles(Math.hypot(dx, dy))} ${compass(dx, dy)}`;
+  const stash = b.stashed ? `, ${count(b.stashed, 'thing')} stashed there` : ', nothing stashed yet';
+  const old = b.old ? `, ${b.old} more at an old base` : '';
+  return `Base: ${where}${stash}${old}.`;
+}
+
 // stats is memoryStats(mem): counts only, so this stays a formatter.
 export function digest(p, stats) {
   if (!p) return 'No senses yet.';
@@ -86,5 +98,6 @@ export function digest(p, stats) {
   if (stats && stats.buildings) {
     lines.push(`Map: ${count(stats.buildings, 'building')} known, ${stats.visited} visited, ${stats.searched} searched.`);
   }
+  if (stats) lines.push(baseLine(p, stats.base));
   return lines.filter(Boolean).join('\n');
 }

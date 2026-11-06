@@ -88,7 +88,8 @@ function ago(ms) {
 
 const KEY_WORDS = {
   AWAY: 'walking away', EXPLORE: 'looking for new houses', HOME: 'the walk home', SEARCH: 'searching this building',
-  SECURE: 'closing up this building', WEARBAG: 'putting on the bag',
+  SECURE: 'closing up this building', WEARBAG: 'putting on the bag', HAUL: 'the walk home with the load', STASH: 'the stash',
+  OLDBASE: 'the walk to the old base',
 };
 
 // Orders map memory is keeping off the menu after a failure, newest first. A walk into a building is
@@ -122,6 +123,7 @@ export function blockedLines(mem, p, now, max = MAX_BLOCKED) {
 const VERB_WORDS = {
   ENTER: 'Walking into a building', GOTO: 'Walking', SEARCH: 'Searching', SECURE: 'Closing up', DRINK: 'Drinking',
   EAT: 'Eating', SLEEP: 'Sleeping', BANDAGE: 'Bandaging', DROP: 'Dropping things', FILL: 'Filling bottles',
+  STASH: 'Stashing',
 };
 
 // One plain line when the last orders go round in a circle, or '' when they do not.

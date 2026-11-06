@@ -6,7 +6,7 @@
 import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
 import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor, heldGun } from './senses.mjs';
-import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
+import { blockedWhy, building, securedThisVisit, safehouseScore, baseBuilding, baseTag, MAX_BASE_WALK } from './memory.mjs';
 import { openJob, jobThreat, jobMenu, leaveOption, clearOption, nextHouse, doneWith, crowded } from './housejob.mjs';
 import { crowdFor, isCrowded, areaCrowded, crowdText } from './crowd.mjs';
 
@@ -53,13 +53,15 @@ function kindOf(b, seen) {
   return 'building';
 }
 
-function buildingTags(b, planned, crowd = '') {
+function buildingTags(b, planned, crowd = '', baseText = '') {
   const tags = [];
   if (planned) tags.push('your planned home');
+  if (baseText) tags.push(baseText);
   if (!b || !b.visited) tags.push('not visited');
   else if (b.searched) tags.push('searched');
   else if (b.partly) tags.push('partly searched');
   else tags.push('visited, not searched');
+  if (b && b.fullAt != null && !b.searched) tags.push('you left it full, more to take');
   if (b && safehouseScore(b) >= 5) tags.push('safe house');
   else {
     if (b && b.water) tags.push('has water');
@@ -71,7 +73,9 @@ function buildingTags(b, planned, crowd = '') {
   return tags.join(', ');
 }
 
-const stageOf = (c, hours) => (doneWith(c.mem, hours) ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
+// A house she left because her arms were full is the first place to go once they are empty.
+const leftFull = (b) => !!b && b.fullAt != null && !b.searched;
+const stageOf = (c, hours) => (leftFull(c.mem) ? -1 : doneWith(c.mem, hours) ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
 
 // Unsearched first, nearest first, and a place where she saw a crowd after the rest of its kind. A
 // safe house is pulled to the front when she needs one, and the planner's home building ahead of
@@ -114,7 +118,7 @@ function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor)
   const hours = num(p.hoursAlive);
   return rankBuildings(cands, wantsHome, homeId, poor, hours).slice(0, MAX_BUILDINGS).map((c, i) => {
     const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
-    const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId, crowdText(c.crowd));
+    const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId, crowdText(c.crowd), baseTag(mem, c.seen.id));
     // Said only of a house not yet searched, the place to look. A shop or a searched house is not sold as one.
     const hunt = poor && stageOf(c, hours) < 2 && kindOf(c.mem, c.seen) === 'house' ? ', no real weapon yet, look here' : '';
     return {
@@ -149,6 +153,59 @@ function homeOption(p, mem, now, avoid, plannedId, shelters) {
     id: 'home', verb: 'GOTO', a: b.door.x, b: b.door.y, target: '', key,
     label: `walk back toward ${kindOf(b, null)} ${tiles(d)} ${compass(tx, ty)}, ${buildingTags(b, true)}`,
   };
+}
+
+// How to get to a building she knows: ENTER when the percept lists it, else a walk to its door, and
+// ENTER takes over once it is listed. Null when the way is not clear or the place is crowded.
+function wayTo(p, mem, now, avoid, b, walkKey) {
+  const listed = (Array.isArray(p.buildings) ? p.buildings : []).some((s) => s && String(s.id) === b.id);
+  if (listed) {
+    const c = buildingCandidates(p, mem, now, avoid).find((x) => String(x.seen.id) === b.id);
+    return c && !isCrowded(c.crowd) ? { verb: 'ENTER', a: 0, b: 0, target: b.id, key: c.key, d: c.d, tx: c.tx, ty: c.ty } : null;
+  }
+  if (blockedWhy(mem, walkKey, now) || !b.door || !Number.isFinite(b.door.x) || !Number.isFinite(b.door.y)) return null;
+  const tx = b.door.x - num(p.x);
+  const ty = b.door.y - num(p.y);
+  const d = Math.hypot(tx, ty);
+  if (d > MAX_BASE_WALK || !pathClear(tx, ty, avoid) || isCrowded(crowdFor(mem, b.id, b.door.x, b.door.y))) return null;
+  return { verb: 'GOTO', a: b.door.x, b: b.door.y, target: '', key: walkKey, d, tx, ty };
+}
+
+// Too full to search, and a base to take it to. Inside the base that is STASH. Anywhere else it is
+// the walk home. Soak 3 had DROP failing "nothing to drop" 5 of 13 times, because what she carried
+// was all worth keeping. Not with a zombie after her: the reflex owns that, and DROP's own gate decides.
+function loadOption(p, mem, now, avoid) {
+  const base = baseBuilding(mem);
+  if (!base || (!heavy(p) && !mem.haul) || blockedWhy(mem, `STASH:${base.id}`, now)) return null;
+  const zs = zombies(p);
+  if (num(p.zChasing) > 0 || zs.some((z) => z.chase) || num(p.hp, 100) < DROP_MIN_HP) return null;
+  const load = num(p.maxWeight) > 0 ? ` (carrying ${num(p.weight).toFixed(1)} of ${num(p.maxWeight)})` : '';
+  if (inside(p) && String(p.inBldg.id) === base.id) {
+    if (zs.some((z) => reaches(z, SEARCH_ZOMBIE_R))) return null;
+    return { prio: 5.4, id: 'stash', verb: 'STASH', a: 0, b: 0, target: base.id, key: `STASH:${base.id}`,
+      label: `put what you do not need in the stash here${load}` };
+  }
+  // A walk at night with her arms full is how a run ends. It waits for morning.
+  if (isNight(p) && inside(p)) return null;
+  const way = wayTo(p, mem, now, avoid, base, `HAUL:${base.id}`);
+  if (!way) return null;
+  const { d, tx, ty, ...order } = way;
+  return { prio: 2.4, id: 'haul', ...order, label: `take the load home: walk ${tiles(d)} ${compass(tx, ty)} to your base and stash it${load}` };
+}
+
+// The nearest old base she could go back to for what she left there. The stash stays on the map when
+// the base moves. Only by day with room to carry it, and low on the menu: it is the model's call.
+function oldBaseOption(p, mem, now, avoid) {
+  if (heavy(p) || isNight(p) || !mem.base) return null;
+  const here = inside(p) ? String(p.inBldg.id) : null;
+  const rows = Object.entries(mem.stashes || {})
+    .filter(([id, s]) => s && s.n > 0 && id !== here && id !== mem.base.id && building(mem, id))
+    .map(([id, s]) => ({ n: s.n, way: wayTo(p, mem, now, avoid, building(mem, id), `OLDBASE:${id}`) }))
+    .filter((r) => r.way)
+    .sort((x, y) => x.way.d - y.way.d);
+  if (!rows.length) return null;
+  const { d, tx, ty, ...order } = rows[0].way;
+  return { prio: 9.6, id: 'oldbase', ...order, label: `go back to your old base ${tiles(d)} ${compass(tx, ty)}, ${count(rows[0].n, 'thing')} stashed there` };
 }
 
 // A GOTO a fixed length away in the first heading that keeps clear of idle zombies.
@@ -239,21 +296,27 @@ function needOptions(p, mem, now) {
   // roomsLeft is the body's count of rooms SEARCH has not finished. Only a real number counts:
   // an older mod sends none, and then the map memory alone decides.
   const left = here && typeof p.inBldg.roomsLeft === 'number' && Number.isFinite(p.inBldg.roomsLeft) ? Math.max(0, Math.floor(p.inBldg.roomsLeft)) : null;
+  // An old base: she left things here and they are hers to take again, searched or not. The mod
+  // opens the stash room up again when it gets a SEARCH here (Act.SKILL.SEARCH).
+  const oldStash = here && mem.base && mem.base.id !== here && num(mem.stashes && mem.stashes[here] && mem.stashes[here].n);
   // Every reason SEARCH is off the menu, so a stuck run can be read from the log afterwards.
   const noSearch = [];
-  if (here && left !== 0) {
-    if (bInfo && bInfo.searched) noSearch.push('already searched');
+  if (here && (left !== 0 || oldStash)) {
+    if (bInfo && bInfo.searched && !oldStash) noSearch.push('already searched');
     if (heavy(p)) noSearch.push('too heavy');
     const blocker = zs.filter((z) => reaches(z, SEARCH_ZOMBIE_R)).sort((x, y) => x.d - y.d)[0];
     if (blocker) noSearch.push(`zombie ${blocker.chase ? 'chasing' : blocker.inside ? 'in the building' : 'close, no wall'} ${tiles(blocker.d)}`);
     if (!noSearch.length && blockedWhy(mem, `SEARCH:${here}`, now)) noSearch.push('retry timer after a fail');
   }
-  if (here && left !== 0 && !noSearch.length) {
+  if (here && (left !== 0 || oldStash) && !noSearch.length) {
     const rooms = num(p.inBldg.rooms);
     const started = (bInfo && bInfo.partly) || (left !== null && rooms > left);
     const state = started ? 'partly searched' : 'not searched yet';
     const roomText = left !== null ? `${count(left, 'room')} left, ` : rooms > 0 ? `${count(rooms, 'room')}, ` : '';
-    add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})${weaponPoor(withoutGun(p)) ? ', no real weapon yet: kitchen and garage first' : ''}` });
+    const label = oldStash ? `search this building, your old base, and take back what is useful (${count(oldStash, 'thing')} stashed here)`
+      : `search this building for supplies (${roomText}${state})${weaponPoor(withoutGun(p)) ? ', no real weapon yet: kitchen and garage first' : ''}`;
+    // The target is the base, so the search leaves her own stash where it is (Act.ownStash).
+    add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, target: mem.base ? mem.base.id : '', label });
   }
   if (noSearch.length) searchLog(`no SEARCH, ${noSearch.join(', ')} (${left === null ? 'rooms left unknown' : `${count(left, 'room')} left`})`);
   const bag = carriedBag(p);
@@ -288,6 +351,15 @@ export function buildOptions(p, mem, ctx = {}) {
   const avoid = zombies(p).filter((z) => !z.down && !z.crawl && z.d <= AVOID_R);
   const chasers = avoid.filter((z) => z.chase);
   let out = needOptions(p, mem, now);
+  const load = loadOption(p, mem, now, avoid);
+  // With somewhere to take it, she does not throw it away. DROP stays for no base, or a base she
+  // cannot get to now. Waiting indoors for morning with a base to go to is not a reason to drop either.
+  const base = baseBuilding(mem);
+  const morning = base && isNight(p) && inside(p) && String(p.inBldg.id) !== base.id && !blockedWhy(mem, `STASH:${base.id}`, now);
+  if (load || morning) out = out.filter((o) => o.id !== 'drop');
+  if (load) out.push(load);
+  const oldBase = oldBaseOption(p, mem, now, avoid);
+  if (oldBase) out.push(oldBase);
   const job = openJob(mem);
   const heldByJob = job && !jobThreat(p);
   const wantsHome = isNight(p) || num(p.fatigue) >= 0.6 || panic01(p) >= 0.3;
@@ -298,10 +370,12 @@ export function buildOptions(p, mem, ctx = {}) {
   const homeId = wantsHome || dusk ? plannedId : '';
   const bounce = bouncing(mem);
   const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(withoutGun(p)))
-    .filter((o) => !bounce.has(o.key) || chasers.length > 0 || (wantsHome && o.target === plannedId));
+    .filter((o) => !bounce.has(o.key) || chasers.length > 0 || (wantsHome && o.target === plannedId))
+    // The same house under two names is a wasted line on the menu.
+    .filter((o) => !(o.target && ((load && load.target === o.target) || (oldBase && oldBase.target === o.target))));
   for (const o of shelters) out.push({ prio: outdoors ? 2.5 : 8, ...o });
   const home = homeOption(p, mem, now, avoid, plannedId, shelters);
-  if (home) out.push({ prio: homeId ? (outdoors ? 2.4 : 8.5) : 9.5, a: 0, b: 0, target: '', ...home });
+  if (home && !(load && load.key === `HAUL:${plannedId}`)) out.push({ prio: homeId ? (outdoors ? 2.4 : 8.5) : 9.5, a: 0, b: 0, target: '', ...home });
 
   const close = [...unaware(p).filter((z) => z.d <= AWAY_R), ...chasers];
   if (close.length && !blockedWhy(mem, 'AWAY', now)) {
@@ -405,7 +479,7 @@ export function escapeOptions(p, mem, ctx = {}) {
 
 // The option key of the job now running. "keep" stands for it. The bridge's own record of the
 // order answers first. After a restart that record may be gone, and res.target says what the
-// body is working on: a building id for ENTER, SEARCH, SECURE and CLEAR, "x,y" for GOTO, which
+// body is working on: a building id for ENTER, SEARCH, SECURE, CLEAR and STASH, "x,y" for GOTO, which
 // has to match the end of one of this turn's walks. Otherwise null, and the verb alone is used.
 export function runningKey(p, mem, options = []) {
   const busy = running(p);
@@ -414,7 +488,7 @@ export function runningKey(p, mem, options = []) {
   if (order) return order.key;
   const target = typeof p.res.target === 'string' ? p.res.target.trim() : '';
   if (!target) return null;
-  if (busy.verb === 'ENTER' || busy.verb === 'SEARCH' || busy.verb === 'SECURE' || busy.verb === 'CLEAR') return `${busy.verb}:${target}`;
+  if (busy.verb === 'ENTER' || busy.verb === 'SEARCH' || busy.verb === 'SECURE' || busy.verb === 'CLEAR' || busy.verb === 'STASH') return `${busy.verb}:${target}`;
   if (busy.verb === 'GOTO') {
     const walk = options.find((o) => o.verb === 'GOTO' && `${o.a},${o.b}` === target);
     return walk ? walk.key : null;

@@ -34,7 +34,7 @@ export const CAUSES = [
 ];
 
 // Verbs whose job keeps her standing in one spot. A bite during one is "while busy".
-const BUSY = new Set(['SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP']);
+const BUSY = new Set(['SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP', 'STASH']);
 
 const flag = (v) => (v === undefined || v === null ? undefined : !!v);
 const text = (v, max = 24) => (typeof v === 'string' && v ? v.slice(0, max) : undefined);

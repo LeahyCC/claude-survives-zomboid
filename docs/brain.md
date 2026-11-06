@@ -139,7 +139,9 @@ LEAVE   fill and rest if on the menu, walk to the door, then the next house
 | CLEAR failed | LEAVE (`clear failed: another floor`, and so on) |
 | CLEAR not sent yet, and the gate shuts or 20 game minutes pass | LEAVE (`clear called off: hurt`, `clear called off: time`). With the zombie gone, LOOK (`zombie gone`) |
 | SEARCH cannot run for 10 game minutes (a zombie close, too heavy, a retry timer) | LEAVE (`blocked`) |
-| SEARCH failed `full`, or too heavy with DROP off the menu | LEAVE (`full`) |
+| too heavy with a base elsewhere in reach | LEAVE (`full`), and the load goes home (see "Base and stash"). The house stays unsearched, is marked `fullAt`, and is first on the menu after |
+| SEARCH failed `full`, or too heavy with DROP off the menu and no stash here | LEAVE (`full`), marked the same way |
+| too heavy, in her base | stays at SEARCH: the stash goes first, then the search goes on |
 | ENTER failed | over (`no way in`) |
 | time limit | LEAVE (`time`) |
 | LEAVE at dusk (17:00) or night | over, and she stays. The usual menu leads with home |
@@ -162,11 +164,51 @@ The reach line and the last line are the reflex's own. With a blade under reach 
 
 **The time limit** is 30 game minutes a room, at least 60, at most 240 (BG42.20 says "two hours of looting, not twelve"; the card started at 15 a room, which is about 37 real seconds, too short for a full kitchen). Sleep and gaps in the clock over half an hour do not count. It is a number from the card, not a measurement: at the default day length 30 game minutes is about 75 real seconds. Check it against the review, because a limit that cuts searches short reads as `time` under "How they ended".
 
-**LEAVE.** She walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not given up on in the last 12 game hours, and not crowded, a house before a shop (`nextHouse`). Crowded means the old `b.zombies` is 3 or more, or the crowd map holds 3 or more for that house, or 5 or more for its area (see "Crowd map"). With none she walks out to explore.
+**LEAVE.** A load run comes first, if there is one (`haul`, or `stash` when she is home). Then she walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not given up on in the last 12 game hours, and not crowded, a house before a shop (`nextHouse`). Crowded means the old `b.zombies` is 3 or more, or the crowd map holds 3 or more for that house, or 5 or more for its area (see "Crowd map"). With none she walks out to explore.
 
 **The log.** Each change is a `house` line in `decisions.jsonl` (`docs/eval.md`), and the bridge prints it. `node bridge/tools/review.mjs` has a "House jobs" section: started, finished, rooms searched per house, re-entries, houses cleared of a zombie, how they ended.
 
 A `searched` flag now needs SEARCH to have got as far as it could. A SEARCH that finished rooms and left some stays `partly`, and the next SEARCH goes on. One that got no further than the last marks the house searched, or she would loop on a room that is not loaded.
+
+## Base and stash
+
+Soak 3 (`bridge/soak-2026-11-06-00-09.txt`): 9 of the 32 houses with nothing searched went SEARCH to LEAVE `full`, and DROP failed 5 of 13 times `nothing to drop`, because what she carries is all worth keeping. Colin, 2026-11-05: she should "remember ... which is the best base for putting gear, but should be dynamic if finding a new one".
+
+```
+too full to search -- base known, not chased --> haul: ENTER the base, or GOTO its door until it is listed
+       |                                                  |
+       |                                                  v
+       |                                         inside the base --> STASH --> back to the house left full
+       '-- no base, or no way there -----------> DROP (its own gates, as before)
+```
+
+**Which building.** `map.base` (`pickBase` in `memory.mjs`) is looked at on every percept:
+
+| case | base |
+|---|---|
+| none yet | the planner's home, else the best `safehouseScore` she has been in, 2 or more (a house counts, a shop does not) |
+| the planner's home differs, nothing stashed yet | the home, unless the base scores 2 or more above it |
+| anything else, once gear is there | stays, until a building scores 2 higher (`BASE_MOVE`). A new plan is no reason to scatter her gear |
+| the base is over 120 tiles off | anything in reach beats it. If nothing does, it stays, and the walk is not offered |
+
+`b.zombies` is in the score, so zombies seen at the base can move it. The digest has one line for it: `Base: house 14 tiles N, 6 things stashed there, 2 more at an old base.`, and the planner sees `your base` on its list of known buildings. When the base moves, the old one's count stays in `map.stashes`. It goes when a SEARCH there finishes.
+
+**Too full** is `heavy`, or `map.haul`: a house job went to LEAVE `full`, which a meal since then does not undo. `map.haul` is cleared by a STASH, a DROP or a new character.
+
+**On the menu.**
+
+| what | offered when |
+|---|---|
+| `stash` | too full, inside the base, not chased, no zombie that can reach her soon, hp 30 or more, STASH not failed lately |
+| `haul` | too full, the base is elsewhere, not chased, hp 30 or more, a clear way there, not crowded, not night indoors |
+| `drop` | as before, but not with `stash` or `haul` on the menu, and not waiting indoors for morning with a base to go to |
+| `oldbase` | an old base with a stash, by day, not too full, a clear way there, low on the menu and the model's call |
+
+**Who sends it.** `jobPick` in `housejob.mjs`, so it logs as the `house-job` rule, ahead of `overloaded`. It has no rule of its own in `policy.mjs` only because another card held that file when this was written. Move it when that is merged. Being chased takes both `haul` and `stash` off. DROP's own gate also shuts for any chaser, so while she is chased nothing sheds the load. The reflex has the chase.
+
+**Coming back.** A house left full is not "given up on": it gets `fullAt`, not `leftAt`, so the 12 hour wait does not apply. It ranks ahead of houses she has never seen, says `you left it full, more to take`, and the mark goes when she walks back in. A stash lifts any `full` failure on SEARCH, or she could not search it on arrival.
+
+**Not done.** Nothing takes gear back out of the stash at her current base, so food put away there is not eaten. Only an old base gives things back, through SEARCH.
 
 ## Options
 
@@ -178,10 +220,13 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `drink` | DRINK | thirst 0.25 or more (or the moodle); water in a bottle, or a tap in this building |
 | `eat` | EAT | hunger 0.25 or more (or the moodle); food ready, or a can and a can opener |
 | `equip` | EQUIP | nothing in hand and a melee weapon carried; or a carried weapon whose `score` is 1.25 times the `weaponScore` of the one in hand or more (the mod's own swap line). With no scores in the percept, only the empty hands count. Never with a gun in hand (`heldGun`), and never when the weapon in hand is the player's own pick (`weaponByHand`) |
-| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie that can reach her soon (see below), hp 30 or more |
+| `stash` | STASH | too full, inside her base. See "Base and stash" |
+| `haul` | ENTER or GOTO | too full, with a base elsewhere to take it to. See "Base and stash" |
+| `drop` | DROP | heavy (moodle, or weight at the search line: 60% of the maximum with no bag, 85% with one), no chaser, no zombie that can reach her soon (see below), hp 30 or more. Not with `stash` or `haul` on the menu |
+| `oldbase` | ENTER or GOTO | an old base with a stash in it. See "Base and stash" |
 | `secure` | SECURE | inside, not secured since entering. Night sorts it near the top |
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
-| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie that can reach her soon (see below). The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first" |
+| `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie that can reach her soon (see below). The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first". Also offered at an old base with a stash in it, searched or not, and it says so. The order carries her base as its target, so the search leaves her own stash alone |
 | `wearbag` | WEARBAG | no bag worn and a bag in the item names |
 | `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00. With no real weapon, houses come before shops and an unsearched house says "no real weapon yet, look here". After an A, B, A, B run in her last 4 ENTERs (`bouncing`) both buildings stay off until she enters a third, unless she is chased or one is the plan's home and she needs shelter |
 | `home` | GOTO | the plan's home is a building the map knows, with a door on record, but the percept does not list it, within 120 tiles, path clear. It goes to that door, and ENTER takes over once the building is listed. It leads the menu from 17:00 or when she needs shelter, and sits low by day. At night outside it is left off when a listed house is nearer |
@@ -225,7 +270,7 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 | `night-outside` | 21:00 to 06:00 and outside | the nearest house on the menu (`ENTER`) |
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
-| `house-job` | a house job is open, nothing threatens her and no job is running (see "House job") | the order of the stage |
+| `house-job` | a house job is open, nothing threatens her and no job is running (see "House job"). Also, with no job open, a load run: `stash` or `haul` is on the menu (see "Base and stash") | the order of the stage, or the load run |
 | `find-weapon` | bare hands (weapon `none`, no real weapon in the `weapons` list; a gun does not count), inside, no chaser, and `search` is on the menu (so the building is not done, she is not heavy and no zombie can reach her soon) | `search` |
 | `overloaded` | heavy, no chaser, hp 30 or more (and `drop` is on the menu, so no zombie can reach her soon) | `drop` |
 
@@ -235,7 +280,7 @@ If a voice line is waiting, the model is still called, with a menu of just the p
 
 ## Not asking while a job runs
 
-`res.status` is `running` for a skill or needs verb (`GOTO ENTER SEARCH LOOT DROP DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST CLEAR`). MOVE and the old one-shot verbs stay `running` forever, so they do not count. While one runs, the brain sends nothing and asks nothing unless:
+`res.status` is `running` for a skill or needs verb (`GOTO ENTER SEARCH LOOT DROP DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST CLEAR STASH`). MOVE and the old one-shot verbs stay `running` forever, so they do not count. While one runs, the brain sends nothing and asks nothing unless:
 
 - a zombie starts chasing,
 - a new need flag appears (bleeding, wounded, thirsty, hungry, tired, exhausted, winded, panicked, heavy, night outside),
@@ -364,13 +409,13 @@ Without the history it picks the nearest house, the one that just failed, every 
 
 `state.map` in `bridge/pz-state.json`. Delete the file for a fresh mind.
 
-Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside, never faded), `securedAt`, `leftAt` (when a house job ended with rooms in it), and a rough position. `map.job` is the open house job. A saved one that does not read as a job is dropped. `map.crowd` is the crowd map and `map.strikes` the ENTER failure counts (see "Crowd map").
+Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside, never faded), `securedAt`, `leftAt` (when a house job ended with rooms in it), `fullAt` (when it ended because she was too full, so she comes back), and a rough position. `map.job` is the open house job. A saved one that does not read as a job is dropped. `map.crowd` is the crowd map and `map.strikes` the ENTER failure counts (see "Crowd map"). `map.base`, `map.stashes` and `map.haul` are the base, what is stashed by building (`{ n, at }`), and a load run owed (see "Base and stash").
 
 `door` is the exterior door `{x, y}` the percept listed, kept after the building drops out of the 6 nearest. It is what the `home` walk goes to. A door that is not a pair of numbers is ignored. `searched` is also set when the building the survivor stands in reports `roomsLeft` 0.
 
 Safe house score: residential +2, water +2, bed +2, searched +1, shop -1, minus one per zombie seen (up to 4). 5 or more is a safe house.
 
-It also keeps the last 12 orders sent (seq, verb, key, building, rooms left when sent), the fails with their time, and the sleep guess. Places stay known after a death. Orders, fails, sleep and the house job are cleared. The crowd map is kept, and cleared only for a new character who spawns more than 150 tiles from where the last one was.
+It also keeps the last 12 orders sent (seq, verb, key, building, rooms left when sent), the fails with their time, and the sleep guess. Places stay known after a death, and the base and its stash with them, since the gear is still in the world. Orders, fails, sleep, the load run and the house job are cleared. The crowd map is kept, and cleared only for a new character who spawns more than 150 tiles from where the last one was.
 
 ## Crowd map
 

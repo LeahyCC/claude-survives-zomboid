@@ -915,6 +915,28 @@ function Act.floorContainer(sq)
   return floor, bags
 end
 
+-- What she put in her own stash (Needs STASH). The mark is on the item's mod data, not a table of
+-- item objects as LS.dropped is: it has to last a chunk unload and a restart, because the stash is
+-- somewhere she walks away from. Only the stash of the base she has now is left alone. baseId comes
+-- with the SEARCH order. A stash at an old base is hers to take again.
+function Act.ownStash(it, baseId)
+  local mark = nil
+  pcall(function() mark = it:getModData().lsStash end)
+  return mark ~= nil and mark == baseId
+end
+
+-- A room of her stash counts as searched, so back at an old base a SEARCH would find nothing left.
+-- It opens up again here, and then only the loot table decides what comes back.
+function Act.reopenOldStash(id, baseId)
+  local rooms = LS.stashRooms and LS.stashRooms[id]
+  if not rooms or id == baseId then return end
+  for key in pairs(rooms) do
+    if LS.searched[id] then LS.searched[id][key] = nil end
+    if LS.searchTries then LS.searchTries[id .. "/" .. key] = nil end
+  end
+  LS.stashRooms[id] = nil
+end
+
 -- Fill a container's loot the way the loot window does when it comes into view. The game rolls
 -- a container's items the first time it is looked at, and only for squares next to the player,
 -- so a container read before that is empty. Single player only: online the server fills it.
@@ -1074,6 +1096,7 @@ Act.SKILL.SEARCH = {
     if Act.searchLeft(p) <= 0 then return Act.finish(s, "failed", "full") end
     local _, m = LS.Sense.currentBuilding(p)
     if not m then return Act.finish(s, "failed", "not inside") end
+    Act.reopenOldStash(m.id, s.args.target)
     local rooms = Act.buildingRooms(m)
     local done = LS.searched[m.id] or {}
     local left = 0
@@ -1345,7 +1368,7 @@ searchStep = function(p, s)
       for i = 0, list:size() - 1 do
         local it = list:get(i)
         local ok, d = pcall(Act.describeLoot, it, p)
-        if ok and d then
+        if ok and d and not Act.ownStash(it, s.args.target) then
           table.insert(items, it)
           table.insert(descs, d)
         end
@@ -1465,6 +1488,7 @@ local function dropFacts(p)
   end
   return descs, items
 end
+Act.dropFacts = dropFacts
 
 local function endDrop(s, still)
   if #s.names == 0 then return Act.finish(s, "failed", "nothing to drop") end

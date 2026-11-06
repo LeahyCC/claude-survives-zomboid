@@ -32,6 +32,7 @@ Calls:
 - A zombie stub takes `fx` and `fy`, the way it faces. A square's `doorObjs` maps a `"x,y"` neighbour to the door between, for a test that reads its lock. `lua-clear.test.mjs` uses both.
 - `P.keys = { [7] = true }` makes `getInventory():haveThisKeyId(7)` find a key. `lua-unstick.test.mjs` drives `Reflex.releaseDoor` one call per tick.
 - `instanceof(o, "IsoDoor")` is true for a stub table with `__class = "IsoDoor"`.
+- `__finishStash(p)` finishes a queued put-away: the item leaves her and lands in the container, and `p.weight` falls with it. A container's `full` field makes `hasRoomFor` say no. `lua-stash.test.mjs` uses both.
 
 ```js
 lua.run('__players[0] = __makePlayer({ x = 10, y = 10 })');

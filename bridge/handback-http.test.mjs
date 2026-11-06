@@ -149,7 +149,8 @@ test('walking into a new house: the real bridge opens the house job, sends SECUR
     assert.equal(open.bldg, '4031');
     assert.equal(open.stage, 'SHUT');
     assert.equal(lines.find((l) => l.t === 'decision').rule, 'house-job');
-    assert.match(b.output(), /house 4031: open at SHUT/);
+    // The child's stdout can land after the log file does, so this one waits too.
+    await until(() => /house 4031: open at SHUT/.test(b.output()), 'the printed house line');
   } finally {
     await b.stop();
     await ollama.close();
