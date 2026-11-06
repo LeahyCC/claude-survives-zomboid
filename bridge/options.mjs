@@ -250,6 +250,17 @@ function needOptions(p, mem, now) {
   return out;
 }
 
+// The two buildings of an A, B, A, B run in her last ENTER orders. Live on 2026-11-05 she walked
+// between two searched houses 28 tiles apart for minutes: each turn the menu offered the other
+// one as b1, and a running walk may change its mind, so she turned back halfway every time.
+// Both stay off the menu until she enters a third building (or needs to get home, or is chased).
+export function bouncing(mem) {
+  const enters = (Array.isArray(mem && mem.orders) ? mem.orders : []).filter((o) => o && o.verb === 'ENTER').slice(-4);
+  if (enters.length < 4) return new Set();
+  const [a, b, c, d] = enters.map((o) => o.key);
+  return a && b && a !== b && a === c && b === d ? new Set([a, b]) : new Set();
+}
+
 // Build the legal options for this moment, at most MAX_OPTIONS, most useful first.
 // ctx.now is wall time in ms, for the retry timers in map memory.
 export function buildOptions(p, mem, ctx = {}) {
@@ -266,7 +277,9 @@ export function buildOptions(p, mem, ctx = {}) {
   const plannedId = ctx.plan && ctx.plan.home ? String(ctx.plan.home) : '';
   const dusk = num(p.hour, 12) >= 17 && num(p.hour, 12) < 21;
   const homeId = wantsHome || dusk ? plannedId : '';
-  const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(p));
+  const bounce = bouncing(mem);
+  const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(p))
+    .filter((o) => !bounce.has(o.key) || chasers.length > 0 || (wantsHome && o.target === plannedId));
   for (const o of shelters) out.push({ prio: outdoors ? 2.5 : 8, ...o });
   const home = homeOption(p, mem, now, avoid, plannedId, shelters);
   if (home) out.push({ prio: homeId ? (outdoors ? 2.4 : 8.5) : 9.5, a: 0, b: 0, target: '', ...home });
@@ -282,12 +295,16 @@ export function buildOptions(p, mem, ctx = {}) {
     }
   }
   const newPlaces = out.some((o) => o.verb === 'ENTER' && /not visited|not searched/.test(o.label));
-  if (outdoors && !newPlaces && !blockedWhy(mem, 'EXPLORE', now)) {
+  // Inside a searched building with nothing new in sight she should go looking too, ahead of
+  // walking back into a house she has already emptied.
+  const hereId = !outdoors && p.inBldg && p.inBldg.id != null ? String(p.inBldg.id) : null;
+  const hereDone = !!hereId && !!(building(mem, hereId) || {}).searched;
+  if ((outdoors || hereDone) && !newPlaces && !blockedWhy(mem, 'EXPLORE', now)) {
     const turn = Math.floor(num(p.hoursAlive)) % 8;
     const a = (turn * Math.PI) / 4;
     const w = walkOption(p, avoid, { dx: Math.round(Math.cos(a) * 25), dy: Math.round(Math.sin(a) * 25) }, 25);
     if (w) {
-      out.push({ prio: 12, id: 'explore', verb: 'GOTO', a: w.a, b: w.b, target: '', key: 'EXPLORE',
+      out.push({ prio: outdoors ? 12 : 7, id: 'explore', verb: 'GOTO', a: w.a, b: w.b, target: '', key: 'EXPLORE',
         label: `walk ${tiles(25)} ${compass(w.dx, w.dy)} to look for new houses` });
     }
   }

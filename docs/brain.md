@@ -113,12 +113,12 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `sleep` | SLEEP | inside, fatigue 0.5 or more, no chaser, none visible, none within 15, no panic, pain under 2 (unless fatigue over 0.85) |
 | `search` | SEARCH | inside, not searched (map memory), `inBldg.roomsLeft` not 0, not overloaded, no zombie that can reach her soon (see below). The label counts the rooms left: "2 rooms left, partly searched". While `weaponPoor` it ends with ", no real weapon yet: kitchen and garage first" |
 | `wearbag` | WEARBAG | no bag worn and a bag in the item names |
-| `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00. With no real weapon, houses come before shops and an unsearched house says "no real weapon yet, look here" |
+| `b1` `b2` `b3` | ENTER | buildings in the percept, not this one, not blocked, path clear. Unsearched first, then nearest. A safe house goes first at night, when tired or panicked. The plan's home building goes before that when she needs shelter and from 17:00. With no real weapon, houses come before shops and an unsearched house says "no real weapon yet, look here". After an A, B, A, B run in her last 4 ENTERs (`bouncing`) both buildings stay off until she enters a third, unless she is chased or one is the plan's home and she needs shelter |
 | `home` | GOTO | the plan's home is a building the map knows, with a door on record, but the percept does not list it, within 120 tiles, path clear. It goes to that door, and ENTER takes over once the building is listed. It leads the menu from 17:00 or when she needs shelter, and sits low by day. At night outside it is left off when a listed house is nearer |
 | `fill` | FILL | inside, a tap here, an empty bottle carried |
 | `rest` | REST | endurance under 0.6, no chaser |
 | `away` | GOTO | an idle zombie within 12, or a chaser: 15 tiles in the clearest direction away |
-| `explore` | GOTO | outside with no new building on the menu: 25 tiles in a clear direction |
+| `explore` | GOTO | no new building on the menu, and outside or inside a searched building: 25 tiles in a clear direction. From inside it sits above walking into a house she has already searched |
 | `wait` | WAIT | nothing is running |
 | `keep` | none | a skill or needs job is running. Picking it sends nothing |
 
