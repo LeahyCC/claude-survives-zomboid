@@ -585,3 +585,40 @@ test('under 30 hp there is no drop, on the menu or from the policy', () => {
   const ok = moment({ weight: 7.5, moodle: { heavy: 2 }, hp: 30 });
   assert.equal(policy(ok).rule, 'overloaded');
 });
+
+// Live 2026-11-05: two searched houses 28 tiles apart, b1 was always the other one, and she
+// walked back and forth for minutes.
+const PAIR = {
+  outside: false, room: 'bathroom', bldgDir: 'HERE', bldgDist: 0,
+  inBldg: { explored: true, id: '12', room: 'bathroom', rooms: 5, roomsLeft: 0, water: false },
+  buildings: [
+    { d: 0, door: { x: 10650, y: 9826 }, dx: 0, dy: 0, id: '12', res: true, shop: false, visited: true },
+    { d: 28, door: { x: 10622, y: 9826 }, dx: -28, dy: 0, id: '11', res: false, shop: false, visited: true },
+  ],
+};
+const PAIR_MEM = () => ({
+  current: '12',
+  buildings: { 11: { visited: true, searched: true, rooms: 2 }, 12: { visited: true, searched: true, rooms: 5, enteredAt: 1, securedAt: 2 } },
+});
+const enter = (seq, to, from) => ({ seq, verb: 'ENTER', key: `ENTER:${to}`, bldg: from });
+// buildScenario keeps only the map fields of memory, so the order history goes on afterwards.
+const withOrders = (m, orders) => { m.memory.orders = orders; return m; };
+
+test('an A, B, A, B run between two houses takes both off the menu until a third', () => {
+  const back = [enter(1, '11', '12'), enter(2, '12', '11'), enter(3, '11', '12'), enter(4, '12', '11')];
+  const before = menu(withOrders(moment(PAIR, PAIR_MEM()), back.slice(0, 3)));
+  assert.ok(before.some((o) => o.key === 'ENTER:11'), 'three is not a loop yet');
+  const looped = menu(withOrders(moment(PAIR, PAIR_MEM()), back));
+  assert.ok(!looped.some((o) => o.key === 'ENTER:11'), 'the other house is off');
+  // Out of a searched house with nothing new in sight, she goes looking instead.
+  assert.ok(byId(looped, 'explore'), 'explore is offered from inside a searched house');
+  const third = menu(withOrders(moment(PAIR, PAIR_MEM()), [...back, enter(5, '30', '12')]));
+  assert.ok(third.some((o) => o.key === 'ENTER:11'), 'a third building ends the block');
+});
+
+test('the bounce block gives way to getting home for the night', () => {
+  const back = [enter(1, '12', '11'), enter(2, '11', '12'), enter(3, '12', '11'), enter(4, '11', '12')];
+  const out = { ...PAIR, inBldg: { ...PAIR.inBldg, id: '11' }, buildings: [{ ...PAIR.buildings[1], d: 0, dx: 0 }, { ...PAIR.buildings[0], d: 28, dx: 28 }], hour: 22 };
+  const m = withOrders(moment(out, { ...PAIR_MEM(), current: '11' }, { goal: 'home', steps: [], home: '12' }), back);
+  assert.ok(menu(m).some((o) => o.key === 'ENTER:12'), 'home stays on the menu at night');
+});
