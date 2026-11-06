@@ -16,6 +16,7 @@ import { zombies, reaches, chasing, heavy, isNight, inside, running, REACH_CHASE
 import { blockedWhy, building, securedThisVisit } from './memory.mjs';
 import { dist, compass } from './geom.mjs';
 import { tiles, count } from './words.mjs';
+import { crowdOfBuilding, isCrowded, areaCrowded } from './crowd.mjs';
 
 export const STAGES = ['IN', 'SHUT', 'LOOK', 'SEARCH', 'LEAVE'];
 // All in game hours. Guides say "two hours of looting, not twelve" (BG42.20). 30 a room, not 15:
@@ -369,7 +370,9 @@ export function nextHouse(options, mem, job, hours) {
   const fits = options.filter((o) => {
     if (o.verb !== 'ENTER' || o.target === job.id) return false;
     const b = building(mem, o.target);
-    return !doneWith(b, hours) && !crowded(b);
+    // The crowd map covers houses she never stood in, and fades. Its area is avoided too.
+    const cr = crowdOfBuilding(mem, o.target);
+    return !doneWith(b, hours) && !crowded(b) && !isCrowded(cr) && !areaCrowded(cr);
   });
   return fits.find((o) => /walk into house/.test(o.label)) || fits[0] || null;
 }

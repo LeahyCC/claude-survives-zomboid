@@ -51,6 +51,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `housejob.mjs` | The house job the bridge holds across turns: its stages, what it takes off the menu, the next house. See "House job". | service |
 | `playbook.mjs` | Pro rules with a condition each: `selectRules`. | service |
 | `memory.mjs` | Map memory by building id, saved as `map` in `pz-state.json`. | service |
+| `crowd.mjs` | The crowd map: zombies seen by building and by area, fading over 12 game hours. See "Crowd map". | service |
 | `reactions.mjs` | How the last orders went: the outcome lines, the blocked list, loop detection, the rows of the strip. See "Reactions". | service |
 | `digest.mjs` | The situation in plain lines. | formatter |
 | `words.mjs` `geom.mjs` | Words for numbers, compass, distances. | pure helpers |
@@ -141,7 +142,7 @@ LEAVE   fill and rest if on the menu, walk to the door, then the next house
 
 **The time limit** is 30 game minutes a room, at least 60, at most 240 (BG42.20 says "two hours of looting, not twelve"; the card started at 15 a room, which is about 37 real seconds, too short for a full kitchen). Sleep and gaps in the clock over half an hour do not count. It is a number from the card, not a measurement: at the default day length 30 game minutes is about 75 real seconds. Check it against the review, because a limit that cuts searches short reads as `time` under "How they ended".
 
-**LEAVE.** She walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not crowded (3 or more zombies seen) and not given up on in the last 12 game hours, a house before a shop (`nextHouse`). With none she walks out to explore. `b.zombies` is only read while she stands inside a house, so it says little about a house she has not been in. The crowd map card is what would fix that.
+**LEAVE.** She walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not given up on in the last 12 game hours, and not crowded, a house before a shop (`nextHouse`). Crowded means the old `b.zombies` is 3 or more, or the crowd map holds 3 or more for that house, or 5 or more for its area (see "Crowd map"). With none she walks out to explore.
 
 **The log.** Each change is a `house` line in `decisions.jsonl` (`docs/eval.md`), and the bridge prints it. `node bridge/tools/review.mjs` has a "House jobs" section: started, finished, rooms searched per house, re-entries, how they ended.
 
@@ -172,7 +173,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `wait` | WAIT | nothing is running |
 | `keep` | none | a skill or needs job is running. Picking it sends nothing |
 
-An open house job takes options off this table (see "House job"). A place given up on in the last 12 game hours ranks with the searched ones, and one with 3 or more zombies seen comes after the rest of its kind.
+An open house job takes options off this table (see "House job"). A place given up on in the last 12 game hours ranks with the searched ones. A building with 3 or more zombies in the crowd map is not offered at all. One in an area with 5 or more, or with 3 or more in the old `b.zombies`, comes after the rest of its kind.
 
 While a skill or needs job runs, any new order cancels it. So the menu then has only `keep` and what is worth stopping for: `bandage`, `drink`, `eat`, `away`, and `secure` when a zombie is chasing. A walk (`GOTO`, `ENTER`) can still switch to another house. If `keep` is the only option, the model is not asked.
 
@@ -180,7 +181,7 @@ While a skill or needs job runs, any new order cancels it. So the menu then has 
 
 When `search` is off the menu with her inside and rooms left, `options.mjs` prints one line to the bridge console: `[hh:mm:ss] menu: no SEARCH, too heavy, zombie close, no wall 5 tiles (3 rooms left)`. The reasons are `already searched`, `too heavy`, `zombie chasing|in the building|close, no wall N tiles` and `retry timer after a fail`, all that apply. It prints once per menu built, so a review can count them. It is not in the page's log yet: the bridge log is not reachable from the menu code.
 
-Building labels come from map memory: `not visited`, `visited, not searched`, `partly searched`, `searched`, `safe house` or `has water`, `has a bed`, and `N zombies seen`.
+Building labels come from map memory: `not visited`, `visited, not searched`, `partly searched`, `searched`, `safe house` or `has water`, `has a bed`, and from the crowd map `N zombies seen here lately` (this building) or `N zombies seen in this area lately` (only when the area holds 5 or more). When the map says nothing, the old `N zombies seen` shows for a house where 2 or more were counted from inside.
 
 "No real weapon" means nothing in hand or in the bag scores 20 or more. A kitchen knife scores 9 and a hammer 19, a crowbar 30 (`docs/combat.md`). An older percept with no scores counts only empty hands and an empty bag. A gun in hand (`heldGun`) means she is armed: it is not "no real weapon", so no house is sold as the place to look for one and the playbook's `no-weapon` and `weak-weapon` rules stay quiet (`weaponPoor`).
 
@@ -308,7 +309,7 @@ The pattern line is the first of these that holds:
 
 1. Flee and walk back in, twice in two minutes (`GOTO away` then an `ENTER`, two times): `You keep getting chased off houses. Try a quieter house, or leave this street.`
 2. The same kind of order failed twice in a row or more within 5 minutes, with nothing of that kind working in between: `Walking into a building failed twice in a row. Try something else first.`
-3. The last order failed (within 5 minutes), nothing newer was sent, and the same job is on the menu again: `Your last order, ENTER house N, failed (zombies at the door). It is on the menu again. Try something else first.` A failed walk into a building stays off the menu for 30 seconds and then comes back, usually with the zombies still there.
+3. The last order failed (within 5 minutes), nothing newer was sent, and the same job is on the menu again: `Your last order, ENTER house N, failed (zombies at the door). It is on the menu again. Try something else first.` A failed walk into a building with `zombie` stays off the menu for 5 minutes (see "Crowd map"); other failed walks keep their own timers.
 
 The line only says what happened. It does not tell her to fight: the model never swings, the reflex does.
 
@@ -342,13 +343,34 @@ Without the history it picks the nearest house, the one that just failed, every 
 
 `state.map` in `bridge/pz-state.json`. Delete the file for a fresh mind.
 
-Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside), `securedAt`, `leftAt` (when a house job ended with rooms in it), and a rough position. `map.job` is the open house job. A saved one that does not read as a job is dropped.
+Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside, never faded), `securedAt`, `leftAt` (when a house job ended with rooms in it), and a rough position. `map.job` is the open house job. A saved one that does not read as a job is dropped. `map.crowd` is the crowd map and `map.strikes` the ENTER failure counts (see "Crowd map").
 
 `door` is the exterior door `{x, y}` the percept listed, kept after the building drops out of the 6 nearest. It is what the `home` walk goes to. A door that is not a pair of numbers is ignored. `searched` is also set when the building the survivor stands in reports `roomsLeft` 0.
 
 Safe house score: residential +2, water +2, bed +2, searched +1, shop -1, minus one per zombie seen (up to 4). 5 or more is a safe house.
 
-It also keeps the last 12 orders sent (seq, verb, key, building, rooms left when sent), the fails with their time, and the sleep guess. Places stay known after a death. Orders, fails, sleep and the house job are cleared.
+It also keeps the last 12 orders sent (seq, verb, key, building, rooms left when sent), the fails with their time, and the sleep guess. Places stay known after a death. Orders, fails, sleep and the house job are cleared. The crowd map is kept, and cleared only for a new character who spawns more than 150 tiles from where the last one was.
+
+## Crowd map
+
+`bridge/crowd.mjs`, saved as `map.crowd`. The first soak showed 35 ENTER orders failing with `zombie`, 45 sent again after a failure and one life walking into 11 zombies (`docs/pro-rules.md`, card 5). `b.zombies` only counted while she stood inside, so a house she had not entered said nothing.
+
+```
+every percept     zList (6 nearest within 25 tiles)
+                  |-- in her building ----------> that building
+                  |-- else within 10 tiles of a known wall point or door -> that building
+                  '-- every one -----------------> its 20 by 20 area
+entry             { n, at }   n zombies seen at crowd clock `at`
+fade              n x (1 - age / 12 game hours), gone at 12
+```
+
+- **A floor, not a head count.** The list holds 6, so one look names 6 at most, and an area never reads over 6. A full list only raises an entry (`max` of the new count and the faded old one). A list of fewer than 6 is every zombie within 25 tiles, so then a house within 15 tiles with none in it is cleared at once, and so is an area whose four corners are all within 25.
+- **The clock** adds up the rise in `hoursAlive`, so it keeps going when a new character starts. A new character who spawns within 150 tiles of the last one keeps the map. One further off starts clean. Time between lives is not counted.
+- **Crowded** is 3 or more for a building and 5 or more for an area, after the fade. A 3 reads as crowded for about 2 hours, a 6 for about 7. That is a guide number, not a measure: take the fade from the soak.
+- **On the menu.** A crowded building is not offered as ENTER or as the `home` walk. A crowded area ranks after the rest of its kind (the sort is home, searched or not, crowd, house first, distance). The label gives the count. The escape menu (`escapeOptions`) does not use the map: when something is after her, any door is a door.
+- **Next house.** `nextHouse` skips a crowded building and a crowded area, and then she explores.
+- **A failed ENTER with `zombie`** is off the menu for 5 minutes, then 10, 20 and at most 30, each time it fails again within an hour of the last (`map.strikes`, wall clock). A strike goes after an hour of quiet or when she gets in. Other reasons keep their timers (`locked` 20 minutes, a `zombie` on any other order 30 seconds).
+- **Not done:** the guides' base scan (`BanditPlayerBase.Regenerate` reads 10 tiles at a time) is not copied: a percept already gives the 25 tile list for free. Zombies behind a wall in a house she has never been near are not seen at all until the list reaches them.
 
 ## /mind
 
