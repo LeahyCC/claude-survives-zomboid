@@ -102,7 +102,7 @@ SEQ|VERB|A|B|SAY|THOUGHT|GOAL|TARGET[|POSTURE]
 
 `LocalSurvivor.verbs[VERB] = function(p, args) ... end`. `args` is a table of strings: `seq`, `action`, `a`, `b`, `say`, `thought`, `goal`, `target`. A verb fails by setting `LocalSurvivor.lastError`.
 
-Today's verbs: `MOVE GOTO ENTER SEARCH LOOT DROP EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT` in `Act.lua`, and `DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST` in `Needs.lua`. An unknown verb runs as `WAIT`. `GOTO ENTER SEARCH LOOT DROP` are skills that run over many ticks (`docs/skills.md`). The needs verbs start a job that runs over many ticks and reports `done` or `failed` itself (`docs/needs.md`). The v2 brain sends `GOTO ENTER SEARCH EQUIP WAIT` and every needs verb, from its menu (`docs/brain.md`). The v1 brain for old mods sends only its `ACTIONS` list. A new verb is one assignment from its own file. `Act.execIntent` does not change.
+Today's verbs: `MOVE GOTO ENTER SEARCH LOOT DROP EQUIP CLOSEDOOR CONCEAL BREAKIN STOP WAIT` in `Act.lua`, and `DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST CLEAR` in `Needs.lua`. An unknown verb runs as `WAIT`. `GOTO ENTER SEARCH LOOT DROP` are skills that run over many ticks (`docs/skills.md`). The needs verbs start a job that runs over many ticks and reports `done` or `failed` itself (`docs/needs.md`). The v2 brain sends `GOTO ENTER SEARCH EQUIP WAIT` and every needs verb, from its menu (`docs/brain.md`). The v1 brain for old mods sends only its `ACTIONS` list. A new verb is one assignment from its own file. `Act.execIntent` does not change.
 
 ## Result record
 

@@ -108,6 +108,27 @@ A room that is not loaded is left for a later SEARCH.
 
 What went wrong in the rich loot run (`tools/playtest.ps1 -RichLoot`): she took dye, perfume, ice cream and a plunger and left a pistol. The pistol had no row in the loot table at all (a gun is not a melee weapon, so it matched nothing). The dye and perfume matched the "any other drink" row, because every fluid container counted as a drink. And the plunger scored just over the weapon floor. The container walk itself was also thinner than it looked (the room list alone, loot rolled only for the 3 by 3 squares around her), which is fixed above. None of this was run in a live game yet.
 
+## CLEAR
+
+No arguments. Kills what is in the building she stands in. A job in `Needs.lua` (`docs/needs.md` has how a job runs and pauses). The house job sends it (`docs/brain.md`, "CLEAR").
+
+```
+walk     to a square next to the zombie, in legs of 6 along the inside way
+         the square furthest behind it first (getForwardDirectionX, getForwardDirectionY)
+reflex   from 2 tiles it swings, stomps and owns the fight. The job pauses
+hit      next to it with the reflex standing aside, the job swings, or stomps one that is down
+look     after every leg again, since an idle zombie wanders
+done     nobody left in the building on her floor
+```
+
+- A square counts when it is inside the building, she can stand on it, and no wall or shut door is between it and the zombie (`Needs.clearSpots`). The first one with an inside way wins, so "from behind" holds only when there is a way round. No way is measured for length. A way that passes in front of it just starts the fight sooner, when the reflex takes over at 2 tiles.
+- With two in the house she goes for a chaser first, then the nearest (`Needs.clearPick`). Once she is after one she stays with it.
+- If the one she is after turns on her, she stops walking and the reflex has the fight. A fight is the point of this order, so the job's pause may last the whole of `CLEAR_MAX`, not the usual 20 seconds.
+- Done: `cleared`, or `nobody inside` when there was nothing to go for.
+- Failed: `another floor` (the only ones left are upstairs or below), `locked door` (every way goes through a locked or boarded door, and she does not unlock here, even with a key), `out of reach` (no inside way, or a wall on every side of it), `a second one woke` (anything but her target is after her, in the house, or within 15 tiles outside it), `no weapon` (it broke or left her hand), `not inside`, `stuck` (over 20 legs, or a walk that would not queue), `took too long` (a minute, `CLEAR_MAX`), `zombie` (a pause longer than that).
+
+The game calls were checked against the 42.21 jar with `node tools/pz-api.mjs`: `IsoGameCharacter:getForwardDirectionX`, `getForwardDirectionY`, `IsoGridSquare:getDoorTo`, `isDoorTo`, `isBlockedTo`, `IsoDoor:isLocked`, `isLockedByKey`, `isBarricaded`, `IsOpen`. None of it has run in a live game. Check these first: whether the zombie stays idle for the walk (it may hear a shut door opened), whether `getForwardDirectionX` gives a real facing on an idle zombie, and how often a second one wakes.
+
 ## EQUIP
 
 No arguments. Wields the best weapon he carries, one level into bags.

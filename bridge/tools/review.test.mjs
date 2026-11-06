@@ -43,6 +43,10 @@ const JOBS = [
   house('open', { stage: 'IN', revisit: false }),
   house('stage', { from: 'IN', stage: 'SHUT', why: 'inside' }),
   house('pause', { stage: 'SEARCH', why: 'chased' }),
+  house('stage', { from: 'LOOK', stage: 'CLEAR', why: 'idle zombie inside' }),
+  house('stage', { from: 'CLEAR', stage: 'LOOK', why: 'cleared' }),
+  house('stage', { from: 'CLEAR', stage: 'LOOK', why: 'zombie gone' }),
+  house('stage', { from: 'CLEAR', stage: 'LEAVE', why: 'clear failed: locked door' }),
   house('end', { stage: 'LEAVE', why: 'next house', finished: true, rooms: 6, roomsSearched: 6, reentries: 1 }),
   house('open', { bldg: 'h2', stage: 'IN', revisit: true }),
   house('end', { bldg: 'h2', stage: 'SEARCH', why: 'threat', finished: false, rooms: 4, roomsSearched: 1, reentries: 0 }),
@@ -60,10 +64,12 @@ test('house jobs: finished, rooms per house and re-entries, and a job she never 
   assert.equal(j.walkedBack, 1);
   assert.equal(j.revisits, 1);
   assert.equal(j.pauses, 1);
+  assert.equal(j.cleared, 1);
   const text = buildReport({ decisions: JOBS, nudges: [] });
   assert.match(text, /3 started, 1 of 3 ended finished \(33%\)\. 3\.5 rooms searched per house, over 2 houses\./);
   assert.match(text, /Re-entries: 2 \(1 walked back in during a job, 1 new jobs on a house already visited\)/);
   assert.match(text, /How they ended: next house 1, threat 1, no way in 1\./);
+  assert.match(text, /Houses cleared of a zombie: 1\./);
   assert.match(buildReport({ decisions: [], nudges: [] }), /No house jobs logged\./);
 });
 

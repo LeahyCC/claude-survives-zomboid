@@ -135,7 +135,7 @@ Set when the order starts, kept when it ends `done` or `failed`, cleared by the 
 | `ENTER` | building id |
 | `GOTO` | `x,y` in whole tiles |
 | `SEARCH`, `LOOT` | building id of the place searched, empty for a loose container |
-| `SECURE` | building id |
+| `SECURE`, `CLEAR` | building id |
 | `DRINK` | the bottle name, or `water x,y` for a tap |
 | `FILL` | `water x,y` |
 | `EAT` | the food name |

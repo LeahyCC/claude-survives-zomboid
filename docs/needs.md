@@ -1,6 +1,6 @@
 # Needs
 
-The verbs that keep the survivor alive between fights: water, food, sleep, wounds, a bag, a shut house and a rest. Code is the truth: `mods/LocalSurvivor/42/media/lua/client/LocalSurvivor/Needs.lua`. Tests are in `test/lua-needs.test.mjs`.
+The verbs that keep the survivor alive between fights: water, food, sleep, wounds, a bag, a shut house and a rest. Code is the truth: `mods/LocalSurvivor/42/media/lua/client/LocalSurvivor/Needs.lua`. Tests are in `test/lua-needs.test.mjs`. `CLEAR` is a job in the same file, but it is a fight, not a need: see `docs/skills.md`.
 
 ## How a job runs
 

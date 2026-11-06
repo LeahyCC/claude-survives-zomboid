@@ -288,6 +288,7 @@ export function houseJobs(lines) {
     houses: rooms.length, walkedBack: ends.reduce((a, e) => a + num(e.reentries), 0),
     revisits: opens.filter((o) => o.revisit).length, why,
     pauses: list.filter((l) => l.kind === 'pause').length,
+    cleared: list.filter((l) => l.kind === 'stage' && l.from === 'CLEAR' && l.why === 'cleared').length,
   };
 }
 
@@ -419,7 +420,7 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
   } else {
     const ended = [...jobs.why].sort((a, b) => b[1] - a[1]).map(([w, n]) => `${w} ${n}`).join(', ');
     line(`  ${jobs.opened} started, ${jobs.finished} of ${jobs.ended} ended finished (${pct(jobs.finished, jobs.ended)}). ${Math.round(jobs.roomsPerHouse * 10) / 10} rooms searched per house, over ${jobs.houses} houses.`);
-    line(`  Re-entries: ${jobs.walkedBack + jobs.revisits} (${jobs.walkedBack} walked back in during a job, ${jobs.revisits} new jobs on a house already visited). Paused by a threat ${jobs.pauses} times.`);
+    line(`  Re-entries: ${jobs.walkedBack + jobs.revisits} (${jobs.walkedBack} walked back in during a job, ${jobs.revisits} new jobs on a house already visited). Paused by a threat ${jobs.pauses} times. Houses cleared of a zombie: ${jobs.cleared}.`);
     if (ended) line(`  How they ended: ${ended}.`);
   }
 

@@ -471,7 +471,7 @@ function __makeItem(opts)
 end
 
 -- A zombie. opts: x, y, z, dead, target (what getTarget returns), floor, knocked, crawling,
--- building (what the square under it reports). For a wall, set __los["x,y"] to what LosUtil.lineClear
+-- building (what the square under it reports), fx and fy (the way it faces). For a wall, set __los["x,y"] to what LosUtil.lineClear
 -- answers for a look at that square.
 function __makeZombie(opts)
   opts = opts or {}
@@ -485,6 +485,8 @@ function __makeZombie(opts)
   function z:isOnFloor() return opts.floor or false end
   function z:isKnockedDown() return opts.knocked or false end
   function z:isCrawling() return opts.crawling or false end
+  function z:getForwardDirectionX() return opts.fx or 0 end
+  function z:getForwardDirectionY() return opts.fy or 0 end
   return z
 end
 
@@ -558,6 +560,12 @@ function __makeSquare(opts)
     local d = opts.doorsTo or {}
     local o = other.opts or {}
     return d[other:getX() .. "," .. other:getY()] or (o.doorsTo or {})[opts.x .. "," .. opts.y] or false
+  end
+  -- opts.doorObjs: "x,y" neighbour -> the door object between, for a door a test reads the lock of.
+  function sq:getDoorTo(other)
+    local d = opts.doorObjs or {}
+    local o = other.opts or {}
+    return d[other:getX() .. "," .. other:getY()] or (o.doorObjs or {})[opts.x .. "," .. opts.y]
   end
   function sq:getWindow() return opts.window end
   function sq:getIsoDoor()
