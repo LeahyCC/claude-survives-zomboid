@@ -5,6 +5,7 @@
 import { needs, isNight, inside, zombies, heavy, chasing, betterWeapon, bareHanded } from './senses.mjs';
 import { securedThisVisit } from './memory.mjs';
 import { DROP_MIN_HP } from './options.mjs';
+import { jobPick } from './housejob.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -81,6 +82,14 @@ export const POLICY_RULES = [
       if (!n.has('exhausted') && !safeNight) return null;
       if (zombies(p).some((z) => z.chase)) return null;
       return [opts.find((o) => o.id === 'sleep'), 'Worn out and safe inside. Sleeping.'];
+    },
+  },
+  {
+    id: 'house-job',
+    pick(p, mem, opts) {
+      // Holds a house to the end: in, shut, look, search, leave. The rules above still come first, so
+      // a wound, thirst, night and sleep each cut in, and the job picks up after. docs/brain.md.
+      return jobPick(p, mem, opts);
     },
   },
   {

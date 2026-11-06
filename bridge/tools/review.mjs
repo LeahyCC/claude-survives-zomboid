@@ -272,6 +272,25 @@ export function stuckInChase(lines, records) {
   return { limit, next: [...next.values()].sort((a, b) => b.n - a.n), back: { n: back.length, verbs, result, lost } };
 }
 
+// The house job's lines (housejob.mjs). finished means she got as far as LEAVE. A re-entry is either
+// walking back into a house mid-job, or a new job on a house she had been in before: the soak's 41
+// of 79 were both kinds, so the two are kept apart here to show which one is left.
+export function houseJobs(lines) {
+  const list = (Array.isArray(lines) ? lines : []).filter((l) => isObj(l) && l.t === 'house');
+  const ends = list.filter((l) => l.kind === 'end');
+  const opens = list.filter((l) => l.kind === 'open');
+  const why = new Map();
+  for (const e of ends) why.set(String(e.why || '?'), (why.get(String(e.why || '?')) || 0) + 1);
+  const rooms = ends.filter((e) => num(e.rooms) > 0);
+  return {
+    opened: opens.length, ended: ends.length, finished: ends.filter((e) => e.finished).length,
+    roomsPerHouse: rooms.length ? rooms.reduce((a, e) => a + num(e.roomsSearched), 0) / rooms.length : 0,
+    houses: rooms.length, walkedBack: ends.reduce((a, e) => a + num(e.reentries), 0),
+    revisits: opens.filter((o) => o.revisit).length, why,
+    pauses: list.filter((l) => l.kind === 'pause').length,
+  };
+}
+
 // How the outcomes of a set of decisions went. Failures count orders that reported; damage, chasing
 // and death count orders whose follow-up window has closed, because only those have an `after`.
 function outcomeTally(recs) {
@@ -390,6 +409,18 @@ export function buildReport({ decisions = [], nudges = [], from = null }) {
     const b = stuck.back;
     const verbs = [...b.verbs].sort((x, y) => y[1] - x[1]).map(([v, n]) => `${v} ${n}`).join(', ');
     line(`  Turns handed back to the brain ${b.n}: ${verbs}. Orders done ${b.result.done}, failed ${b.result.failed}, replaced or unfinished ${b.result.other}; ${Math.round(b.lost)} hp lost during and after.`);
+  }
+
+  line();
+  line('House jobs (in, shut, look, search, leave)');
+  const jobs = houseJobs(inRange);
+  if (!jobs.opened && !jobs.ended) {
+    line('  No house jobs logged.');
+  } else {
+    const ended = [...jobs.why].sort((a, b) => b[1] - a[1]).map(([w, n]) => `${w} ${n}`).join(', ');
+    line(`  ${jobs.opened} started, ${jobs.finished} of ${jobs.ended} ended finished (${pct(jobs.finished, jobs.ended)}). ${Math.round(jobs.roomsPerHouse * 10) / 10} rooms searched per house, over ${jobs.houses} houses.`);
+    line(`  Re-entries: ${jobs.walkedBack + jobs.revisits} (${jobs.walkedBack} walked back in during a job, ${jobs.revisits} new jobs on a house already visited). Paused by a threat ${jobs.pauses} times.`);
+    if (ended) line(`  How they ended: ${ended}.`);
   }
 
   line();

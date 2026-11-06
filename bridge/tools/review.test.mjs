@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildReport, groupMissing, failures, harmful, deathsByCause, sessionEnds, reflexSplit, reflexByStance, criticReview, stuckInChase, main } from './review.mjs';
+import { buildReport, groupMissing, failures, harmful, deathsByCause, sessionEnds, reflexSplit, reflexByStance, criticReview, stuckInChase, houseJobs, main } from './review.mjs';
 import { joinRecords } from '../decisions.mjs';
 
 const REVIEW = fileURLToPath(new URL('./review.mjs', import.meta.url));
@@ -37,6 +37,35 @@ const NUDGES = [
   nudge('2026-11-05T09:01:00Z', { pick: null, pickKey: null, missing: 'Climb the fence over the low wall', situation: 'inside, night, not chased, tired' }),
   nudge('2026-11-05T09:02:00Z', { pick: null, pickKey: null, missing: 'pick the lock' }),
 ];
+
+const house = (kind, o = {}) => ({ t: 'house', at: '2026-11-05T10:00:00Z', run: 'r', kind, bldg: 'h1', ...o });
+const JOBS = [
+  house('open', { stage: 'IN', revisit: false }),
+  house('stage', { from: 'IN', stage: 'SHUT', why: 'inside' }),
+  house('pause', { stage: 'SEARCH', why: 'chased' }),
+  house('end', { stage: 'LEAVE', why: 'next house', finished: true, rooms: 6, roomsSearched: 6, reentries: 1 }),
+  house('open', { bldg: 'h2', stage: 'IN', revisit: true }),
+  house('end', { bldg: 'h2', stage: 'SEARCH', why: 'threat', finished: false, rooms: 4, roomsSearched: 1, reentries: 0 }),
+  house('open', { bldg: 'h3', stage: 'IN', revisit: false }),
+  house('end', { bldg: 'h3', stage: 'IN', why: 'no way in', finished: false, rooms: 0, roomsSearched: 0, reentries: 0 }),
+];
+
+test('house jobs: finished, rooms per house and re-entries, and a job she never got into is no house', () => {
+  const j = houseJobs(JOBS);
+  assert.equal(j.opened, 3);
+  assert.equal(j.ended, 3);
+  assert.equal(j.finished, 1);
+  assert.equal(j.houses, 2);
+  assert.equal(j.roomsPerHouse, 3.5);
+  assert.equal(j.walkedBack, 1);
+  assert.equal(j.revisits, 1);
+  assert.equal(j.pauses, 1);
+  const text = buildReport({ decisions: JOBS, nudges: [] });
+  assert.match(text, /3 started, 1 of 3 ended finished \(33%\)\. 3\.5 rooms searched per house, over 2 houses\./);
+  assert.match(text, /Re-entries: 2 \(1 walked back in during a job, 1 new jobs on a house already visited\)/);
+  assert.match(text, /How they ended: next house 1, threat 1, no way in 1\./);
+  assert.match(buildReport({ decisions: [], nudges: [] }), /No house jobs logged\./);
+});
 
 test('the report counts agreement overall and by situation', () => {
   const text = buildReport({ decisions: DECISIONS, nudges: NUDGES });
