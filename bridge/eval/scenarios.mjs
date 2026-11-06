@@ -54,6 +54,7 @@ export function buildScenario(s, now = 1_000_000) {
   if (seed.base) memory.base = seed.base;
   if (seed.stashes) memory.stashes = seed.stashes;
   if (seed.haul) memory.haul = seed.haul;
+  if (seed.explored) memory.explored = seed.explored;
   updateMemory(memory, percept, now, { home: s.plan && s.plan.home });
   const history = (s.history || []).map((h, i) => ({
     id: `h${i}`, seq: i + 1, at: now - 1000 * Number(h.ago || 0), run: null, by: 'model', result: null, why: '', hp: 0, lost: 0, chase: 0, ...h,

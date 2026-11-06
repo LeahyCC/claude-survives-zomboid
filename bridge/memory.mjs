@@ -35,7 +35,7 @@ export const STRIKE_MEMORY_MS = 60 * 60_000;
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 export function emptyMemory() {
-  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [], crowd: emptyCrowd(), strikes: {}, base: null, stashes: {}, haul: null };
+  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [], crowd: emptyCrowd(), strikes: {}, base: null, stashes: {}, haul: null, explored: [] };
 }
 
 // An old or hand-edited pz-state.json must not crash the bridge.
@@ -54,6 +54,9 @@ export function loadMemory(raw) {
     for (const [k, v] of Object.entries(raw.strikes)) {
       if (v && Number.isFinite(Number(v.n)) && Number.isFinite(Number(v.at))) m.strikes[k] = { n: Number(v.n), at: Number(v.at) };
     }
+  }
+  if (Array.isArray(raw.explored)) {
+    m.explored = raw.explored.filter((e) => e && Number.isFinite(Number(e.x)) && Number.isFinite(Number(e.y))).slice(-MAX_EXPLORED);
   }
   if (raw.base && typeof raw.base.id === 'string') m.base = { id: raw.base.id, at: num(raw.base.at) };
   if (raw.stashes && typeof raw.stashes === 'object') {
@@ -135,6 +138,8 @@ function applyResult(mem, p, now, hours) {
       noteStash(mem, b.id, why, hours);
     } else if (r.verb === 'DROP') {
       mem.haul = null;
+    } else if (r.verb === 'GOTO' && order && order.key === 'EXPLORE') {
+      noteExplored(mem, num(p.x), num(p.y));
     }
     return;
   }
@@ -146,7 +151,10 @@ function applyResult(mem, p, now, hours) {
   if (r.verb === 'STASH' && why === 'nothing to stash') mem.haul = null;
   if (order) {
     mem.fails[order.key] = { why, at: now };
-    if (r.verb === 'ENTER' && why === 'zombie') {
+    // A way in that is not clear (a zombie) or not there at all (unreachable: a house with no door
+    // she can path to) both wait longer each time. At 90 s flat she walked back to the same
+    // doorless house every other order (2026-11-06).
+    if (r.verb === 'ENTER' && (why === 'zombie' || why === 'unreachable')) {
       const old = mem.strikes[order.key];
       mem.strikes[order.key] = { n: (old && now - num(old.at) < STRIKE_MEMORY_MS ? old.n : 0) + 1, at: now };
     }
@@ -284,12 +292,22 @@ function enterZombieWait(mem, key) {
   return Math.min(ENTER_ZOMBIE_MAX_MS, ENTER_ZOMBIE_MS * 2 ** (n - 1));
 }
 
+// Where her explore walks ended. The next walk heads for ground none of them covered, so she
+// works outward instead of walking the same 25 tiles north and back (2026-11-06).
+export const MAX_EXPLORED = 40;
+export function noteExplored(mem, x, y) {
+  if (!Array.isArray(mem.explored)) mem.explored = [];
+  mem.explored.push({ x: Math.round(x), y: Math.round(y) });
+  mem.explored = mem.explored.slice(-MAX_EXPLORED);
+}
+
 export function blockedWhy(mem, key, now = Date.now()) {
   const f = mem.fails[key];
   if (!f) return '';
   // The mod names the container in this why ("nothing came out of Mug"), so match its start.
   const dry = String(f.why || '').startsWith('nothing came out') ? 5 * 60_000 : undefined;
-  const wait = f.why === 'zombie' && String(key).startsWith('ENTER:') ? enterZombieWait(mem, key) : RETRY_MS[f.why] ?? dry ?? DEFAULT_RETRY_MS;
+  const strike = (f.why === 'zombie' || f.why === 'unreachable') && String(key).startsWith('ENTER:');
+  const wait = strike ? enterZombieWait(mem, key) : RETRY_MS[f.why] ?? dry ?? DEFAULT_RETRY_MS;
   if (now - num(f.at) < wait) return f.why || 'failed';
   delete mem.fails[key];
   return '';

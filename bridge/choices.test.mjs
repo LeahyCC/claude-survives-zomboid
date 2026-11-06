@@ -637,3 +637,23 @@ test('the bounce block gives way to getting home for the night', () => {
   const m = withOrders(moment(out, { ...PAIR_MEM(), current: '11' }, { goal: 'home', steps: [], home: '12' }), back);
   assert.ok(menu(m).some((o) => o.key === 'ENTER:12'), 'home stays on the menu at night');
 });
+
+// Live 2026-11-06: every explore walk was the same 25 tiles north, then back home, then north again.
+test('explore heads for ground her earlier explore walks did not cover', () => {
+  const p = { ...PAIR, x: 10650, y: 9826, hoursAlive: 6 };
+  const first = byId(menu(withOrders(moment(p, PAIR_MEM()), [])), 'explore');
+  assert.ok(first, 'explore is offered');
+  const ended = { x: first.a, y: first.b };
+  const next = byId(menu(withOrders(moment(p, { ...PAIR_MEM(), explored: [ended] }), [])), 'explore');
+  assert.ok(next, 'still offered');
+  assert.ok(Math.hypot(next.a - ended.x, next.b - ended.y) >= 20, 'the next walk ends somewhere new');
+  // All eight 25-tile ends covered: she goes further out.
+  const ring = [];
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4;
+    ring.push({ x: Math.round(10650 + Math.cos(a) * 25), y: Math.round(9826 + Math.sin(a) * 25) });
+  }
+  const far = byId(menu(withOrders(moment(p, { ...PAIR_MEM(), explored: ring }), [])), 'explore');
+  assert.ok(Math.hypot(far.a - 10650, far.b - 9826) >= 45, 'a longer walk once the near ring is done');
+  assert.match(far.label, /50 tiles/);
+});

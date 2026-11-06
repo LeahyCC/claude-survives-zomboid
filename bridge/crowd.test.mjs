@@ -275,6 +275,17 @@ test('a failed ENTER with zombies stays off for 5 minutes, then 10, 20 and at mo
   assert.equal(m.memory.strikes[key].n, 5);
 });
 
+// Live 2026-11-06: a house with no door she could reach, retried every 90 s.
+test('an unreachable house waits longer each time, like a zombie at the door', () => {
+  const m = scene();
+  const key = 'ENTER:next';
+  failEnter(m, 1, 'unreachable');
+  assert.ok(blockedWhy(m.memory, key, m.at + 4 * MIN), 'off for 5 minutes, not 90 s');
+  failEnter(m, 2, 'unreachable');
+  assert.ok(blockedWhy(m.memory, key, m.at + 9 * MIN), 'then 10');
+  assert.equal(m.memory.strikes[key].n, 2);
+});
+
 test('the strikes are saved, forgotten after an hour, and cleared by getting in', () => {
   const m = scene();
   failEnter(m, 1);
@@ -293,7 +304,7 @@ test('other failures keep their own timers: a locked door 20 minutes, a zombie o
   const m = scene();
   failEnter(m, 1, 'locked');
   assert.ok(blockedWhy(m.memory, 'ENTER:next', m.at + 19 * MIN));
-  assert.equal(m.memory.strikes['ENTER:next'], undefined, 'only "zombie" is a strike');
+  assert.equal(m.memory.strikes['ENTER:next'], undefined, 'a locked door is not a strike');
   m.memory.fails['SEARCH:h1'] = { why: 'zombie', at: m.at };
   assert.ok(blockedWhy(m.memory, 'SEARCH:h1', m.at + 20_000));
   assert.equal(blockedWhy(m.memory, 'SEARCH:h1', m.at + 31_000), '');

@@ -208,6 +208,30 @@ function oldBaseOption(p, mem, now, avoid) {
   return { prio: 9.6, id: 'oldbase', ...order, label: `go back to your old base ${tiles(d)} ${compass(tx, ty)}, ${count(rows[0].n, 'thing')} stashed there` };
 }
 
+// An explore walk to ground she has not covered: the first of the eight headings (starting from
+// one that turns with the hour) whose end is clear of zombies and further than EXPLORE_GAP from
+// where every earlier explore walk ended. When all are covered at 25 tiles, try 50, then 80.
+export const EXPLORE_GAP = 20;
+function exploreWalk(p, mem, avoid) {
+  const done = Array.isArray(mem.explored) ? mem.explored : [];
+  const turn = Math.floor(num(p.hoursAlive)) % 8;
+  const x0 = num(p.x);
+  const y0 = num(p.y);
+  for (const len of [25, 50, 80]) {
+    for (let k = 0; k < 8; k++) {
+      const a = (((turn + k) % 8) * Math.PI) / 4;
+      const dx = Math.round(Math.cos(a) * len);
+      const dy = Math.round(Math.sin(a) * len);
+      if (!pathClear(dx, dy, avoid)) continue;
+      if (done.some((e) => Math.hypot(e.x - (x0 + dx), e.y - (y0 + dy)) < EXPLORE_GAP)) continue;
+      return { dx, dy, len, a: Math.round(x0 + dx), b: Math.round(y0 + dy) };
+    }
+  }
+  // Everything near is covered: the plain walk, so she still moves.
+  const w = walkOption(p, avoid, null, 25);
+  return w && { ...w, len: 25 };
+}
+
 // A GOTO a fixed length away in the first heading that keeps clear of idle zombies.
 function walkOption(p, avoid, heading, length) {
   const tries = heading ? [heading] : [];
@@ -396,12 +420,10 @@ export function buildOptions(p, mem, ctx = {}) {
   const hereId = !outdoors && p.inBldg && p.inBldg.id != null ? String(p.inBldg.id) : null;
   const hereDone = !!hereId && !!(building(mem, hereId) || {}).searched;
   if ((outdoors || hereDone || leaving) && !newPlaces && !blockedWhy(mem, 'EXPLORE', now)) {
-    const turn = Math.floor(num(p.hoursAlive)) % 8;
-    const a = (turn * Math.PI) / 4;
-    const w = walkOption(p, avoid, { dx: Math.round(Math.cos(a) * 25), dy: Math.round(Math.sin(a) * 25) }, 25);
+    const w = exploreWalk(p, mem, avoid);
     if (w) {
       out.push({ prio: outdoors ? 12 : 7, id: 'explore', verb: 'GOTO', a: w.a, b: w.b, target: '', key: 'EXPLORE',
-        label: `walk ${tiles(25)} ${compass(w.dx, w.dy)} to look for new houses` });
+        label: `walk ${tiles(w.len)} ${compass(w.dx, w.dy)} to look for new houses` });
     }
   }
 

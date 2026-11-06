@@ -233,7 +233,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `fill` | FILL | inside, a tap here, an empty bottle carried |
 | `rest` | REST | endurance under 0.6, no chaser |
 | `away` | GOTO | an idle zombie within 12, or a chaser: 15 tiles in the clearest direction away |
-| `explore` | GOTO | no new building on the menu, and outside or inside a searched building: 25 tiles in a clear direction. From inside it sits above walking into a house she has already searched. At the LEAVE stage of a house job it is on the menu when no next house fits, searched or not |
+| `explore` | GOTO | no new building on the menu, and outside or inside a searched building: 25 tiles in a clear direction whose end is at least 20 tiles from where every earlier explore walk ended (`mem.explored`, the last 40). When all eight 25-tile ends are covered she tries 50, then 80 (`exploreWalk`). From inside it sits above walking into a house she has already searched. At the LEAVE stage of a house job it is on the menu when no next house fits, searched or not |
 | `leave` | GOTO | the LEAVE stage of a house job: to the door she came in by or the nearest door the map knows, if the walk is clear |
 | `clear` | CLEAR | the CLEAR stage of a house job, unless a CLEAR just failed |
 | `wait` | WAIT | nothing is running |
@@ -255,7 +255,7 @@ A gun is not a melee weapon. The percept names the one in her hand in `heldGun` 
 
 `res.target` says what the running job works on, so a restart of the bridge mid-job still knows. If the bridge has no record of the order, `ENTER`, `SEARCH` and `SECURE` use the building id in it as their option key, and a `GOTO` is matched by its `x,y` against this turn's walks. Otherwise the verb alone stands for the job, as before.
 
-A failed order stays off the menu for a while, so `stuck` is not resent straight away. Most fails wait 45 seconds. `stuck` 60, `unreachable` 90, `locked` 20 minutes, `too soon` 5 minutes. A search that fails `nothing left` marks the building searched for good.
+A failed order stays off the menu for a while, so `stuck` is not resent straight away. Most fails wait 45 seconds. `stuck` 60, `unreachable` 90, `locked` 20 minutes, `too soon` 5 minutes. An ENTER that fails `zombie` or `unreachable` is a strike: 5 minutes, then double each time within the hour, at most 30. A search that fails `nothing left` marks the building searched for good.
 
 ## Policy
 
