@@ -8,7 +8,9 @@ import { buildOptions, setSearchLog } from './options.mjs';
 import { decidePolicy } from './policy.mjs';
 import { planTurn } from './brain.mjs';
 import { updateMemory, recordOrder, loadMemory, memorySlice } from './memory.mjs';
-import { drainJobEvents, jobLimit, doneWith, MAX_LIMIT, MIN_LIMIT, MAX_REENTRIES, LOOK_MIN, LOOK_MAX, STALL_MAX, LEAVE_MAX, REVISIT_HOURS } from './housejob.mjs';
+import { drainJobEvents, jobLimit, doneWith, clearBlock, jobLine, MAX_LIMIT, MIN_LIMIT, MAX_REENTRIES, LOOK_MIN, LOOK_MAX, STALL_MAX, LEAVE_MAX, REVISIT_HOURS, CLEAR_MAX, CLEAR_MIN_HP } from './housejob.mjs';
+import { holdReason, running } from './senses.mjs';
+import { orderLine } from './brain.mjs';
 
 setSearchLog(() => {});
 const NOW = 1_000_000;
@@ -162,10 +164,10 @@ test('LOOK: a short wait, then on to SEARCH when nothing is in the house', () =>
   assert.equal(stage(m), 'SEARCH');
 });
 
-test('LOOK: a zombie in the house holds her a while, then she goes. With a pack the house is over', () => {
+test('LOOK: a zombie she cannot take on holds her a while, then she goes. With a pack the house is over', () => {
   const one = [{ d: 9, dx: 9, dy: 0, inside: true, wall: true }];
   const m = scene();
-  look(m, inHouse());
+  look(m, inHouse({ weapon: 'none', weaponScore: 0, weapons: [] }));
   const first = sendPolicy(m);
   done(m, first.seq, 'SECURE', 'closed 1 door', { zList: one });
   look(m, { res: null }, 3);
@@ -187,13 +189,23 @@ test('LOOK: a zombie in the house holds her a while, then she goes. With a pack 
   assert.equal(policy(n).option.target, 'next');
 });
 
-test('LOOK: a downed zombie in the house does not hold her', () => {
+test('LOOK: a downed zombie in the house does not hold her, and with no weapon she goes on to SEARCH', () => {
+  const m = scene();
+  look(m, inHouse({ weapon: 'none', weaponScore: 0, weapons: [] }));
+  const { seq } = sendPolicy(m);
+  done(m, seq, 'SECURE', 'closed 1 door', { zList: [{ d: 9, dx: 9, dy: 0, inside: true, wall: true, down: true }] });
+  look(m, { res: null }, 3);
+  assert.equal(stage(m), 'SEARCH');
+});
+
+test('LOOK: a downed zombie holds SEARCH all the same, so with a weapon she goes and finishes it', () => {
   const m = scene();
   look(m, inHouse());
   const { seq } = sendPolicy(m);
   done(m, seq, 'SECURE', 'closed 1 door', { zList: [{ d: 9, dx: 9, dy: 0, inside: true, wall: true, down: true }] });
   look(m, { res: null }, 3);
-  assert.equal(stage(m), 'SEARCH');
+  const moves = drainJobEvents(m.memory).filter((e) => e.kind === 'stage').map((e) => [e.from, e.stage, e.why]);
+  assert.deepEqual(moves.slice(-2), [['LOOK', 'SEARCH', 'quiet'], ['SEARCH', 'CLEAR', 'idle zombie inside']]);
 });
 
 test('SEARCH: the policy sends SEARCH, and again while rooms are left and it got further', () => {
@@ -520,4 +532,222 @@ test('the prompt says there is a job when the model is asked in the middle of on
   assert.equal(plan.kind, 'ask');
   assert.match(plan.user, /HOUSE JOB: searching this house, 4 rooms left/);
   assert.equal(plan.options.some((o) => o.verb === 'ENTER' || o.verb === 'GOTO'), false);
+});
+
+// ---------- CLEAR ----------
+const IDLE = { d: 7, dx: 7, dy: 0, chase: false, inside: true };
+const ARMED = { hp: 100, weapon: 'Baseball Bat', weaponScore: 34, weapons: [{ n: 'Baseball Bat', reach: 1.25, score: 34 }] };
+const WEAK = { hp: 100, weapon: 'Rolling Pin', weaponScore: 12, weapons: [{ n: 'Rolling Pin', reach: 1.1, score: 12 }] };
+const fit = (patch = {}) => ({ ...ARMED, zList: [IDLE], moodle: {}, endurance: 1, bleeding: 0, zChasing: 0, ...patch });
+
+test('clearBlock: one idle zombie, a melee weapon, 70 hp, not bleeding and nothing after her is a yes', () => {
+  assert.equal(clearBlock(fit()), '');
+  assert.equal(clearBlock(fit(WEAK)), '', 'any melee weapon takes on one');
+  assert.equal(clearBlock(fit({ hp: CLEAR_MIN_HP })), '');
+  assert.equal(clearBlock(fit({ moodle: { tired: 3 } })), '', 'tired does not stop her from taking on one, as in the reflex');
+});
+
+test('clearBlock: two take a weapon at the strong line. Three are too many for anything', () => {
+  assert.equal(clearBlock(fit({ zList: [IDLE, IDLE] })), '');
+  assert.equal(clearBlock(fit({ weaponScore: 30, zList: [IDLE, IDLE] })), '');
+  assert.equal(clearBlock(fit({ weaponScore: 29, zList: [IDLE, IDLE] })), 'too many inside');
+  assert.equal(clearBlock(fit({ zList: [IDLE, IDLE, IDLE] })), 'too many inside');
+  assert.equal(clearBlock(fit({ zList: [IDLE, { ...IDLE, crawl: true }], ...WEAK })), 'too many inside', 'a crawler is in the house too');
+});
+
+test('clearBlock: each no', () => {
+  assert.equal(clearBlock(fit({ zList: [] })), 'nobody inside');
+  assert.equal(clearBlock(fit({ zList: [{ ...IDLE, inside: false }] })), 'nobody inside', 'one outside is not hers to clear');
+  assert.equal(clearBlock(fit({ zList: [{ ...IDLE, chase: true }] })), 'chased');
+  assert.equal(clearBlock(fit({ zChasing: 1 })), 'chased');
+  assert.equal(clearBlock(fit({ zList: [IDLE, { d: 20, dx: 20, dy: 0, chase: true, inside: false }] })), 'chased');
+  assert.equal(clearBlock(fit({ weapon: 'none', weaponScore: 0, weapons: [] })), 'no melee weapon');
+  assert.equal(clearBlock(fit({ weapon: 'none', weaponScore: 0, weapons: [], heldGun: 'Pistol' })), 'no melee weapon');
+  assert.equal(clearBlock(fit({ hp: CLEAR_MIN_HP - 1 })), 'hurt');
+  assert.equal(clearBlock(fit({ bleeding: 1 })), 'bleeding');
+});
+
+test('clearBlock: no with what the reflex would not fight with or through', () => {
+  assert.equal(clearBlock(fit({ weapon: 'Kitchen Knife', weaponScore: 9, weapons: [{ n: 'Kitchen Knife', reach: 0.9, score: 9 }] })), 'weapon too short');
+  assert.equal(clearBlock(fit({ endurance: 0.29 })), 'not fit to fight');
+  assert.equal(clearBlock(fit({ moodle: { panic: 3 } })), 'not fit to fight');
+  assert.equal(clearBlock(fit({ moodle: { heavy: 2 } })), 'not fit to fight');
+  assert.equal(clearBlock(fit({ moodle: { tired: 3 }, zList: [IDLE, IDLE] })), 'not fit to fight');
+});
+
+// In the house at LOOK, with nothing in it yet.
+function looking(patch = {}) {
+  const m = scene();
+  look(m, inHouse({ ...ARMED, ...patch }));
+  const secure = sendPolicy(m);
+  done(m, secure.seq, 'SECURE', 'closed 1 door', { res: { seq: secure.seq, verb: 'SECURE', status: 'done', why: 'closed 1 door', target: 'h1' } });
+  assert.equal(stage(m), 'LOOK');
+  drainJobEvents(m.memory);
+  return m;
+}
+const clearing = () => {
+  const m = looking();
+  look(m, { zList: [IDLE], res: null });
+  assert.equal(stage(m), 'CLEAR');
+  return m;
+};
+const lastStage = (m) => drainJobEvents(m.memory).filter((e) => e.kind === 'stage').pop();
+
+test('LOOK: one idle zombie inside goes to CLEAR at once, and the house line says so', () => {
+  const m = looking();
+  look(m, { zList: [IDLE], res: null });
+  assert.equal(stage(m), 'CLEAR');
+  const e = lastStage(m);
+  assert.equal(e.from, 'LOOK');
+  assert.equal(e.stage, 'CLEAR');
+  assert.equal(e.why, 'idle zombie inside');
+});
+
+test('LOOK: when the gate says no it waits and then leaves, as before', () => {
+  for (const patch of [{ hp: 60 }, { weapon: 'none', weaponScore: 0, weapons: [] }, { ...WEAK, zList: [IDLE, IDLE] }]) {
+    const m = looking();
+    look(m, { zList: [IDLE], res: null, ...patch });
+    assert.equal(stage(m), 'LOOK', JSON.stringify(patch));
+    look(m, {}, LOOK_MAX / MIN + 1);
+    assert.equal(stage(m), 'LEAVE');
+  }
+});
+
+test('LOOK: a gate that opens while she waits goes to CLEAR', () => {
+  const m = looking();
+  look(m, { zList: [IDLE], res: null, hp: 60 });
+  assert.equal(stage(m), 'LOOK');
+  look(m, { hp: 80 }, 1);
+  assert.equal(stage(m), 'CLEAR');
+});
+
+test('SEARCH: an idle zombie that holds it goes to CLEAR, and a running SEARCH is left to run', () => {
+  const m = searching(ARMED);
+  look(m, { zList: [IDLE], res: { seq: 9, verb: 'SEARCH', status: 'running', why: '', target: 'h1' } }, 1);
+  assert.equal(stage(m), 'SEARCH');
+  look(m, { res: { seq: 9, verb: 'SEARCH', status: 'failed', why: 'zombie', target: 'h1' } }, 1);
+  assert.equal(stage(m), 'CLEAR');
+  assert.equal(menu(m).some((o) => o.id === 'search'), false);
+});
+
+test('SEARCH: with the gate shut it stalls out and leaves, as before', () => {
+  const m = searching({ hp: 60 });
+  look(m, { zList: [IDLE], res: null }, 1);
+  assert.equal(stage(m), 'SEARCH');
+  look(m, {}, STALL_MAX / MIN / 2);
+  look(m, {}, STALL_MAX / MIN / 2 + 1);
+  assert.equal(stage(m), 'LEAVE');
+});
+
+test('CLEAR: the policy sends it with nothing walking on the menu, ahead of the small things', () => {
+  const m = clearing();
+  look(m, { thirst: 0.3, inv: { waterL: 0.5 } });
+  const got = policy(m);
+  assert.equal(got.rule, 'house-job');
+  assert.equal(got.option.verb, 'CLEAR');
+  assert.equal(got.option.key, 'CLEAR:h1');
+  assert.equal(menu(m).some((o) => o.verb === 'ENTER' || o.verb === 'GOTO'), false);
+  assert.match(orderLine(1, got.option, 't'), /^1\|CLEAR\|/);
+  assert.match(jobLine(m.memory, m.percept), /killing the zombie/);
+});
+
+test('CLEAR: while it runs the bridge counts it as busy and sends nothing', () => {
+  const m = clearing();
+  const { seq } = sendPolicy(m);
+  look(m, { res: { seq, verb: 'CLEAR', status: 'running', why: '', target: 'h1' } }, 1);
+  assert.deepEqual(running(m.percept), { seq, verb: 'CLEAR' });
+  assert.notEqual(policy(m)?.rule, 'house-job');
+  assert.equal(stage(m), 'CLEAR');
+});
+
+test('CLEAR done goes back to LOOK, listens again, then SEARCH', () => {
+  const m = clearing();
+  const { seq } = sendPolicy(m);
+  done(m, seq, 'CLEAR', 'cleared', { zList: [] });
+  assert.equal(stage(m), 'LOOK');
+  const e = lastStage(m);
+  assert.equal(e.from, 'CLEAR');
+  assert.equal(e.why, 'cleared');
+  assert.equal(policy(m).option.verb, 'WAIT');
+  look(m, {}, LOOK_MIN / MIN + 1);
+  assert.equal(stage(m), 'SEARCH');
+  assert.equal(policy(m).option.verb, 'SEARCH');
+});
+
+test('CLEAR failed goes to LEAVE with the why in the house line', () => {
+  for (const why of ['another floor', 'locked door', 'out of reach', 'a second one woke']) {
+    const m = clearing();
+    const { seq } = sendPolicy(m);
+    failed(m, seq, 'CLEAR', why);
+    assert.equal(stage(m), 'LEAVE');
+    const e = lastStage(m);
+    assert.equal(e.from, 'CLEAR');
+    assert.equal(e.why, `clear failed: ${why}`);
+  }
+});
+
+test('CLEAR: the zombie turning on her pauses the job, and the result still counts when it ends', () => {
+  const m = clearing();
+  const { seq } = sendPolicy(m);
+  look(m, { zList: [{ ...IDLE, d: 2, chase: true }], zChasing: 1, res: { seq, verb: 'CLEAR', status: 'running', why: '', target: 'h1' } }, 1);
+  assert.equal(m.memory.job.paused, 'chased');
+  assert.equal(stage(m), 'CLEAR');
+  look(m, { zList: [], zChasing: 0, res: { seq, verb: 'CLEAR', status: 'done', why: 'cleared', target: 'h1' } }, 1);
+  assert.equal(stage(m), 'LOOK');
+});
+
+test('CLEAR: a result left from an earlier CLEAR does not count for the next one', () => {
+  const m = clearing();
+  const first = sendPolicy(m);
+  done(m, first.seq, 'CLEAR', 'cleared', { zList: [] });
+  assert.equal(stage(m), 'LOOK');
+  look(m, { zList: [IDLE] }, 1);
+  assert.equal(stage(m), 'CLEAR', 'another one came in, with the old done still in the percept');
+  look(m, {}, 1);
+  assert.equal(stage(m), 'CLEAR');
+});
+
+test('CLEAR not yet sent: the zombie gone goes to LOOK, the gate shut or too long goes to LEAVE', () => {
+  const gone = clearing();
+  look(gone, { zList: [] }, 1);
+  assert.equal(stage(gone), 'LOOK');
+  assert.equal(lastStage(gone).why, 'zombie gone');
+
+  const hurt = clearing();
+  look(hurt, { hp: 60 }, 1);
+  assert.equal(stage(hurt), 'LEAVE');
+  assert.equal(lastStage(hurt).why, 'clear called off: hurt');
+
+  const held = clearing();
+  held.memory.fails['CLEAR:h1'] = { why: 'stuck', at: held.at };
+  assert.equal(menu(held).some((o) => o.id === 'clear'), false);
+  look(held, {}, CLEAR_MAX / MIN + 1);
+  assert.equal(stage(held), 'LEAVE');
+  assert.equal(lastStage(held).why, 'clear called off: time');
+});
+
+test('a CLEAR that failed a moment ago keeps her from going straight back to it', () => {
+  const m = looking();
+  m.memory.fails['CLEAR:h1'] = { why: 'stuck', at: m.at };
+  look(m, { zList: [IDLE], res: null });
+  assert.equal(stage(m), 'LOOK');
+});
+
+test('CLEAR: out of the house with nothing after her goes back in to LOOK, not to the order', () => {
+  const m = clearing();
+  look(m, { ...OUTSIDE, zList: [] }, 1);
+  assert.equal(stage(m), 'IN');
+  look(m, inHouse({ ...ARMED, zList: [] }), 1);
+  assert.equal(stage(m), 'LOOK');
+});
+
+test('holdReason: an idle one in the house past the reflex line lets the order out', () => {
+  const p = { zVisible: 1, zDist: 2.5, zList: [{ d: 2.5, dx: 2, dy: 1, chase: false, inside: true }] };
+  assert.equal(holdReason(p), '', 'the reflex leaves it alone at 2.5, so nobody would own it');
+  assert.match(holdReason({ ...p, zDist: 1.9, zList: [{ ...p.zList[0], d: 1.9 }] }), /inside 3/, 'inside the line it is the reflex fight');
+  assert.match(holdReason({ ...p, zList: [{ ...p.zList[0], inside: false }] }), /inside 3/, 'one outside stays as it was');
+  assert.match(holdReason({ ...p, zList: [{ ...p.zList[0], down: true }] }), /inside 3/, 'a downed one is the reflex stomp');
+  assert.match(holdReason({ ...p, zList: [{ ...p.zList[0], chase: true }] }), /chasing/);
+  assert.match(holdReason({ ...p, zList: [p.zList[0], { d: 1, dx: 1, dy: 0, chase: false, inside: true }] }), /inside 3/);
+  assert.match(holdReason({ zVisible: 1, zDist: 2.5 }), /inside 3/, 'with no list, distance alone');
 });

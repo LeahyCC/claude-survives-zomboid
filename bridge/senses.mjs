@@ -3,12 +3,16 @@
 
 export const HOLD_CHASE_R = 10;
 export const HOLD_ANY_R = 3;
+// The reflex leaves a zombie that has not noticed her alone until it is this close (Stance.N.UNAWARE_R).
+export const REFLEX_UNAWARE_R = 2;
 // The skills and needs verbs report done or failed themselves. MOVE and the older one-shot
 // verbs stay "running" forever, so they never count as busy.
-export const LONG_VERBS = new Set(['GOTO', 'ENTER', 'SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP']);
+export const LONG_VERBS = new Set(['GOTO', 'ENTER', 'SEARCH', 'LOOT', 'DRINK', 'FILL', 'EAT', 'SLEEP', 'BANDAGE', 'WEARBAG', 'SECURE', 'REST', 'DROP', 'CLEAR']);
 // Weapon scores come from Core.weaponScore (docs/combat.md): a kitchen knife is 9 and a hammer
 // 19, a crowbar 30. Under 20 is a weapon only in name. SWAP_GAIN is the mod's own swap rule.
 export const WEAK_WEAPON = 20;
+// The reflex's own line for a weapon that takes on two (Stance.N.STRONG).
+export const STRONG_WEAPON = 30;
 export const SWAP_GAIN = 1.25;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -70,7 +74,11 @@ export function holdReason(p) {
   // alone, so holding for it froze her for minutes in the live run. Let the brain move her on.
   if (p.zVisible !== undefined && num(p.zVisible) === 0) return '';
   const d = num(p.zDist, -1);
-  const close = zombies(p).some((z) => z.d <= HOLD_ANY_R) || (d >= 0 && d <= HOLD_ANY_R);
+  // An idle one in her house between the reflex's line and this one has no owner: the reflex leaves
+  // it alone, and a hold here would keep the order to go and kill it from ever being sent.
+  const near = zombies(p).filter((z) => z.d <= HOLD_ANY_R);
+  const leftAlone = (z) => z.inside && !z.chase && !z.down && !z.crawl && z.d > REFLEX_UNAWARE_R;
+  const close = near.some((z) => !leftAlone(z)) || (!near.length && d >= 0 && d <= HOLD_ANY_R);
   return close ? 'zombie inside 3 tiles' : '';
 }
 

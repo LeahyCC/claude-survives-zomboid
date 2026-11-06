@@ -35,6 +35,10 @@ Needs.N = {
   SLEEP_MIN = 0.3,      -- vanilla's "not tired enough" line
   REST_DONE = 0.8,
   REST_MAX = 7200,
+  CLEAR_MAX = 3600,     -- ticks one CLEAR may take, the fight included (a minute)
+  CLEAR_HIT = 1.5,      -- tiles: close enough to swing, the reflex's own bite line (Stance.N.BITE)
+  CLEAR_LEG = 600,      -- a leg of the walk still going after this many ticks is cut
+  CLEAR_CHASE_R = 15,   -- a chaser outside the house counts as woken this close (REACH_CHASE_R in senses.mjs)
 }
 
 -- ---------- pure choices ----------
@@ -189,6 +193,40 @@ function Needs.restCheck(endurance, chasing, sat)
   return "sit", ""
 end
 
+-- rows: { {d, inside, level, chase, current} }, the zombies in the house and any chaser near. level
+-- is on her floor, current is the one the order is after. Returns "woke", "floor", "none", or "go"
+-- and the index to go for. The one she is after may turn on her: that is the reflex's fight and the
+-- order carries on. Anyone else after her is the order's end, however it stands.
+function Needs.clearPick(rows)
+  local cur, best, upstairs, chasers = nil, nil, false, 0
+  for i, z in ipairs(rows or {}) do
+    if z.current and z.inside and z.level then cur = i end
+  end
+  for i, z in ipairs(rows or {}) do
+    if z.chase and i ~= cur then chasers = chasers + 1 end
+    if z.inside and not z.level then
+      upstairs = true
+    elseif z.inside then
+      local b = best and rows[best]
+      local zc, bc = z.chase and 1 or 0, b and b.chase and 1 or 0
+      if not b or zc > bc or (zc == bc and z.d < b.d) then best = i end
+    end
+  end
+  if chasers > (cur and 0 or 1) then return "woke" end
+  if cur or best then return "go", cur or best end
+  if upstairs then return "floor" end
+  return "none"
+end
+
+-- How far round the back of a zombie a square is: -1 dead behind, 1 dead in front, 0 when it is not
+-- known which way it faces. ox, oy is the square from the zombie, fx, fy the way it faces.
+function Needs.behindRank(ox, oy, fx, fy)
+  local ol = math.sqrt(ox * ox + oy * oy)
+  local fl = math.sqrt(fx * fx + fy * fy)
+  if ol < 0.01 or fl < 0.01 then return 0 end
+  return (ox * fx + oy * fy) / (ol * fl)
+end
+
 -- ---------- job engine ----------
 local function playerNum(p)
   local n = 0
@@ -304,7 +342,7 @@ function Needs.update(p, acted)
     return
   end
   if job.pausedAt then
-    if tick - job.pausedAt > Needs.N.PAUSE_MAX then return Needs.fail(job, "zombie") end
+    if tick - job.pausedAt > (job.pauseMax or Needs.N.PAUSE_MAX) then return Needs.fail(job, "zombie") end
     if tick - job.lastActed < Needs.N.PAUSE_CLEAR then return end
     job.pausedAt = nil
     -- The reflex left the action queued, so it was not cut off after all.
@@ -894,6 +932,85 @@ function Needs.secureStep(p, job, sec)
   return giveUp()
 end
 
+-- ---------- CLEAR engine ----------
+-- The zombies in the building, and any chaser near it, as Needs.clearPick wants them. ref is the
+-- zombie itself.
+local function clearRows(p, building, current)
+  local rows = {}
+  pcall(function()
+    local px, py, pz = p:getX(), p:getY(), math.floor(p:getZ())
+    local zl = getCell():getZombieList()
+    for i = 0, zl:size() - 1 do
+      local z = zl:get(i)
+      if Core.zombieAlive(z) then
+        local dx, dy = z:getX() - px, z:getY() - py
+        local d = math.sqrt(dx * dx + dy * dy)
+        local inBuilding = Sense.sameBuilding(building, z)
+        local chase = false
+        pcall(function() chase = z:getTarget() == p end)
+        if inBuilding or (chase and d <= Needs.N.CLEAR_CHASE_R) then
+          local level, down = true, false
+          pcall(function() level = math.floor(z:getZ()) == pz end)
+          pcall(function() down = z:isOnFloor() or z:isKnockedDown() or z:isCrawling() end)
+          table.insert(rows, { ref = z, d = d, inside = inBuilding, level = level, chase = chase,
+            down = down and true or false, current = z == current })
+        end
+      end
+    end
+  end)
+  return rows
+end
+
+-- The squares next to the zombie she could hit it from, with no wall or shut door between, the
+-- ones behind it first. { {sq, rank, d} }.
+function Needs.clearSpots(p, z, building)
+  local spots = {}
+  pcall(function()
+    local zx, zy, zz = math.floor(z:getX()), math.floor(z:getY()), math.floor(z:getZ())
+    local own = LS.Move.square(zx, zy, zz)
+    if not own then return end
+    local fx, fy = 0, 0
+    pcall(function() fx, fy = z:getForwardDirectionX(), z:getForwardDirectionY() end)
+    for dx = -1, 1 do
+      for dy = -1, 1 do
+        local sq = (dx ~= 0 or dy ~= 0) and LS.Move.square(zx + dx, zy + dy, zz) or nil
+        if sq and LS.Move.insideSquare(sq, building) and LS.Move.canStand(sq) then
+          local blocked = true
+          pcall(function() blocked = sq:isBlockedTo(own) end)
+          if not blocked then
+            table.insert(spots, { sq = sq, rank = Needs.behindRank(dx, dy, fx, fy), d = distTo(p, zx + dx, zy + dy, zz) })
+          end
+        end
+      end
+    end
+  end)
+  table.sort(spots, function(a, b)
+    if a.rank ~= b.rank then return a.rank < b.rank end
+    return a.d < b.d
+  end)
+  return spots
+end
+
+-- True when a shut door on the way is locked or boarded. Move.insideRoute counts every door as a
+-- way, since the walk opens them, and it cannot open these. A key she holds does not help here:
+-- only ENTER unlocks.
+function Needs.lockedOnRoute(p, route)
+  local cur = nil
+  pcall(function() cur = p:getSquare() end)
+  for _, sq in ipairs(route) do
+    local shut = false
+    pcall(function()
+      if cur:isDoorTo(sq) then
+        local door = cur:getDoorTo(sq)
+        shut = door:isBarricaded() or (not door:IsOpen() and (door:isLocked() or door:isLockedByKey()))
+      end
+    end)
+    if shut then return true end
+    cur = sq
+  end
+  return false
+end
+
 -- ---------- skills ----------
 -- Each is function(p, job). It reads the world, then either queues one thing (Needs.queued),
 -- finishes the job (Needs.done / Needs.fail), or returns to be stepped again.
@@ -1178,6 +1295,59 @@ skills.SECURE = function(p, job)
   end
 end
 
+-- Walk to a square next to a zombie in this building, from behind when there is a way, and kill it.
+-- From two tiles in the reflex takes the swing and the stomp itself, and this job pauses while it
+-- does (it also has the fight if the zombie turns). The job's own hit is for when the reflex stands
+-- aside. Once a leg ends it looks again, since an idle zombie wanders. The order is done when nobody
+-- is left in the house on her floor.
+skills.CLEAR = function(p, job)
+  local here = nil
+  pcall(function() here = p:getSquare() end)
+  if not job.building then
+    pcall(function() job.building = here:getBuilding() end)
+    if not job.building then return Needs.fail(job, "not inside") end
+    -- The fight is the point of this order, so a long one is not a failure.
+    job.pauseMax = Needs.N.CLEAR_MAX
+    local _, m = Sense.currentBuilding(p)
+    aim(job, m and m.id or "")
+    think(job, "One in here. Getting behind it.")
+  end
+  local stillIn = false
+  pcall(function() stillIn = here:getBuilding() == job.building end)
+  if not stillIn then return Needs.fail(job, "not inside") end
+  if LS.tick - job.startTick > Needs.N.CLEAR_MAX then return Needs.fail(job, "took too long") end
+  if not Core.holdingMelee(p) then return Needs.fail(job, "no weapon") end
+  local rows = clearRows(p, job.building, job.target)
+  local verdict, i = Needs.clearPick(rows)
+  if verdict == "woke" then return Needs.fail(job, "a second one woke") end
+  if verdict == "floor" then return Needs.fail(job, "another floor") end
+  if verdict == "none" then return Needs.done(job, job.target and "cleared" or "nobody inside") end
+  local t = rows[i]
+  job.target = t.ref
+  local function hit()
+    pcall(function() LS.Reflex.attack(p, t.ref, t.down) end)
+  end
+  if t.d <= Needs.N.CLEAR_HIT and not Sense.wallBetween(p, t.ref) then return hit() end
+  -- It is coming to her, and she does not walk into it.
+  if t.chase then return end
+  local locked = false
+  for _, spot in ipairs(Needs.clearSpots(p, t.ref, job.building)) do
+    local route = LS.Move.insideRoute(p, spot.sq, job.building)
+    if route and Needs.lockedOnRoute(p, route) then
+      locked = true
+    elseif route then
+      if #route == 0 then return hit() end
+      job.legs = (job.legs or 0) + 1
+      if job.legs > Needs.N.LEGS_MAX then return Needs.fail(job, "stuck") end
+      ISTimedActionQueue.clear(p)
+      ISTimedActionQueue.add(ISWalkToTimedAction:new(p, route[math.min(#route, LS.Move.ROUTE_LEG)]))
+      if not Needs.queued(p, job, Needs.N.CLEAR_LEG) then Needs.fail(job, "stuck") end
+      return
+    end
+  end
+  Needs.fail(job, locked and "locked door" or "out of reach")
+end
+
 skills.REST = function(p, job)
   local status, why = Needs.restCheck(stat(p, "ENDURANCE"), Needs.chasing(p), job.sat)
   if status == "fail" then return Needs.fail(job, why) end
@@ -1196,6 +1366,6 @@ skills.REST = function(p, job)
 end
 
 -- ---------- verbs ----------
-for _, verb in ipairs({ "DRINK", "FILL", "EAT", "SLEEP", "BANDAGE", "WEARBAG", "SECURE", "REST" }) do
+for _, verb in ipairs({ "DRINK", "FILL", "EAT", "SLEEP", "BANDAGE", "WEARBAG", "SECURE", "REST", "CLEAR" }) do
   LS.verbs[verb] = function(p, args) Needs.start(p, args, verb) end
 end

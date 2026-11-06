@@ -7,7 +7,7 @@ import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
 import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
-import { openJob, jobThreat, jobMenu, leaveOption, nextHouse, doneWith, crowded } from './housejob.mjs';
+import { openJob, jobThreat, jobMenu, leaveOption, clearOption, nextHouse, doneWith, crowded } from './housejob.mjs';
 import { crowdFor, isCrowded, areaCrowded, crowdText } from './crowd.mjs';
 
 export const MAX_OPTIONS = 8;
@@ -329,6 +329,8 @@ export function buildOptions(p, mem, ctx = {}) {
   if (heldByJob) {
     const leave = leaveOption(p, mem, job, (tx, ty) => pathClear(tx, ty, avoid), now);
     if (leave) out.push(leave);
+    const clear = clearOption(p, mem, job, now);
+    if (clear) out.push(clear);
     out = jobMenu(out, job, p);
   }
 
@@ -398,7 +400,7 @@ export function escapeOptions(p, mem, ctx = {}) {
 
 // The option key of the job now running. "keep" stands for it. The bridge's own record of the
 // order answers first. After a restart that record may be gone, and res.target says what the
-// body is working on: a building id for ENTER, SEARCH and SECURE, "x,y" for GOTO, which
+// body is working on: a building id for ENTER, SEARCH, SECURE and CLEAR, "x,y" for GOTO, which
 // has to match the end of one of this turn's walks. Otherwise null, and the verb alone is used.
 export function runningKey(p, mem, options = []) {
   const busy = running(p);
@@ -407,7 +409,7 @@ export function runningKey(p, mem, options = []) {
   if (order) return order.key;
   const target = typeof p.res.target === 'string' ? p.res.target.trim() : '';
   if (!target) return null;
-  if (busy.verb === 'ENTER' || busy.verb === 'SEARCH' || busy.verb === 'SECURE') return `${busy.verb}:${target}`;
+  if (busy.verb === 'ENTER' || busy.verb === 'SEARCH' || busy.verb === 'SECURE' || busy.verb === 'CLEAR') return `${busy.verb}:${target}`;
   if (busy.verb === 'GOTO') {
     const walk = options.find((o) => o.verb === 'GOTO' && `${o.a},${o.b}` === target);
     return walk ? walk.key : null;

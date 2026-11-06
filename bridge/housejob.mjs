@@ -5,6 +5,7 @@
 //   IN      walking to the house and getting inside
 //   SHUT    SECURE: doors, windows, curtains, lights
 //   LOOK    listen a moment for zombies in the house
+//   CLEAR   kill the one idle zombie in it, when she is fit to, then LOOK again
 //   SEARCH  SEARCH until no room worth it is left
 //   LEAVE   walk to the door she came in by, then on to the next house
 //
@@ -12,13 +13,13 @@
 // and the policy sends the order of the stage. The reflex still owns any danger. A real threat
 // pauses the job while she stays inside and ends it if it drives her out. docs/brain.md has the rules.
 
-import { zombies, reaches, chasing, heavy, isNight, inside, running, REACH_CHASE_R } from './senses.mjs';
+import { zombies, reaches, chasing, heavy, isNight, inside, running, heldGun, REACH_CHASE_R, STRONG_WEAPON } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit } from './memory.mjs';
 import { dist, compass } from './geom.mjs';
 import { tiles, count } from './words.mjs';
 import { crowdOfBuilding, isCrowded, areaCrowded } from './crowd.mjs';
 
-export const STAGES = ['IN', 'SHUT', 'LOOK', 'SEARCH', 'LEAVE'];
+export const STAGES = ['IN', 'SHUT', 'LOOK', 'CLEAR', 'SEARCH', 'LEAVE'];
 // All in game hours. Guides say "two hours of looting, not twelve" (BG42.20). 30 a room, not 15:
 // at the default day length 15 game minutes is about 37 real seconds, short for a full kitchen.
 const MIN = 1 / 60;
@@ -30,6 +31,11 @@ export const LOOK_MIN = 2 * MIN;
 export const LOOK_MAX = 10 * MIN;
 export const STALL_MAX = 10 * MIN;
 export const LEAVE_MAX = 15 * MIN;
+export const CLEAR_MAX = 20 * MIN;
+export const CLEAR_MIN_HP = 70;
+// The reflex stands and waits with a blade shorter than this (Reflex.shortBlade). An idle zombie
+// never comes, so she would stand two tiles from it until the order timed out.
+const SHORT_REACH = 1;
 // A gap longer than this in the clock is the game closed or a fast forward, not time spent on the job.
 const MAX_GAP = 0.5;
 export const PACK_N = 3;
@@ -135,6 +141,32 @@ export function dropJob(mem, why) {
   endJob(mem, why);
 }
 
+// Why she should not go and kill what is in this house, or '' when she should. Not as wide as the
+// reflex's fight rules: this is a fight she picks. The last line is what the reflex itself will not
+// fight through (Stance.gate): she would walk up to it and it would back her off, again and again.
+export function clearBlock(p) {
+  const here = zombies(p).filter((z) => z.inside);
+  if (!here.length) return 'nobody inside';
+  if (chasing(p) > 0) return 'chased';
+  if (String(p.weapon || 'none') === 'none' || heldGun(p)) return 'no melee weapon';
+  const held = (Array.isArray(p.weapons) ? p.weapons : []).find((w) => w && w.n === p.weapon);
+  if (held && Number.isFinite(held.reach) && held.reach < SHORT_REACH) return 'weapon too short';
+  if (here.length > (num(p.weaponScore) >= STRONG_WEAPON ? 2 : 1)) return 'too many inside';
+  if (num(p.hp, 100) < CLEAR_MIN_HP) return 'hurt';
+  if (num(p.bleeding) > 0) return 'bleeding';
+  const m = p.moodle || {};
+  if (num(p.endurance, 1) < 0.3 || num(m.panic) >= 3 || num(m.heavy) >= 2 || (num(m.tired) >= 3 && here.length > 1)) return 'not fit to fight';
+  return '';
+}
+
+const canClear = (mem, job, p, now) => !clearBlock(p) && !blockedWhy(mem, `CLEAR:${job.id}`, now);
+
+// The order's result is read from the percept, so one left there from an earlier CLEAR must not count.
+function toClear(mem, job, p) {
+  job.clearSeq = num(p.res && p.res.seq);
+  setStage(mem, job, 'CLEAR', 'idle zombie inside');
+}
+
 const standingInHouse = (p) => zombies(p).filter((z) => z.inside && !z.down && !z.crawl).length;
 
 // One step along the stages. True when something changed and it is worth looking again.
@@ -196,6 +228,10 @@ function advance(mem, job, p, now, threat) {
   }
   if (job.stage === 'LOOK') {
     if (standingInHouse(p) > 0) {
+      if (canClear(mem, job, p, now)) {
+        toClear(mem, job, p);
+        return true;
+      }
       if (waited < LOOK_MAX) return false;
       setStage(mem, job, 'LEAVE', 'zombie inside');
       return true;
@@ -203,6 +239,31 @@ function advance(mem, job, p, now, threat) {
     if (waited < LOOK_MIN) return false;
     setStage(mem, job, 'SEARCH', 'quiet');
     return true;
+  }
+  if (job.stage === 'CLEAR') {
+    const r = p.res;
+    if (r && r.verb === 'CLEAR' && num(r.seq) > num(job.clearSeq)) {
+      if (r.status === 'done') {
+        setStage(mem, job, 'LOOK', 'cleared');
+        return true;
+      }
+      if (r.status === 'failed') {
+        setStage(mem, job, 'LEAVE', `clear failed: ${r.why || 'unknown'}`);
+        return true;
+      }
+      return false;
+    }
+    // Not sent yet, or another order took its place. Things may have changed since the gate said yes.
+    const no = clearBlock(p);
+    if (no === 'nobody inside') {
+      setStage(mem, job, 'LOOK', 'zombie gone');
+      return true;
+    }
+    if (no || waited >= CLEAR_MAX) {
+      setStage(mem, job, 'LEAVE', `clear called off: ${no || 'time'}`);
+      return true;
+    }
+    return false;
   }
   // SEARCH
   const b = building(mem, job.id);
@@ -217,6 +278,11 @@ function advance(mem, job, p, now, threat) {
   }
   if (heavy(p) && blockedWhy(mem, 'DROP', now)) {
     setStage(mem, job, 'LEAVE', 'full');
+    return true;
+  }
+  // A zombie in the house holds SEARCH (senses.mjs, reaches), so the stall clock would run out on it.
+  if (!running(p) && zombies(p).some((z) => z.inside) && canClear(mem, job, p, now)) {
+    toClear(mem, job, p);
     return true;
   }
   if (job.stall >= STALL_MAX) {
@@ -241,7 +307,8 @@ function wentOut(mem, job, p, threat) {
     return false;
   }
   job.reentries += 1;
-  job.backTo = job.stage;
+  // LOOK reads who is in the house again. A CLEAR picked up where it stopped would not.
+  job.backTo = job.stage === 'CLEAR' ? 'LOOK' : job.stage;
   setStage(mem, job, 'IN', 'walked out');
   return false;
 }
@@ -349,6 +416,13 @@ export function leaveOption(p, mem, job, clear, now) {
   };
 }
 
+export function clearOption(p, mem, job, now) {
+  if (job.stage !== 'CLEAR' || here(p) !== job.id) return null;
+  const key = `CLEAR:${job.id}`;
+  if (blockedWhy(mem, key, now)) return null;
+  return { prio: 1.5, id: 'clear', verb: 'CLEAR', a: 0, b: 0, target: '', key, label: 'kill the zombie in this house, it has not noticed you' };
+}
+
 // The menu with what the job rules out taken off. Only called with nothing threatening her.
 export function jobMenu(options, job, p) {
   const enter = (o) => o.verb === 'ENTER';
@@ -391,6 +465,8 @@ export function jobPick(p, mem, opts) {
     const way = opts.find((o) => o.verb === 'ENTER' && o.target === job.id);
     return way ? [way, job.reentries ? 'I walked out of there with rooms left. Going back in.' : 'Going into this house.'] : null;
   }
+  // Before the small things: a walk to the tap with it loose in the house is the riskier order.
+  if (job.stage === 'CLEAR') return by('clear') ? [by('clear'), 'One in here and it has not seen me. Taking it down.'] : null;
   const side = ON_THE_WAY.map(by).find(Boolean);
   if (side) return [side, 'Quick, while it is quiet in here.'];
   if (job.stage === 'SHUT') return [by('secure'), 'Shutting this house up before I look around.'];
@@ -414,6 +490,6 @@ export function jobLine(mem, p) {
   if (!job) return '';
   const left = roomsLeftOf(p);
   const rooms = left !== null ? `, ${count(left, 'room')} left` : '';
-  const what = { IN: 'getting into a house', SHUT: 'shutting this house', LOOK: 'listening in this house', SEARCH: 'searching this house', LEAVE: 'leaving this house' }[job.stage];
+  const what = { IN: 'getting into a house', SHUT: 'shutting this house', LOOK: 'listening in this house', CLEAR: 'killing the zombie in this house', SEARCH: 'searching this house', LEAVE: 'leaving this house' }[job.stage];
   return `HOUSE JOB: ${what}${rooms}. Finish it before going anywhere else.`;
 }

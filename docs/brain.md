@@ -15,6 +15,7 @@ update map memory ---------------------------------- memory.mjs
    v
 dead? ........................... no order
 chaser inside 10, or a zombie she can see inside 3 ... hold, the reflex owns it
+   ... an idle one in her house past 2 tiles does not hold: the reflex leaves those alone
    ... unless handed back (60 s of it, or reflex.stuck): ask with the escape menu, below
 asleep? ......................... no order
 last order not picked up yet? ... wait for the body
@@ -108,6 +109,7 @@ The menu asks afresh every turn, so nothing held "finish this house". 63 of 168 
 IN      ENTER, until she stands in the house
 SHUT    SECURE: doors, windows, curtains, lights
 LOOK    WAIT, at least 2 game minutes, reading who is in the house
+CLEAR   CLEAR, when one idle zombie is in the house and she is fit to kill it, then LOOK again
 SEARCH  SEARCH, until no room is left
 LEAVE   fill and rest if on the menu, walk to the door, then the next house
 ```
@@ -119,7 +121,7 @@ LEAVE   fill and rest if on the menu, walk to the door, then the next house
 | stage | taken off the menu |
 |---|---|
 | IN | other houses, `explore`, `home`. Not `away`, since she is outside and may need it. If her house is off the menu (a zombie by the door), nothing is taken off |
-| SHUT, LOOK, SEARCH | every ENTER and every GOTO |
+| SHUT, LOOK, CLEAR, SEARCH | every ENTER and every GOTO. `clear` is added at CLEAR |
 | LEAVE | this house, `home`, `away`. `leave` is added. `explore` is offered inside too, when no next house fits |
 
 **Who sends the orders.** The policy rule `house-job` sends the stage's order, so a house is mostly not a model turn. It comes after the urgent rules, so a wound, thirst, hunger, a better weapon, night and sleep each cut in and the job picks up after. It sends nothing while a job is running. Between stages it does the small things first, while it is quiet: `bandage`, `drink`, `eat`, `wearbag`. If she is too heavy to search, it leaves the turn to `overloaded`. When SEARCH cannot be sent, the model picks from what is left, and the prompt says `HOUSE JOB: searching this house, 4 rooms left. Finish it before going anywhere else.`
@@ -132,7 +134,10 @@ LEAVE   fill and rest if on the menu, walk to the door, then the next house
 | 3 standing in the house | as above, and the house is over: LEAVE when it passes |
 | out of the house with a threat, or after one | over (`threat`). She does not walk back into it |
 | out of the house with no threat | back to IN, then to the stage she left, not to SHUT. Twice at most (`MAX_REENTRIES`), then over (`walked out`). A SEARCH or SECURE still running is left alone, since it is on its way back in |
-| one zombie in the house at LOOK | wait up to 10 game minutes for it to go or the reflex to deal with it, then LEAVE |
+| a zombie in the house at LOOK that CLEAR will not take on | wait up to 10 game minutes for it to go or the reflex to deal with it, then LEAVE |
+| CLEAR done | LOOK (`cleared`), then SEARCH |
+| CLEAR failed | LEAVE (`clear failed: another floor`, and so on) |
+| CLEAR not sent yet, and the gate shuts or 20 game minutes pass | LEAVE (`clear called off: hurt`, `clear called off: time`). With the zombie gone, LOOK (`zombie gone`) |
 | SEARCH cannot run for 10 game minutes (a zombie close, too heavy, a retry timer) | LEAVE (`blocked`) |
 | SEARCH failed `full`, or too heavy with DROP off the menu | LEAVE (`full`) |
 | ENTER failed | over (`no way in`) |
@@ -140,11 +145,26 @@ LEAVE   fill and rest if on the menu, walk to the door, then the next house
 | LEAVE at dusk (17:00) or night | over, and she stays. The usual menu leads with home |
 | LEAVE after 15 game minutes | over (`time`) |
 
+**CLEAR.** The 2026-11-06 soak had 32 of 43 houses with no room searched, and 7 of them went from LOOK to LEAVE with `zombie inside`. A good player does not walk away from one shambler. At LOOK, and at SEARCH with nothing running (a zombie in the house holds SEARCH, `reaches` in `senses.mjs`), the job goes to CLEAR when `clearBlock` finds nothing against it:
+
+| she needs | or the gate says |
+|---|---|
+| a zombie in the house (a downed one or a crawler counts, it holds SEARCH too) | `nobody inside` |
+| nothing after her, in the house or out of it | `chased` |
+| a melee weapon in hand | `no melee weapon` |
+| reach of 1 or more | `weapon too short` |
+| 1 in the house, or 2 with a weapon scoring 30 or more (`STRONG_WEAPON`, the reflex's line) | `too many inside` |
+| hp 70 or more | `hurt` |
+| not bleeding | `bleeding` |
+| endurance 0.3 or more, panic moodle under 3, heavy moodle under 2, and with 2 in the house tired moodle under 3 | `not fit to fight` |
+
+The reach line and the last line are the reflex's own. With a blade under reach 1 it stands and waits for the zombie to come, and an idle one never does, so a kitchen knife does not clear. Past its fight gates it would walk her up and back her off again. A failed CLEAR stays off for the usual retry time, so she does not go straight back to it. The order comes ahead of `bandage`, `drink`, `eat` and `wearbag`. What the order does is in `docs/skills.md`, CLEAR.
+
 **The time limit** is 30 game minutes a room, at least 60, at most 240 (BG42.20 says "two hours of looting, not twelve"; the card started at 15 a room, which is about 37 real seconds, too short for a full kitchen). Sleep and gaps in the clock over half an hour do not count. It is a number from the card, not a measurement: at the default day length 30 game minutes is about 75 real seconds. Check it against the review, because a limit that cuts searches short reads as `time` under "How they ended".
 
 **LEAVE.** She walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not given up on in the last 12 game hours, and not crowded, a house before a shop (`nextHouse`). Crowded means the old `b.zombies` is 3 or more, or the crowd map holds 3 or more for that house, or 5 or more for its area (see "Crowd map"). With none she walks out to explore.
 
-**The log.** Each change is a `house` line in `decisions.jsonl` (`docs/eval.md`), and the bridge prints it. `node bridge/tools/review.mjs` has a "House jobs" section: started, finished, rooms searched per house, re-entries, how they ended.
+**The log.** Each change is a `house` line in `decisions.jsonl` (`docs/eval.md`), and the bridge prints it. `node bridge/tools/review.mjs` has a "House jobs" section: started, finished, rooms searched per house, re-entries, houses cleared of a zombie, how they ended.
 
 A `searched` flag now needs SEARCH to have got as far as it could. A SEARCH that finished rooms and left some stays `partly`, and the next SEARCH goes on. One that got no further than the last marks the house searched, or she would loop on a room that is not loaded.
 
@@ -170,6 +190,7 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `away` | GOTO | an idle zombie within 12, or a chaser: 15 tiles in the clearest direction away |
 | `explore` | GOTO | no new building on the menu, and outside or inside a searched building: 25 tiles in a clear direction. From inside it sits above walking into a house she has already searched. At the LEAVE stage of a house job it is on the menu when no next house fits, searched or not |
 | `leave` | GOTO | the LEAVE stage of a house job: to the door she came in by or the nearest door the map knows, if the walk is clear |
+| `clear` | CLEAR | the CLEAR stage of a house job, unless a CLEAR just failed |
 | `wait` | WAIT | nothing is running |
 | `keep` | none | a skill or needs job is running. Picking it sends nothing |
 
@@ -214,7 +235,7 @@ If a voice line is waiting, the model is still called, with a menu of just the p
 
 ## Not asking while a job runs
 
-`res.status` is `running` for a skill or needs verb (`GOTO ENTER SEARCH LOOT DROP DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST`). MOVE and the old one-shot verbs stay `running` forever, so they do not count. While one runs, the brain sends nothing and asks nothing unless:
+`res.status` is `running` for a skill or needs verb (`GOTO ENTER SEARCH LOOT DROP DRINK FILL EAT SLEEP BANDAGE WEARBAG SECURE REST CLEAR`). MOVE and the old one-shot verbs stay `running` forever, so they do not count. While one runs, the brain sends nothing and asks nothing unless:
 
 - a zombie starts chasing,
 - a new need flag appears (bleeding, wounded, thirsty, hungry, tired, exhausted, winded, panicked, heavy, night outside),
