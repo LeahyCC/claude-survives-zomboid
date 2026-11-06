@@ -224,6 +224,10 @@ function Stance.assess(snap, N)
   A.armed = snap.armed and true or false
   A.score = num(snap.weaponScore, A.armed and N.STRONG or 0)
   A.gate = on("gates") and Stance.gate(snap, N) or nil
+  -- Tired is a gate against a group, not against one. Exhausted with one chaser and a weapon, the
+  -- 2026-11-06 soak had her climb in and out of windows for 35 minutes, and the chase that never
+  -- ended kept her from the sleep that would have cured it. One standing zombie is fought.
+  if A.gate == "tired" and A.armed and A.chasers + A.unaware <= 1 and A.reachN <= 1 then A.gate = nil end
   local fit = 1
   local e, hp = num(snap.endurance, 1), num(snap.hp, 100)
   if e < N.END_LOW then fit = fit * 0.4 elseif e < N.END_SPRINT then fit = fit * 0.75 end
