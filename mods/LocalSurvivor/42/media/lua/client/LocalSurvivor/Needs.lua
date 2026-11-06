@@ -5,6 +5,7 @@
 
 require "LocalSurvivor/Core"
 require "LocalSurvivor/Sense"
+require "LocalSurvivor/Move"
 local LS = LocalSurvivor
 LS.Needs = LS.Needs or {}
 local Needs = LS.Needs
@@ -27,6 +28,9 @@ Needs.N = {
   SCAN_PER_STEP = 120,  -- squares SECURE reads per step
   SQUARES_MAX = 1500,
   ROOMS_MAX = 10,       -- more rooms than this on the floor: SECURE does the room only
+  BACK_R = 4,           -- out of the house by more than this many tiles: SECURE does not walk back
+  BACKS_MAX = 2,        -- walks back in during one SECURE before it fails "not inside"
+  LEGS_MAX = 20,        -- legs of an inside walk to one target
   WATER_SCAN = 8,
   SLEEP_MIN = 0.3,      -- vanilla's "not tired enough" line
   REST_DONE = 0.8,
@@ -672,7 +676,7 @@ function Needs.secureSquares(p, scope)
 end
 
 function Needs.secureBegin(p, scope)
-  local sec = { counts = {}, skipped = 0, targets = {}, seen = {}, i = 1 }
+  local sec = { counts = {}, skipped = 0, targets = {}, seen = {}, i = 1, backs = 0 }
   sec.squares, sec.scope = Needs.secureSquares(p, scope)
   pcall(function() sec.building = p:getSquare():getBuilding() end)
   return sec
@@ -681,8 +685,7 @@ end
 -- A square of the building he is sweeping, with a roof and walls around it. The squares next
 -- to a door or window on the outer wall are outside, and these are the ones to stay off.
 local function insideSquare(sq, building)
-  local ok, inside = pcall(function() return sq ~= nil and building ~= nil and sq:getBuilding() == building and sq:getRoom() ~= nil end)
-  return ok and inside
+  return LS.Move.insideSquare(sq, building)
 end
 
 local function onSquare(p, sq)
@@ -803,9 +806,23 @@ end
 -- One step of a sweep. Returns "scan" (more to do next step), "busy" (an action is queued),
 -- "done", or "outside" (he is no longer in the building).
 function Needs.secureStep(p, job, sec)
-  -- Pushed out of the building (a flee, a long detour): the sweep is over, it never goes looking
-  -- for a way back in.
-  if sec.building and not insideSquare(p:getSquare(), sec.building) then return "outside" end
+  -- A walk that stepped out of a door (15 of 38 SECUREs in the 2026-11-05 soak ended here) goes back
+  -- to the last square inside and carries on. Pushed well out of the building (a flee, a long
+  -- detour) the sweep is over: it never goes looking for a way back in.
+  local here = p:getSquare()
+  if sec.building and not insideSquare(here, sec.building) then
+    local near = false
+    pcall(function()
+      near = math.abs(here:getX() - sec.lastIn:getX()) + math.abs(here:getY() - sec.lastIn:getY()) <= Needs.N.BACK_R
+    end)
+    if not near or sec.backs >= Needs.N.BACKS_MAX then return "outside" end
+    sec.backs = sec.backs + 1
+    ISTimedActionQueue.clear(p)
+    ISTimedActionQueue.add(ISWalkToTimedAction:new(p, sec.lastIn))
+    if Needs.queued(p, job) then return "busy" end
+    return "outside"
+  end
+  sec.lastIn = here
   if sec.i <= #sec.squares then
     local last = math.min(#sec.squares, sec.i + Needs.N.SCAN_PER_STEP - 1)
     for k = sec.i, last do Needs.collectTargets(sec.squares[k], sec) end
@@ -854,10 +871,12 @@ function Needs.secureStep(p, job, sec)
   local stand = Needs.standSquare(p, t, need, sec.building)
   if not stand then return giveUp() end
   if not onSquare(p, stand) then
-    t.walks = (t.walks or 0) + 1
-    if t.walks > 2 then return giveUp() end
+    local leg, partWay = LS.Move.insideLeg(p, stand, sec.building)
+    -- A leg of a long way inside is not a try at the target. Its count only stops a leg that never lands.
+    if partWay then t.legs = (t.legs or 0) + 1 else t.walks = (t.walks or 0) + 1 end
+    if (t.walks or 0) > 2 or (t.legs or 0) > Needs.N.LEGS_MAX then return giveUp() end
     ISTimedActionQueue.clear(p)
-    ISTimedActionQueue.add(ISWalkToTimedAction:new(p, stand))
+    ISTimedActionQueue.add(ISWalkToTimedAction:new(p, leg))
     pcall(function()
       Core.trace("secure-walk", t.kind .. "/" .. need .. " to " .. stand:getX() .. "," .. stand:getY()
         .. " exterior=" .. tostring(stand:has(IsoFlagType.exterior)) .. " from " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()))

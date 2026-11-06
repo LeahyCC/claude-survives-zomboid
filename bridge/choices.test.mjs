@@ -201,7 +201,7 @@ test('policy: eat when hungry and food is ready', () => {
 
 test('policy: bleeding stays first, then thirst, then hunger', () => {
   const ruleIds = POLICY_RULES.map((r) => r.id);
-  assert.deepEqual(ruleIds, ['bleeding', 'thirst', 'hunger', 'equip', 'night-outside', 'night-secure', 'sleep', 'find-weapon', 'overloaded']);
+  assert.deepEqual(ruleIds, ['bleeding', 'thirst', 'hunger', 'equip', 'night-outside', 'night-secure', 'sleep', 'house-job', 'find-weapon', 'overloaded']);
   const all = moment({
     ...INSIDE, bleeding: 1, wounds: [{ part: 'Hand_L', bleed: true }], thirst: 0.8, moodle: { thirsty: 3, hungry: 3, heavy: 2 }, hunger: 0.8, weight: 8,
   }, INSIDE_MEM);

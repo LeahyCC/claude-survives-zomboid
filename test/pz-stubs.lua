@@ -526,6 +526,12 @@ function __makeSquare(opts)
     local o = other.opts or {}
     return w[other:getX() .. "," .. other:getY()] or (o.walls or {})[opts.x .. "," .. opts.y] or false
   end
+  -- opts.doorsTo: set of "x,y" neighbours a door separates this square from. A door also blocks.
+  function sq:isDoorTo(other)
+    local d = opts.doorsTo or {}
+    local o = other.opts or {}
+    return d[other:getX() .. "," .. other:getY()] or (o.doorsTo or {})[opts.x .. "," .. opts.y] or false
+  end
   function sq:getWindow() return opts.window end
   function sq:getIsoDoor()
     if not opts.door then return nil end

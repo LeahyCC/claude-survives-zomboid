@@ -129,6 +129,33 @@ test('the reflex has no way out: the model gets the escape menu and the order go
   }
 });
 
+test('walking into a new house: the real bridge opens the house job, sends SECURE, and logs it', async () => {
+  const ollama = await startFakeOllama();
+  const quiet = {
+    ...soakPercept(null), zList: [], zChasing: 0, zClose: 0, zDist: -1, zVisible: 0, endurance: 1, thirst: 0, hunger: 0, fatigue: 0, items: '',
+    outside: false, inBldg: { id: '4031', room: 'kitchen', rooms: 3, roomsLeft: 3 }, res: null,
+    moodle: { endurance: 0, heavy: 0, panic: 0, thirsty: 0, hungry: 0, tired: 0, pain: 0 },
+  };
+  const b = await startBridge(quiet, ollama.url);
+  try {
+    await until(() => b.intent(), 'an order');
+    assert.match(b.intent(), /^\d+\|SECURE\|/);
+    const lines = await until(() => {
+      const l = b.log();
+      return l.some((x) => x.t === 'house') && l.some((x) => x.t === 'decision') && l;
+    }, 'the house line');
+    const open = lines.find((l) => l.t === 'house');
+    assert.equal(open.kind, 'open');
+    assert.equal(open.bldg, '4031');
+    assert.equal(open.stage, 'SHUT');
+    assert.equal(lines.find((l) => l.t === 'decision').rule, 'house-job');
+    assert.match(b.output(), /house 4031: open at SHUT/);
+  } finally {
+    await b.stop();
+    await ollama.close();
+  }
+});
+
 test('without the flag, and well inside the minute, the reflex keeps the chase and nothing is written', async () => {
   const ollama = await startFakeOllama();
   const b = await startBridge(soakPercept({ stance: 'FLEE', why: 'unarmed', age: 1, hits60: 0, fails: 1, stuck: false }), ollama.url);

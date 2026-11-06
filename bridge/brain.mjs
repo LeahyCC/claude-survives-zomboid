@@ -21,6 +21,7 @@ import { digest } from './digest.mjs';
 import { intentLine } from './decide.mjs';
 import { pickExamples, exampleLines } from './nudges.mjs';
 import { reactionContext } from './reactions.mjs';
+import { jobLine } from './housejob.mjs';
 
 export const RECHECK_MS = 20_000;
 export const PENDING_MS = 10_000;
@@ -54,6 +55,7 @@ export function userMessage(p, mem, options, rules, voice, recent, extra = {}) {
   const parts = [`SITUATION:\n${digest(p, memoryStats(mem))}`];
   const plan = planLines(extra.plan);
   if (plan) parts.push(plan);
+  if (extra.job) parts.push(extra.job);
   const lessons = extra.lessons || [];
   if (rules.length || lessons.length) {
     const lines = [...rules.map((r) => r.text), ...lessons.map((l) => `Lesson from a past run: ${l.text}`)];
@@ -108,7 +110,7 @@ export function planTurn(p, mem, ctx = {}) {
   const rules = selectRules(p, mem);
   const lessons = activeLessons(ctx.lessons, p, mem);
   const react = reactionContext({ history: ctx.history, mem, p, now, run: ctx.run, options });
-  const extra = { plan: ctx.plan, lessons, blocked: react.blocked, pattern: react.pattern };
+  const extra = { plan: ctx.plan, lessons, blocked: react.blocked, pattern: react.pattern, job: jobLine(mem, p) };
   // Only a pick on the menu the model will see can be quoted.
   const withExamples = (menu) => ({ ...extra, examples: exampleLines(pickExamples(ctx.nudges, p, menu)) });
   const policy = decidePolicy(p, mem, options);

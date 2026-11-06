@@ -2,6 +2,8 @@
 // 6 nearest buildings and this session's visits. This remembers what was searched, what was
 // taken, where water and beds are, and which orders failed and why.
 
+import { stepHouseJob, noteJobOrder, validJob } from './housejob.mjs';
+
 const MAX_BUILDINGS = 300;
 const MAX_ORDERS = 12;
 
@@ -18,7 +20,7 @@ const DEFAULT_RETRY_MS = 45_000;
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 export function emptyMemory() {
-  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null };
+  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [] };
 }
 
 // An old or hand-edited pz-state.json must not crash the bridge.
@@ -31,6 +33,7 @@ export function loadMemory(raw) {
   if (raw.fails && typeof raw.fails === 'object') m.fails = raw.fails;
   if (typeof raw.handled === 'string') m.handled = raw.handled;
   if (raw.sleep && typeof raw.sleep === 'object') m.sleep = raw.sleep;
+  if (validJob(raw.job)) m.job = raw.job;
   return m;
 }
 
@@ -59,8 +62,10 @@ function prune(mem) {
 
 export function recordOrder(mem, seq, option, p, now = Date.now()) {
   const key = option.key || option.verb;
-  mem.orders.push({ seq, verb: option.verb, key, bldg: p && p.inBldg ? String(p.inBldg.id) : null });
+  const left = p && p.inBldg && typeof p.inBldg.roomsLeft === 'number' ? p.inBldg.roomsLeft : null;
+  mem.orders.push({ seq, verb: option.verb, key, bldg: p && p.inBldg ? String(p.inBldg.id) : null, left });
   mem.orders = mem.orders.slice(-MAX_ORDERS);
+  noteJobOrder(mem, option, p);
   // EQUIP never reports done while the weapon is still being raised, so the policy would send
   // it again every look. Keep it off the menu for the default retry time, a done result lifts it.
   if (option.verb === 'EQUIP') mem.fails[key] = { why: 'just sent', at: now };
@@ -80,7 +85,11 @@ function applyResult(mem, p, now, hours) {
     if (order) delete mem.fails[order.key];
     if (r.verb === 'SEARCH' && b) {
       b.partly = true;
-      b.searched = !why.includes('(full)');
+      // A SEARCH that finished rooms and left some (a room not loaded, a way that led outside) is
+      // not the end of the house. One that got no further than the last is, or she would loop.
+      const left = p.inBldg && typeof p.inBldg.roomsLeft === 'number' ? p.inBldg.roomsLeft : null;
+      const moreToDo = left > 0 && order && order.left != null && left < order.left;
+      b.searched = !why.includes('(full)') && !moreToDo;
       b.took = [...b.took, ...tookItems(why)].slice(-12);
     } else if (r.verb === 'LOOT' && b) {
       b.partly = true;
@@ -117,6 +126,10 @@ function updateSleep(mem, p, hours) {
 export function updateMemory(mem, p, now = Date.now()) {
   if (!p || typeof p !== 'object' || p.dead) return mem;
   const hours = num(p.hoursAlive);
+  const here = p.inBldg && p.inBldg.id != null && !p.outside ? String(p.inBldg.id) : null;
+  // Read before the list below marks it: the job log counts walking back into a house.
+  const wasVisited = !!(here && mem.buildings[here] && mem.buildings[here].visited);
+  const entered = !!here && mem.current !== here;
   for (const seen of Array.isArray(p.buildings) ? p.buildings : []) {
     if (seen == null || seen.id == null) continue;
     const b = entry(mem, seen.id, hours);
@@ -129,7 +142,6 @@ export function updateMemory(mem, p, now = Date.now()) {
     b.x = num(p.x) + num(seen.dx);
     b.y = num(p.y) + num(seen.dy);
   }
-  const here = p.inBldg && p.inBldg.id != null && !p.outside ? String(p.inBldg.id) : null;
   if (here) {
     const b = entry(mem, here, hours);
     b.visited = true;
@@ -150,6 +162,7 @@ export function updateMemory(mem, p, now = Date.now()) {
     mem.buildings[here].searched = true;
   }
   updateSleep(mem, p, hours);
+  stepHouseJob(mem, p, now, { entered, wasVisited });
   prune(mem);
   return mem;
 }
@@ -202,9 +215,10 @@ export function memorySlice(mem, p) {
       water: !!b.water, bed: !!b.bed, res: !!b.res, shop: !!b.shop, zombies: num(b.zombies),
       securedAt: b.securedAt ?? null, enteredAt: b.enteredAt ?? null,
       ...(b.door ? { door: b.door } : {}),
+      ...(b.leftAt != null ? { leftAt: b.leftAt } : {}),
     };
   }
-  return { current: mem.current || null, buildings };
+  return { current: mem.current || null, buildings, ...(mem.job ? { job: mem.job } : {}) };
 }
 
 export function memoryStats(mem) {

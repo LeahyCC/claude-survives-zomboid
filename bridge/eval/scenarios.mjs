@@ -43,6 +43,7 @@ export function buildScenario(s, now = 1_000_000) {
   const memory = emptyMemory();
   const seed = s.memory || {};
   if (seed.current) memory.current = String(seed.current);
+  if (seed.job) memory.job = seed.job;
   for (const [id, b] of Object.entries(seed.buildings || {})) {
     memory.buildings[id] = { id, firstSeen: 0, lastSeen: 0, lastVisit: 0, visited: false, searched: false, partly: false,
       took: [], water: false, bed: false, res: false, shop: false, zombies: 0, securedAt: null, enteredAt: null, ...b };

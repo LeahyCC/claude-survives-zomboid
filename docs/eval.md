@@ -21,7 +21,7 @@ One JSON file in `bridge/eval/scenarios/`. It is a patch over `bridge/eval/base.
 name, note   what the moment is
 patch        v2 percept fields that differ from the base
 memory       map memory to seed: current building, buildings by id (door, searched, water, bed),
-             fails ({key: {why, ago}}, orders that failed `ago` seconds ago)
+             fails ({key: {why, ago}}, orders that failed `ago` seconds ago), job (an open house job)
 plan         the planner's day plan {goal, steps, home}, only where the moment depends on it
 history      the orders she sent just before, oldest first: {verb, key, name, result, why, lost, chase, ago}.
              Only where the right pick depends on how they went (docs/brain.md, "Reactions")
@@ -328,7 +328,7 @@ A run also ends when `hoursAlive` goes backwards by more than half an hour, whic
 
 `bridge/decisions.jsonl` gets one line for every turn the policy or the model decided. Turns that wait (the reflex, sleep, a running job) write nothing. The file is only ever appended to, and it is ignored by git. Past about 20 MB it moves to `decisions.jsonl.1` (the old `.1` is dropped) and a new file starts. `PZ_DECISIONS_FILE` and `PZ_LOG_MAX_BYTES` change the path and the cap.
 
-Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended. A fifth, `reflex`, is copied from the mod's reflex log by `bridge/reflexlog.mjs`. A sixth, `critic`, is Jev's second opinion on a decision, and shares that decision's `id`.
+Every line has `t` and `id`. The three kinds of line for one decision share the `id`. A fourth kind, `death`, is one line per run that ended. A fifth, `reflex`, is copied from the mod's reflex log by `bridge/reflexlog.mjs`. A sixth, `critic`, is Jev's second opinion on a decision, and shares that decision's `id`. A seventh, `house`, is a change in the house job. It belongs to no one decision and has no `id`.
 
 | `t` | Written | Fields |
 |---|---|---|
@@ -338,6 +338,7 @@ Every line has `t` and `id`. The three kinds of line for one decision share the 
 | `death` | when a run ends | `at`, `run` (the run's start, the same key the decision lines carry), `cause`, `day`, `hours`, `kills`, `job`, `order`, `status`, `zClose` (zombies within 3 tiles), `zNear` (within 10), `zChasing`, `hpLost10`, `inside`, `reflex`, `source` (`mod` or `bridge`), `text`. `id` starts with `death-` and no other line shares it. |
 | `critic` | a moment after the decision, when Jev answers (only with `TYPESAFE_API_KEY` set; a turn that was busy, paused or timed out has none) | `at`, `model`, `pick` (the brain's), `top` (Jev's), `pPick`, `pTop`, `confidence`, `danger`, `treat`, `mistake` (0 to 1), `agree`, `flag`, `flagAt`, `ms`, `inTokens`, `outTokens`. See "Critic" in `docs/brain.md`. |
 | `reflex` | when the reflex takes a stance (`kind: call`) and 5 seconds later (`kind: out`) | the mod's own fields, see "The reflex log" in `docs/combat.md`. A call and its out share the `id`. `at` is when the bridge copied it. |
+| `house` | when a house job changes (`docs/brain.md`, "House job") | `at`, `run`, `kind`, `bldg`, `hours`. `kind: open` has `stage`, `revisit` (she had been in this house before). `kind: stage` has `from`, `stage`, `why`, `left`. `kind: pause` and `resume` have `stage`, `why`. `kind: end` has `stage`, `why`, `finished` (she got as far as LEAVE), `rooms`, `roomsSearched`, `reentries`, `minutes` (game minutes on the job) |
 
 Notes:
 
@@ -379,7 +380,7 @@ node bridge/tools/review.mjs                      both logs, all of it
 node bridge/tools/review.mjs --since 2026-11-04   from that date on
 ```
 
-It prints, in a few lines each: deaths by cause (how many, the job she was doing, zombies close and chasing at the end, hp lost in the last 10 seconds, and how many came from the bridge's own guess), how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. A Critic section sits before the nudge agreement: how many decisions Jev reviewed and how often its top pick matched the brain's, how many were flagged (overall, by situation and by who decided), and how the orders went after a flagged choice next to those after an unflagged one: failed, 5 hp or more lost, a zombie started chasing, died within 5 minutes. The failed rate counts orders that reported. The other three count orders whose follow-up has closed. If the flagged row is not worse than the unflagged one, the flags do not predict trouble. With no critic lines the section says how to turn it on. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
+It prints, in a few lines each: deaths by cause (how many, the job she was doing, zombies close and chasing at the end, hp lost in the last 10 seconds, and how many came from the bridge's own guess), how often the brain had your pick (overall and by situation), the missing-option notes grouped (notes that share half their words count as one), the verbs whose orders fail most with the reasons, and the choices most often followed by damage (5 hp or more, in the order or the minute after) or by death. A House jobs section says how many started, how many got as far as LEAVE, rooms searched per house, re-entries (walked back in during a job, and new jobs on a house already visited) and how they ended. A Critic section sits before the nudge agreement: how many decisions Jev reviewed and how often its top pick matched the brain's, how many were flagged (overall, by situation and by who decided), and how the orders went after a flagged choice next to those after an unflagged one: failed, 5 hp or more lost, a zombie started chasing, died within 5 minutes. The failed rate counts orders that reported. The other three count orders whose follow-up has closed. If the flagged row is not worse than the unflagged one, the flags do not predict trouble. With no critic lines the section says how to turn it on. `--decisions` and `--nudges` point at other files. The rotated `.1` file is read too.
 
 ## Nudges as scenarios
 

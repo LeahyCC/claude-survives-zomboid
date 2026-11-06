@@ -7,6 +7,7 @@ import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
 import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
+import { openJob, jobThreat, jobMenu, leaveOption, nextHouse, doneWith, crowded } from './housejob.mjs';
 
 export const MAX_OPTIONS = 8;
 const MAX_BUILDINGS = 3;
@@ -62,15 +63,17 @@ function buildingTags(b, planned) {
   return tags.join(', ');
 }
 
-const stageOf = (c) => (c.mem && c.mem.searched ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
+const stageOf = (c, hours) => (doneWith(c.mem, hours) ? 2 : c.mem && (c.mem.visited || c.mem.partly) ? 1 : 0);
 
-// Unsearched first, nearest first. A safe house is pulled to the front when she needs one,
-// and the planner's home building ahead of that when it is time to go home. With no real
-// weapon, houses come before shops and other buildings: that is where a bat or a knife is.
-function rankBuildings(cands, wantsHome, homeId, poor) {
+// Unsearched first, nearest first, and a place where she saw a crowd after the rest of its kind. A
+// safe house is pulled to the front when she needs one, and the planner's home building ahead of
+// that when it is time to go home. With no real weapon, houses come before shops and other
+// buildings: that is where a bat or a knife is.
+function rankBuildings(cands, wantsHome, homeId, poor, hours) {
   const homeFirst = (c) => (homeId && String(c.seen.id) === homeId ? -1 : wantsHome && safehouseScore(c.mem) >= 5 ? 0 : 1);
   const houseFirst = (c) => (poor && kindOf(c.mem, c.seen) !== 'house' ? 1 : 0);
-  return cands.sort((x, y) => homeFirst(x) - homeFirst(y) || stageOf(x) - stageOf(y) || houseFirst(x) - houseFirst(y) || x.d - y.d);
+  const crowdLast = (c) => (crowded(c.mem) ? 1 : 0);
+  return cands.sort((x, y) => homeFirst(x) - homeFirst(y) || stageOf(x, hours) - stageOf(y, hours) || crowdLast(x) - crowdLast(y) || houseFirst(x) - houseFirst(y) || x.d - y.d);
 }
 
 // homeId is the planner's home building, or '' when it is not time to go there. plannedId
@@ -97,11 +100,12 @@ function buildingCandidates(p, mem, now, avoid) {
 
 function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor) {
   const cands = buildingCandidates(p, mem, now, avoid);
-  return rankBuildings(cands, wantsHome, homeId, poor).slice(0, MAX_BUILDINGS).map((c, i) => {
+  const hours = num(p.hoursAlive);
+  return rankBuildings(cands, wantsHome, homeId, poor, hours).slice(0, MAX_BUILDINGS).map((c, i) => {
     const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
     const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId);
     // Said only of a house not yet searched, the place to look. A shop or a searched house is not sold as one.
-    const hunt = poor && stageOf(c) < 2 && kindOf(c.mem, c.seen) === 'house' ? ', no real weapon yet, look here' : '';
+    const hunt = poor && stageOf(c, hours) < 2 && kindOf(c.mem, c.seen) === 'house' ? ', no real weapon yet, look here' : '';
     return {
       // name is how the order is called in the recent-choices lines (reactions.mjs), since b1 means another house next turn.
       id: `b${i + 1}`, verb: 'ENTER', a: 0, b: 0, target: String(c.seen.id), key: c.key, d: c.d,
@@ -270,7 +274,9 @@ export function buildOptions(p, mem, ctx = {}) {
   // does not own yet. A downed one is the reflex's free stomp, not a wall.
   const avoid = zombies(p).filter((z) => !z.down && !z.crawl && z.d <= AVOID_R);
   const chasers = avoid.filter((z) => z.chase);
-  const out = needOptions(p, mem, now);
+  let out = needOptions(p, mem, now);
+  const job = openJob(mem);
+  const heldByJob = job && !jobThreat(p);
   const wantsHome = isNight(p) || num(p.fatigue) >= 0.6 || panic01(p) >= 0.3;
   const outdoors = !inside(p);
   // The plan's home building leads the list from dusk (17:00) or whenever she needs shelter.
@@ -294,12 +300,15 @@ export function buildOptions(p, mem, ctx = {}) {
         label: `walk quietly ${tiles(15)} ${compass(w.dx, w.dy)}, away from ${n} ${seen}` });
     }
   }
-  const newPlaces = out.some((o) => o.verb === 'ENTER' && /not visited|not searched/.test(o.label));
+  // At the end of a house job she may still be inside with no house to go on to, and the walk out
+  // is on her. It can have rooms left there (the time limit), so "searched" does not cover it.
+  const leaving = heldByJob && job.stage === 'LEAVE';
+  const newPlaces = leaving ? !!nextHouse(out, mem, job, num(p.hoursAlive)) : out.some((o) => o.verb === 'ENTER' && /not visited|not searched/.test(o.label));
   // Inside a searched building with nothing new in sight she should go looking too, ahead of
   // walking back into a house she has already emptied.
   const hereId = !outdoors && p.inBldg && p.inBldg.id != null ? String(p.inBldg.id) : null;
   const hereDone = !!hereId && !!(building(mem, hereId) || {}).searched;
-  if ((outdoors || hereDone) && !newPlaces && !blockedWhy(mem, 'EXPLORE', now)) {
+  if ((outdoors || hereDone || leaving) && !newPlaces && !blockedWhy(mem, 'EXPLORE', now)) {
     const turn = Math.floor(num(p.hoursAlive)) % 8;
     const a = (turn * Math.PI) / 4;
     const w = walkOption(p, avoid, { dx: Math.round(Math.cos(a) * 25), dy: Math.round(Math.sin(a) * 25) }, 25);
@@ -309,13 +318,19 @@ export function buildOptions(p, mem, ctx = {}) {
     }
   }
 
+  if (heldByJob) {
+    const leave = leaveOption(p, mem, job, (tx, ty) => pathClear(tx, ty, avoid), now);
+    if (leave) out.push(leave);
+    out = jobMenu(out, job, p);
+  }
+
   const busy = running(p);
-  const job = busy ? runningKey(p, mem, out) : null;
+  const runningJob = busy ? runningKey(p, mem, out) : null;
   // Any new order cancels the running job. Mid-search or mid-drink only an urgent need or a
   // way around a zombie is worth that. A walk can still change its mind about where to go.
   const walking = busy && (busy.verb === 'GOTO' || busy.verb === 'ENTER');
   const worthIt = (o) => walking || INTERRUPTS.has(o.id) || (chasers.length > 0 && o.id === 'secure');
-  const fresh = busy ? out.filter((o) => (job ? o.key !== job : o.verb !== busy.verb) && worthIt(o)) : out;
+  const fresh = busy ? out.filter((o) => (runningJob ? o.key !== runningJob : o.verb !== busy.verb) && worthIt(o)) : out;
   fresh.sort((x, y) => x.prio - y.prio);
   const last = busy
     ? { id: 'keep', verb: null, a: 0, b: 0, target: '', key: 'KEEP', label: `keep going with ${busy.verb} (still running)` }

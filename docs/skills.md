@@ -62,14 +62,20 @@ A reflex flee also walks through `Move.doMove`. It walks the old way and never r
 `TARGET` = a building `id` from the percept's `buildings` list.
 
 ```
-nearest door  ->  locked?  ->  next door or window (quiet, up to 4 tries)
-                                 -> none left: smash the nearest locked window
+1  a locked door she has the key to
+2  a door that is not locked
+3  a window already open or broken
+4  a shut window that is not locked
+5  anything above with a zombie within 4 tiles of it
+6  none left, or 4 quiet tries used: smash the nearest locked window
 ```
 
 - Ways in are the building's exterior ground-floor doors (from the place scan) and windows (read from the footprint once).
-- At a door: an open door is walked through. A closed one is opened (`ISOpenCloseDoor`), then walked through. A locked door is unlocked first when he carries its key (see below). Any other locked or boarded door is skipped. Lock state is only read once the body is at the door.
-- Keys: the test is the one vanilla makes in `ISLockDoor:isValid`, `getInventory():haveThisKeyId(door:checkKeyId())`. A door he holds the key to is tried before any window, however far. At the door he queues `ISLockDoor:new(p, door, false)` (the vanilla unlock), then opens and walks in. If the door still does not let him in, the next way is tried.
-- At a window: a smashed one has its glass cleared first (`ISRemoveBrokenGlass`), then climbed (`ISClimbThroughWindow`). A closed unlocked one is opened (`ISOpenCloseWindow`) and climbed. A locked one is noted for smashing.
+- The order is strict (`Act.wayRank`). Distance only decides inside a rank, so she walks past a nearer window to a door. Before this a door had 2 tiles of credit and an open window had none: 19 doors, 55 windows and 5 smashes in the 2026-11-05 log (`docs/pro-rules.md`).
+- Lock state is read from the door or window without walking there (`Act.wayFacts`). A locked or boarded way is marked tried and she does not go to it. A locked window stays a candidate for smashing. A square not loaded yet reads as closed and not locked, and is found out on arrival.
+- At a door: an open door is walked through. A closed one is opened (`ISOpenCloseDoor`), then walked through. A locked door is unlocked first when he carries its key (see below). Any other locked or boarded door is skipped. Lock state is read again at the door, in case it changed.
+- Keys: the test is the one vanilla makes in `ISLockDoor:isValid`, `getInventory():haveThisKeyId(door:checkKeyId())`. A door he holds the key to is tried before anything else, however far. At the door he queues `ISLockDoor:new(p, door, false)` (the vanilla unlock), then opens and walks in. If the door still does not let him in, the next way is tried.
+- At a window: a smashed one has its glass cleared first (`ISRemoveBrokenGlass`), then climbed (`ISClimbThroughWindow`). If the game drops the clearing, she climbs anyway once `canClimbThrough` says she can, and there is no slower "careful" climb to ask for. A closed unlocked one is opened (`ISOpenCloseWindow`) and climbed. A locked one is noted for smashing.
 - Opening, smashing, clearing glass and climbing all finish their action at once and do the work in the animation after it. So the climb is only queued once the game says the window can be climbed (`canClimbThrough`), and after a climb he gets `Act.ANIM_TICKS` (3 seconds) to land inside before the way counts as failed. A window that is still shut 3 seconds after the open is treated as locked and kept for smashing. Queuing open and climb together made the game drop the climb, so he opened windows he never used.
 - He walks onto the exact square vanilla picks in front of the door or window (`AdjacentFreeTileFinder.FindWindowOrDoor`) before he works it (`Act.walkToSquare`). The climb is refused from the diagonal square, where opening still works. Before this, he opened windows he could not climb and ended up smashing one. SEARCH walks to a container's square the same way.
 - Smashing (`ISSmashWindow`, then `ISRemoveBrokenGlass`, then the climb) happens only when no quiet way is left, or 4 quiet ways failed and a locked window is known.
@@ -88,13 +94,15 @@ No arguments. Searches the building the survivor stands in.
   - The floor of each square: the items lying there (`IsoGridSquare:getWorldObjects`), and the contents of a bag lying there. A floor container is a plain `ItemContainer.new("floor")` that holds those items, which is what the loot window builds and what `ISTransferAction` takes from. It is built again when she gets there, so what she has taken is gone. Items she dropped herself (DROP) are left out, or DROP and SEARCH would trade a spare weapon back and forth.
 - The game rolls a container's loot the first time it is looked at, and only for squares next to the player. A container read before that is empty. So before it reads one, the skill does what `ISInventoryPage:checkExplored` does: `ItemPicker.fillContainer`, then `setExplored(true)`.
 - Walks next to each container (`AdjacentFreeTileFinder.Find`) and takes what the loot table wants (below), inside the weight budget.
+- **She stays in the house.** The pathfinder takes the shortest way, which can be out of one door and in by another. So a walk of more than 6 squares goes in legs along a way that stays on the building's own squares (`Move.insideRoute`, `Move.ROUTE_LEG`). A shut door counts as a way, a wall or a window does not, and stairs are not followed. With no inside way known she walks straight there and the next rule catches it.
+- **A step outside stops the walk.** Every step of SEARCH checks she is still in the building. On the first square outside, the queue is cleared, that room's containers count as out of reach, and she walks back to the last square she stood on inside and shuts the door behind her. The room gets its one more try (`Act.ROOM_TRIES`) and is then done. So one step out is the most a walk can cost, not a way to prevent it. More than 4 tiles out, or more than 3 walks back in one SEARCH, it fails `not inside`.
 - Items go into the worn back bag while it has room, otherwise the main inventory. A bag that is taken is worn (`ISWearClothing`), in place of a smaller one.
 - A transfer that did not happen (the reflex clears the queue when it fights or flees) gets one more try.
 - When the search took a weapon, the skill takes it up before it reports (see EQUIP below), unless the weapon in her hand is one Colin chose. It queues the equip, waits for it, and tries once more if the reflex cut it off. The `why` text stays `took 4: ...` because the bridge reads it. The percept's `weapon` and `weaponScore` show the result. A gun is never taken up.
 - Finished rooms are kept in `LocalSurvivor.searched[buildingId][roomKey]`. The next SEARCH skips them. The percept shows how many are left as `inBldg.roomsLeft` (`Act.roomsLeft`).
 - A container she could not reach (no free square beside it, or the walk failed) is skipped. The room is then not marked finished, so the next SEARCH tries it once more (`Act.ROOM_TRIES`, 2), and after that it counts as done so one blocked cupboard cannot keep a building open for ever.
 - Done when every room is searched or the weight reaches the search line: 85% of `getMaxWeight()` with a back bag worn, 60% with none (`Act.searchLeft`). `why` is `took 4: Crowbar, Water Bottle, Beans, Bandage`, with ` (full)` when it stopped on weight, or `took nothing`.
-- Failed: `not inside`, `nothing left` (every room was already searched), `full` (at the search line before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
+- Failed: `not inside` (at the start, or carried out of the house, above), `nothing left` (every room was already searched), `full` (at the search line before starting), `zombie` (one within 8 tiles at the start, or the rule above), `stuck`.
 
 A room that is not loaded is left for a later SEARCH.
 

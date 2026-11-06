@@ -17,6 +17,7 @@ import { callLLM, callChoice, parseChoice, callPlanner, warmPlanner, plannerMode
 import { buildPrompt, extractJSON, normalize, steerJob, intentLine, zombieInside } from './decide.mjs';
 import { isV2, holdReason } from './senses.mjs';
 import { loadMemory, updateMemory, recordOrder, memoryStats, memorySlice } from './memory.mjs';
+import { drainJobEvents, dropJob } from './housejob.mjs';
 import { planTurn, resolveChoice, orderLine, snapshot } from './brain.mjs';
 import { createChaseClock } from './chase.mjs';
 import { createPlanner } from './planner.mjs';
@@ -358,11 +359,25 @@ async function decideV1() {
   }
 }
 
+// The house job's stage changes, one line each in decisions.jsonl. review.mjs counts them. The log
+// must never stop her, so a failure is swallowed.
+function logJobEvents() {
+  try {
+    for (const e of drainJobEvents(map)) {
+      appendDecisionLine({ t: 'house', at: new Date().toISOString(), run: runId(), ...e });
+      log('decide', `house ${e.bldg}: ${e.kind === 'stage' ? `${e.from} to ${e.stage}` : `${e.kind}${e.stage ? ` at ${e.stage}` : ''}`}${e.why ? ` (${e.why})` : ''}`);
+    }
+  } catch (err) {
+    log('error', `house log: ${String(err && err.message || err).slice(0, 120)}`);
+  }
+}
+
 function send(option, thought, say, decidedBy) {
   state.seq += 1;
   intent = orderLine(state.seq, option, thought, say);
   writeIntentFile(intent);
   recordOrder(map, state.seq, option, percept, Date.now());
+  logJobEvents();
   pending = { seq: state.seq, at: Date.now() };
   lastThought = thought || say || '';
   const where = option.verb === 'GOTO' ? ` ${option.a},${option.b}` : option.target ? ` ${option.target}` : '';
@@ -435,6 +450,7 @@ async function decideV2() {
   // What the plan was built from. The model reply can arrive after a newer percept has.
   const seen = percept;
   updateMemory(map, percept, now);
+  logJobEvents();
   // The reflex owns a chase, but not forever: after a minute of it, or when the reflex says it
   // has no way out left, the brain gets a turn with the escape menu (chase.mjs).
   chase.observe(percept, now);
@@ -565,6 +581,8 @@ async function decide() {
       map.orders = [];
       map.fails = {};
       map.sleep = null;
+      dropJob(map, 'died');
+      logJobEvents();
       pending = null;
       log('death', `Run ended. Nights survived: ${percept.day}.`);
       brainNote = 'dead. Load or start a character and this resumes.';
