@@ -180,7 +180,7 @@ test('each flag switches its part off', () => {
 });
 
 test('the flags default on and live on the namespace', () => {
-  assert.deepEqual(lua.get('LocalSurvivor.combat'), { stomp: true, spacing: true, gates: true, doorHold: true, climb: true, hide: true, sprint: true });
+  assert.deepEqual(lua.get('LocalSurvivor.combat'), { stomp: true, spacing: true, gates: true, doorHold: true, climb: true, hide: true, sprint: true, guns: true });
   lua.set('LocalSurvivor.combat.stomp', false);
   assert.equal(lua.call('LocalSurvivor.Reflex.decide', { ...fit, zombies: [zed(0.8, { down: true })] }).kind, 'swing');
   lua.set('LocalSurvivor.combat.stomp', true);

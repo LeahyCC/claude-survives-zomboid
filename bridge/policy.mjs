@@ -4,7 +4,7 @@
 
 import { needs, isNight, inside, zombies, heavy, chasing, betterWeapon, bareHanded } from './senses.mjs';
 import { securedThisVisit } from './memory.mjs';
-import { DROP_MIN_HP } from './options.mjs';
+import { DROP_MIN_HP, withoutGun } from './options.mjs';
 import { jobPick } from './housejob.mjs';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -52,8 +52,9 @@ export const POLICY_RULES = [
   {
     id: 'equip',
     pick(p, mem, opts) {
-      // Not for a gun in hand, nor for a weapon Colin put there himself: betterWeapon says null,
-      // the same as the mod's own EQUIP, which would turn the order down.
+      // Not for a weapon Colin put in her hand: betterWeapon says null, the same as the mod's own
+      // EQUIP, which would turn the order down. Nor for a gun in hand: the reflex holsters it and
+      // takes the melee weapon out by itself, or it is firing and the order would only get in the way.
       const better = betterWeapon(p);
       if (!better) return null;
       const thought = better.swap ? `The ${better.n} in my bag is clearly better. Swapping.` : `Nothing in my hands and a ${better.n} in the bag. Holding it.`;
@@ -99,8 +100,8 @@ export const POLICY_RULES = [
       // that says it needs a weapon still picks ENTER or WAIT. So inside a building with rooms
       // left, she searches. The SEARCH option is only on the menu when the building is not done,
       // she is not too heavy and no zombie is within 8 tiles, and the mod looks in the kitchen,
-      // garage and sheds first.
-      if (!bareHanded(p) || !inside(p) || chasing(p) > 0) return null;
+      // garage and sheds first. A gun does not count: only a melee weapon ends the search.
+      if (!bareHanded(withoutGun(p)) || !inside(p) || chasing(p) > 0) return null;
       return [opts.find((o) => o.id === 'search'), 'No weapon yet. Searching this building, kitchen and garage first.'];
     },
   },

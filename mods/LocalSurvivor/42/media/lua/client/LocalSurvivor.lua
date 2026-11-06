@@ -154,4 +154,5 @@ if not LS.eventsRegistered then
   Events.OnCreatePlayer.Add(function() LS.HUD.start(); LS.Voice.start() end)
   Events.OnKeyPressed.Add(function(key) LS.HUD.onKeyPressed(key) end)
   Events.OnPlayerDeath.Add(function(player) LS.Death.onEvent(player) end)
+  Events.OnWeaponSwingHitPoint.Add(function(player, weapon) LS.Reflex.onShot(player, weapon) end)
 end

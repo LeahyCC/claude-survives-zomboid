@@ -296,6 +296,13 @@ function Sense.carriedItems(p)
   return out
 end
 
+-- Pure. The rounds she carries for this gun outside the gun: loose ones plus spare magazines.
+function Sense.gunAmmo(g, stock)
+  local ammo = (stock.loose and stock.loose[g.ammoKey]) or 0
+  if g.magKey and g.magKey ~= "" then ammo = ammo + ((stock.mags and stock.mags[g.magKey]) or 0) end
+  return ammo
+end
+
 -- Pure. guns: { { n, ammoKey, magKey, loaded, held } } for the guns carried. stock.loose maps an
 -- ammo item key to the rounds carried, stock.mags maps a magazine key to the rounds in the spare
 -- ones. Returns up to limit guns, the held one first, then the best supplied: { n, ammo, loaded,
@@ -305,9 +312,7 @@ function Sense.summarizeGuns(guns, stock, limit)
   stock = stock or {}
   local rows = {}
   for _, g in ipairs(guns or {}) do
-    local ammo = (stock.loose and stock.loose[g.ammoKey]) or 0
-    if g.magKey and g.magKey ~= "" then ammo = ammo + ((stock.mags and stock.mags[g.magKey]) or 0) end
-    table.insert(rows, { n = tostring(g.n or "?"), ammo = round(ammo), loaded = round(g.loaded), held = g.held and true or false })
+    table.insert(rows, { n = tostring(g.n or "?"), ammo = round(Sense.gunAmmo(g, stock)), loaded = round(g.loaded), held = g.held and true or false })
   end
   table.sort(rows, function(a, b)
     if a.held ~= b.held then return a.held end
@@ -329,6 +334,7 @@ function Sense.gunsCarried(p)
     if t.gun then
       local g = Core.gunFacts(it)
       if not g.broken then
+        g.it = it
         g.held = hand ~= nil and it == hand
         table.insert(guns, g)
       end
@@ -858,8 +864,8 @@ function Sense.perceptV2(p, px, py, room, weaponScore, heldGun, byHand)
   carried.inv.canRip = carried.inv.bandages == 0 and try(function() return LS.Needs.canRip(p) end, false) or false
   add("weapons", carried.weapons)
   add("weaponScore", weaponScore)
-  -- A gun is gear, not the melee weapon: weapon stays "none" for a held pistol, and heldGun
-  -- names it so the bridge counts her as armed (docs/percept.md).
+  -- A gun is not the melee weapon: weapon stays "none" for a held pistol, and heldGun names it.
+  -- The reflex draws it only for the fire rule and puts it away after (docs/combat.md, Guns).
   local guns, stock = Sense.gunsCarried(p)
   add("guns", Sense.summarizeGuns(guns, stock))
   add("heldGun", heldGun)

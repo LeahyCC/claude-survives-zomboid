@@ -25,7 +25,8 @@ if LS.deathDone == nil then LS.deathDone = false end
 
 -- Reflex.perform kinds, grouped. hold is its own reading, and hide and sneak (crouched, out of
 -- sight) are too. Anything else is none.
-local FIGHT = { swing = true, stomp = true, shove = true, close = true }
+local FIGHT = { swing = true, stomp = true, shove = true, close = true,
+  draw = true, shoot = true, rack = true, reload = true, aim = true }
 local FLEE = { flee = true, backoff = true, ["break"] = true, climb = true, wait = true }
 local HIDE = { hide = true, sneak = true }
 

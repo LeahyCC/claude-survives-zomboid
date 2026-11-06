@@ -230,8 +230,8 @@ end
 function Core.isFoodSupply(it)
   return Core.isEdible(it) or Core.isSealedFood(it)
 end
--- A firearm. It is gear for now: the reflex cannot fire one, so it is never the melee weapon
--- (see isMeleeWeapon), but it is worth carrying with its ammo and it counts as armed.
+-- A firearm. It is never the melee weapon (see isMeleeWeapon) and does not count as armed: it is
+-- a last resort the reflex draws, fires and puts away (docs/combat.md, Guns).
 function Core.isGun(it)
   if not it then return false end
   local gun = false

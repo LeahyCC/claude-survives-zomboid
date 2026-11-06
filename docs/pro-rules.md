@@ -187,7 +187,7 @@ Rules we already follow are not listed unless a conflict needs them.
 - Leave extra weapons, perishables on long routes, and anything you would drop to run. BG42.20.
 - Ignore fishing rods, most books, exotic weapons, furniture, heavy ammo, and clothes past one warm layer. WK.
 - Rip clothes into rags when bandages are short, and prefer real bandages. PF42.20. **Gap: our loot table leaves all clothes, and DROP throws dirty rags away.**
-- No guns on day one. Think about them once food, water and bandages have been stable for five days. WK. **Conflict with our loot table, which ranks a gun with ammo above medicine, while the reflex cannot fire one.**
+- No guns on day one. Think about them once food, water and bandages have been stable for five days. WK. **Conflict with our loot table, which ranks a gun with ammo above medicine, for what is now a last resort (`docs/combat.md`, "Guns").**
 - Keep runs short: "two hours of looting, not twelve". BG42.20. **Gap: no time limit.**
 - The first days: day 0 a two-story house with exits, bag, melee weapon, water. Day 1 bandages, disinfectant, painkillers, tinned food, can opener. Day 2 hammer, nails, saw, screwdriver. Day 3 a second food cache in another building. WK.
 
@@ -277,7 +277,7 @@ WK: bag, weapon, water, tinned food, bandages and disinfectant, then sheet rope 
 | Noise radius | Walk 7 (RS), 8 to 20 tiles (WK) | Walk heard only next door (ZP42) | Order only, no numbers |
 | Windows | Rarely spotted through one (ST41) | If you see it, it sees you (ZP42) | Treat as seen |
 | First item | Weapon (PF42.20) | Bag (WK) | Whichever comes first. Weapon if a zombie is near |
-| Guns | None early (WK) | Our table ranks them high | Weight only. Lower it until the reflex can fire |
+| Guns | None early (WK), a shot pulls zombies from far off (PF42.19) | Our table ranks them high | The reflex fires only as a last resort, then leaves and marks the area (`docs/combat.md`, "Guns"). The loot rank above medicine is not changed yet: Colin's call |
 
 ## 3. Colin's notes against the evidence
 

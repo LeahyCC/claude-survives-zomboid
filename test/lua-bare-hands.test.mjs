@@ -156,7 +156,7 @@ test('a weapon already in hand is left alone, even when a better one is carried 
   assert.deepEqual(queue(lua), []);
 });
 
-test('a gun in hand is never swapped for a melee weapon', () => {
+test('a gun in hand is not autoEquip\'s to move: the reflex holsters it (reflex-guns.test.mjs)', () => {
   const lua = world('P.__items.items = { PISTOL, CROWBAR }; P.primary = PISTOL');
   idle(lua, 200);
   assert.deepEqual(queue(lua), []);
