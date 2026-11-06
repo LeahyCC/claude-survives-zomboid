@@ -48,6 +48,7 @@ A percept with no `v` field comes from an old mod. It gets the old prompt and th
 | `options.mjs` | The menu: `buildOptions(percept, memory)`, and the short escape menu for a handed-back turn, `escapeOptions`. | service |
 | `chase.mjs` | How long the reflex has had a chase to itself, and when the brain gets a turn anyway. See "When the hold ends". | service |
 | `policy.mjs` | Needs that cannot wait: `decidePolicy`. | service |
+| `housejob.mjs` | The house job the bridge holds across turns: its stages, what it takes off the menu, the next house. See "House job". | service |
 | `playbook.mjs` | Pro rules with a condition each: `selectRules`. | service |
 | `memory.mjs` | Map memory by building id, saved as `map` in `pz-state.json`. | service |
 | `reactions.mjs` | How the last orders went: the outcome lines, the blocked list, loop detection, the rows of the strip. See "Reactions". | service |
@@ -98,6 +99,54 @@ A pick that is the job already running is sent again (`resolveChoice(..., force)
 
 The decision line gets `handback: { why, ms }`, so `node bridge/tools/review.mjs` prints "Stuck in a chase": loop limits by what she did next, and the turns handed back with how those orders went. The bridge also prints `Reflex hands the turn back: ...`.
 
+## House job
+
+The menu asks afresh every turn, so nothing held "finish this house". 63 of 168 ENTER orders came from inside another house, only 14 of 79 entries got a SEARCH, and she spent 3% of her time searching (`docs/pro-rules.md`). The idea of stages comes from the Bandits mod's programs, not its code. The bridge now holds one job in map memory (`map.job`, `bridge/housejob.mjs`):
+
+```
+IN      ENTER, until she stands in the house
+SHUT    SECURE: doors, windows, curtains, lights
+LOOK    WAIT, at least 2 game minutes, reading who is in the house
+SEARCH  SEARCH, until no room is left
+LEAVE   fill and rest if on the menu, walk to the door, then the next house
+```
+
+**How one opens.** An ENTER order opens it at IN. Coming into a house any other way (the spawn house, a flee through a door) opens it at SHUT. A house already searched, or with `roomsLeft` 0, gets no job.
+
+**What it does to the menu.** While a job is open and nothing threatens her:
+
+| stage | taken off the menu |
+|---|---|
+| IN | other houses, `explore`, `home`. Not `away`, since she is outside and may need it. If her house is off the menu (a zombie by the door), nothing is taken off |
+| SHUT, LOOK, SEARCH | every ENTER and every GOTO |
+| LEAVE | this house, `home`, `away`. `leave` is added. `explore` is offered inside too, when no next house fits |
+
+**Who sends the orders.** The policy rule `house-job` sends the stage's order, so a house is mostly not a model turn. It comes after the urgent rules, so a wound, thirst, hunger, a better weapon, night and sleep each cut in and the job picks up after. It sends nothing while a job is running. Between stages it does the small things first, while it is quiet: `bandage`, `drink`, `eat`, `wearbag`. If she is too heavy to search, it leaves the turn to `overloaded`. When SEARCH cannot be sent, the model picks from what is left, and the prompt says `HOUSE JOB: searching this house, 4 rooms left. Finish it before going anywhere else.`
+
+**What ends or pauses it.**
+
+| what | then |
+|---|---|
+| chased within 15 tiles, 3 standing that can reach her, bleeding, night outside | paused: the menu is the full one and the rule stays quiet. It picks up when that passes. The reflex owns the danger either way |
+| 3 standing in the house | as above, and the house is over: LEAVE when it passes |
+| out of the house with a threat, or after one | over (`threat`). She does not walk back into it |
+| out of the house with no threat | back to IN, then to the stage she left, not to SHUT. Twice at most (`MAX_REENTRIES`), then over (`walked out`). A SEARCH or SECURE still running is left alone, since it is on its way back in |
+| one zombie in the house at LOOK | wait up to 10 game minutes for it to go or the reflex to deal with it, then LEAVE |
+| SEARCH cannot run for 10 game minutes (a zombie close, too heavy, a retry timer) | LEAVE (`blocked`) |
+| SEARCH failed `full`, or too heavy with DROP off the menu | LEAVE (`full`) |
+| ENTER failed | over (`no way in`) |
+| time limit | LEAVE (`time`) |
+| LEAVE at dusk (17:00) or night | over, and she stays. The usual menu leads with home |
+| LEAVE after 15 game minutes | over (`time`) |
+
+**The time limit** is 15 game minutes a room, at least 30, at most 120 (BG42.20: "two hours of looting, not twelve"). Sleep and gaps in the clock over half an hour do not count. It is a number from the card, not a measurement: at the default day length 15 game minutes is about 37 real seconds. Check it against the review, because a limit that cuts searches short reads as `time` under "How they ended".
+
+**LEAVE.** She walks to the door she came in by, or if she came by a window, the door the map knows (`b.door`). A door whose walk passes a zombie is no way out, and she goes straight on (`leaveExit`). The next house is the nearest on the menu that is not searched, not crowded (3 or more zombies seen) and not given up on in the last 12 game hours, a house before a shop (`nextHouse`). With none she walks out to explore. `b.zombies` is only read while she stands inside a house, so it says little about a house she has not been in. The crowd map card is what would fix that.
+
+**The log.** Each change is a `house` line in `decisions.jsonl` (`docs/eval.md`), and the bridge prints it. `node bridge/tools/review.mjs` has a "House jobs" section: started, finished, rooms searched per house, re-entries, how they ended.
+
+A `searched` flag now needs SEARCH to have got as far as it could. A SEARCH that finished rooms and left some stays `partly`, and the next SEARCH goes on. One that got no further than the last marks the house searched, or she would loop on a room that is not loaded.
+
 ## Options
 
 Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: label`. `key` names it in map memory. The menu is sorted by need and cut to 8, with `wait` (or `keep`) always last.
@@ -118,9 +167,12 @@ Each option is `{id, verb, a, b, target, label, key}`. The model reads `id: labe
 | `fill` | FILL | inside, a tap here, an empty bottle carried |
 | `rest` | REST | endurance under 0.6, no chaser |
 | `away` | GOTO | an idle zombie within 12, or a chaser: 15 tiles in the clearest direction away |
-| `explore` | GOTO | outside with no new building on the menu: 25 tiles in a clear direction |
+| `explore` | GOTO | outside with no new building on the menu: 25 tiles in a clear direction. Inside too at the LEAVE stage of a house job, when no next house fits |
+| `leave` | GOTO | the LEAVE stage of a house job: to the door she came in by or the nearest door the map knows, if the walk is clear |
 | `wait` | WAIT | nothing is running |
 | `keep` | none | a skill or needs job is running. Picking it sends nothing |
+
+An open house job takes options off this table (see "House job"). A place given up on in the last 12 game hours ranks with the searched ones, and one with 3 or more zombies seen comes after the rest of its kind.
 
 While a skill or needs job runs, any new order cancels it. So the menu then has only `keep` and what is worth stopping for: `bandage`, `drink`, `eat`, `away`, and `secure` when a zombie is chasing. A walk (`GOTO`, `ENTER`) can still switch to another house. If `keep` is the only option, the model is not asked.
 
@@ -151,6 +203,7 @@ Checked in this order. The first rule whose option is on the menu is sent, and t
 | `night-outside` | 21:00 to 06:00 and outside | the nearest house on the menu (`ENTER`) |
 | `night-secure` | night, inside, not secured since entering | `secure` |
 | `sleep` | fatigue 0.8 or tired moodle 3; or night, tired, inside and secured | `sleep` |
+| `house-job` | a house job is open, nothing threatens her and no job is running (see "House job") | the order of the stage |
 | `find-weapon` | bare hands (weapon `none`, no gun in hand, no real weapon in the `weapons` list), inside, no chaser, and `search` is on the menu (so the building is not done, she is not heavy and no zombie can reach her soon) | `search` |
 | `overloaded` | heavy, no chaser, hp 30 or more (and `drop` is on the menu, so no zombie can reach her soon) | `drop` |
 
@@ -289,13 +342,13 @@ Without the history it picks the nearest house, the one that just failed, every 
 
 `state.map` in `bridge/pz-state.json`. Delete the file for a fresh mind.
 
-Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside), `securedAt`, and a rough position.
+Per building id: `firstSeen`, `lastSeen`, `visited`, `lastVisit`, `enteredAt` (game hours), `searched`, `partly`, `took` (from the search's `why`), `water`, `bed`, `res`, `shop`, `door`, `zombies` (within 15 at the last look inside), `securedAt`, `leftAt` (when a house job ended with rooms in it), and a rough position. `map.job` is the open house job. A saved one that does not read as a job is dropped.
 
 `door` is the exterior door `{x, y}` the percept listed, kept after the building drops out of the 6 nearest. It is what the `home` walk goes to. A door that is not a pair of numbers is ignored. `searched` is also set when the building the survivor stands in reports `roomsLeft` 0.
 
 Safe house score: residential +2, water +2, bed +2, searched +1, shop -1, minus one per zombie seen (up to 4). 5 or more is a safe house.
 
-It also keeps the last 12 orders sent (seq, verb, key, building), the fails with their time, and the sleep guess. Places stay known after a death. Orders, fails and sleep are cleared.
+It also keeps the last 12 orders sent (seq, verb, key, building, rooms left when sent), the fails with their time, and the sleep guess. Places stay known after a death. Orders, fails, sleep and the house job are cleared.
 
 ## /mind
 
