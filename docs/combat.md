@@ -29,6 +29,8 @@ ReflexLog.note(...)    logs a new stance, and the outcome of one taken 5 seconds
 | SNEAK | unaware zombies about and nothing chasing | `sneak`: crouch and let the order walk on. An unaware group within 7 tiles: creep away from it |
 | CLIMB | getting away, and a low fence or a climbable window within 4 tiles leads away from them | `climb`: walk to the square in front, the game's climb action, then `wait` out the animation |
 | FLEE | getting away, and nothing better fits (winded, overloaded) | `flee`: one 10 tile walk along the best open line, no sprint |
+| SHOOT | the fire rule holds (see "Guns"): a last resort | `draw`, `rack`, `reload`, `shoot`, `aim`. A `shove` when one is too close to reload |
+| HOLSTER | a gun in hand and no fire rule | `holster`: to a free slot or the pack, then the best melee weapon comes out |
 
 "Getting away" is one function (`escape` in `Stance.choose`). It tries CLIMB, then HIDE, then BREAK, then FLEE. When that has failed three times in a row against a small chase, it stops repeating itself (see "Stuck in a chase").
 
@@ -38,9 +40,12 @@ The first rule that matches wins.
 
 ```
 mid climb (the action has left the queue, the body is going over) .... CLIMB wait
-nothing living within 11 tiles ......................................... SNEAK if an unaware one is within 14 and nothing chases, else none
+the fire rule holds .................................................... SHOOT (see "Guns")
+a gun in hand, no fire rule, nothing standing within 2 ................. HOLSTER
+nothing living within 11 tiles ......................................... walk off if a shot just went off, else SNEAK if an unaware one is within 14 and nothing chases, else none
 more standing within 2.5 tiles than her weapon takes on (the crowd test) .. SHOVE the nearest if within 1.5 and she has the breath, else get away
 a standing zombie on her (1.2 tiles) .................................. FIGHT swing if armed, fit and alone, else SHOVE shove
+a shot just went off ................................................... get away ("shot")
 hp under 30 ............................................................ get away if one is within 8, else none
 a pack: 3 or more living within 7 ...................................... SNEAK away if none is chasing, else get away
 spacing off: two within 7 and one within 4 ............................. FLEE (the old rule)
@@ -156,6 +161,15 @@ So BREAK asks for a sprint (`setSprinting(true)` each time it acts, false when t
 | `lastDir` | the compass index of the last run, so a loop breaker takes another heading |
 | `kills` | `getZombieKills`, for the log only |
 | `crowdShoved` | a crowd shove happened in the last 240 ticks |
+| `heldGun` | a gun is in the main hand |
+| `gun` | the gun she would use, read only with a zombie within 11 or one in hand: `{ n, held, loaded, ammo, canLoad, ready, rack, minR, maxR }` |
+| `doors` | doors within 4 tiles she could go through (not locked or barricaded): `{ dx, dy, d }` |
+| `inBase` | she stands in the building she last slept in |
+| `town`, `night` | the zone is `TownZone` or `TrailerPark` or 3 or more houses are near; the hour is 21:00 to 06:00 |
+| `hpFalling` | hit in the last 300 ticks, or a part bleeding |
+| `shot` | where the last shot went off `{ dx, dy, d }`, until she is 20 tiles from it or 1800 ticks have passed |
+
+A zombie in the list also has `grab` (on her within 1.2 and `isZombieAttacking(p)` says yes) and, with a gun in hand, `wall` (a wall between them, `Sense.wallBetween`).
 
 `down` is on the floor, knocked down or playing dead. `chase` is "this zombie's target is her". If the target cannot be read, `chase` is true, which is how the reflex treated every zombie before. `sees` is `isTargetVisible()` for a chaser. Unknown counts as seeing her. Lines and barriers are read at most every 30 ticks, or after she moves 2 tiles.
 
@@ -207,8 +221,16 @@ All in `Stance.N` (`Reflex.N` is the same table). Distances are in tiles.
 | `PANIC_MAX` | 3 | panic gate (moodle level) |
 | `HEAVY_MAX` | 2 | heavy load gate (moodle level) |
 | `TIRED_MAX` | 3 | tired gate (moodle level) |
+| `FIRE_REACH` | 3 | standing within `REACH_R` that count as cornered |
+| `FIRE_GROUP_MIN`, `FIRE_GROUP_MAX` | 2, 4 | standing within `SWARM_R`: never for fewer, and a way out is not shot clear of more |
+| `FIRE_HP` | 50 | at night in town she fires only when cornered and under this |
+| `RELOAD_CLEAR` | 2 | a zombie this close gets a shove, not a reload |
+| `HOLSTER_CLEAR` | 2 | a zombie this close: no time to put a gun away |
+| `LINE_NEAR`, `LINE_COS` | 8, 0.8 | a standing zombie this close and this much along a line (a cosine) is in the way of it |
+| `DOOR_CLEAR` | 1.5 | a standing zombie this close to a door has that door |
+| `SHOT_LEAVE_R` | 20 | after a shot she walks on until this far from it |
 
-In `Reflex`: `LINE_LEN` 6, `TERRAIN_TICKS` 30, `BAD_LINE_TICKS` 300, `RUN_STUCK` 60, `CLIMB_ANIM` 120, `CLIMB_GIVEUP` 300, `CLIMB_AGAIN` 600, `WEAPON_TICKS` 300, `HANDBACK_TICKS` 1200, `HANDBACK_R` 10, `HANDBACK_NEAR` 3, `HANDBACK_HIT_TICKS` 180.
+In `Reflex`: `LINE_LEN` 6, `TERRAIN_TICKS` 30, `BAD_LINE_TICKS` 300, `RUN_STUCK` 60, `CLIMB_ANIM` 120, `CLIMB_GIVEUP` 300, `CLIMB_AGAIN` 600, `WEAPON_TICKS` 300, `HANDBACK_TICKS` 1200, `HANDBACK_R` 10, `HANDBACK_NEAR` 3, `HANDBACK_HIT_TICKS` 180, `GUN_TICKS` 60, `HOLSTER_RETRY` 120, `HOLSTER_TRIES` 3, `HOLSTER_OFF` 600, `HP_FALL_TICKS` 300, `SHOT_LEAVE_TICKS` 1800, `TOWN_BUILDINGS` 3.
 
 In `ReflexLog`: `OUTCOME_TICKS` 300 (also the length of one escape try), `CLEAR_TICKS` 180.
 
@@ -255,7 +277,18 @@ A call is written when the stance changes, or when the same stance comes back af
 | `from`, `to` | the standing count before and now |
 | `f` | the same facts as a call |
 
-A call line only comes when the stance changes, so a fight that grew from 2 standing to 3 showed nothing for 35 seconds in the soak's last death. This line is at most one a second. It is only in `local_reflex.txt` for now: `bridge/reflexlog.mjs` copies `call` and `out` lines only, so it needs to let `count` through before it reaches `decisions.jsonl`.
+A call line only comes when the stance changes, so a fight that grew from 2 standing to 3 showed nothing for 35 seconds in the soak's last death. This line is at most one a second.
+
+`shot` line, when a gun goes off, whoever fired it. It is written at once, not on the next flush:
+
+| field | meaning |
+| --- | --- |
+| `tick` | the mod's tick |
+| `gun` | the gun's name |
+| `noiseR` | how far it carries in tiles, from the item script (`getSoundRadius`). It leaves out the sandbox multiplier and the halving indoors that the game applies to the real sound |
+| `x`, `y` | where she stood |
+
+`bridge/reflexlog.mjs` copies all four kinds into `decisions.jsonl`.
 
 Windows of calls close together overlap, so a hit can count for two stances. With one call per stance change that is rare.
 
@@ -267,17 +300,68 @@ Checked against the 42.21 item scripts (`media/scripts/generated/items/weapon.tx
 
 ## Guns
 
-A firearm is gear, not the melee weapon. `Core.isMeleeWeapon` leaves it out (`isRanged()` or `isAimedFirearm()`), so it has no weapon score and never enters the list of melee weapons.
+A gun is a last resort. Colin's rule (2026-11-06): "she should do what the most logic choice is use it or holster it if there's no need for it". So it stays holstered, comes out only when the fire rule says so, and goes away again. None of this has run in the live game yet. The tests drive stubs.
 
-- The mod carries one, takes one in a search (with its ammo), and reports it in the percept: `guns`, `heldGun` (`docs/percept.md`).
-- EQUIP never wields a gun, and never swaps a gun in hand for a melee weapon (`docs/skills.md`).
-- A gun in hand is armed for the equip rule and for the bridge (`weaponPoor` is false, the equip rule does not fire).
-- **The reflex does not fire it.** `Reflex.snapshot` sets `armed` from `Core.holdingMelee`, which is false for a gun, so a survivor with a pistol in hand shoves and stomps as if unarmed, and flees from a pack. Firing is the reflex card's follow-up. It needs, found in the jar and the vanilla Lua but not run: aim (`setIsAiming`, `isAimingFirearmEquipped`) and fire with `IsoPlayer:DoAttack` while a ranged weapon is in the main hand and a round is chambered or loaded (`isRangedWeaponEmpty`, `HandWeapon:isRoundChambered`, `getCurrentAmmoCount`); rack with `ISRackFirearm`; reload with `ISReloadWeaponAction` (a magazine gun takes `getBestMagazine` through `ISInsertMagazine`, an empty magazine fills through `ISLoadBulletsInMagazine`, loose rounds go in through `ISInventoryPaneContextMenu.onLoadBulletsIntoFirearm`; `ISReloadWeaponAction.attackHook` already calls `DoAttack`); `getMinRangeRanged()` and `getMaxRange()` for the distance; and the per-gun ammo facts the percept now carries (`guns[i].ammo`, `guns[i].loaded`). A noise rule is also needed, since a shot is loud and pulls zombies from far off.
+```
+no fire rule ........ HOLSTER: free back or holster slot, else the pack. Best melee weapon comes out
+fire rule holds ..... SHOOT: draw, rack, reload, aim, fire
+rule stops holding .. HOLSTER, then walk away from the spot
+```
+
+A firearm is not the melee weapon. `Core.isMeleeWeapon` leaves it out (`isRanged()` or `isAimedFirearm()`), so it has no weapon score and never enters the list of melee weapons. The mod carries one, takes one in a search (with its ammo), and reports it in the percept: `guns`, `heldGun` (`docs/percept.md`).
+
+**Armed.** Only a melee weapon counts as armed. With a pistol in hand the reflex still shoves and stomps as if unarmed, `weaponPoor` is true in the menu and the `find-weapon` policy rule keeps looking (`withoutGun` in `bridge/options.mjs`).
+
+**The fire rule** is `Stance.fireRule(snap)`, pure. It returns `{ yes, why }`.
+
+```
+needs     a gun with rounds in it, or ammo she can load into it
+never     in the building she last slept in (why "base")
+never     for one zombie: fewer than 2 standing within 7, not across a fence (why "one")
+cornered  3 or more standing within 2.5, or grabbed
+          AND no free door, fence or window to break to
+          AND hp falling
+blocked   2 to 4 standing within 7, at least one chasing her
+          AND every open line and door she can see has one of them on it
+at night in town: only when cornered and hp under 50 (why "night")
+```
+
+- "Within reach" is the crowd test's count: standing, within 2.5, chasing her or within 2, not across a fence.
+- A free fence or window is the one `pickBarrier` would climb. A door is free when it is not locked or barricaded, within 4 tiles, and no standing zombie stands at it (1.5 tiles) or on the way to it.
+- Open ground counts as "no way to break to" for cornered, since the rule names only doors, fences and windows. Blocked looks at the open lines too.
+- Unknown ground is not a blocked way. With no line and no door to look at, blocked says no.
+- "Hp falling" is a hit in the last 5 seconds, or a part bleeding.
+- Her base is the building she last slept in, kept on the character (`p:getModData()`). The bridge's planned home never reaches the mod.
+- "In town" is the zone under her (`TownZone`, `TrailerPark`), or 3 or more houses near.
+
+**While it holds**, in this order:
+
+```
+in the bag ........................... draw
+a round to chamber, or a jam ......... rack
+empty, one within 2 tiles ............ shove (why "reload"), which cuts a reload short
+empty, nothing within 2 .............. reload
+nearest standing zombie in range ..... shoot. Not one behind a wall, not inside getMinRangeRanged, not past getMaxRange
+all too close ........................ shove (why "too close")
+all too far .......................... aim, and wait
+```
+
+A shot goes through `ISReloadWeaponAction.attackHook`, what the game's attack key runs: it makes the sound, puts the noise in the world, and calls `DoAttack`. Calling `DoAttack` alone would fire in silence. The reload is the game's `BeginAutomaticReload`, which handles magazines and loose rounds. A pump gun racks itself after a shot (`OnPlayerAttackFinished`). A gun on Safe comes off it when she holds it.
+
+**After a shot.** `Reflex.onShot` hears the game's `OnWeaponSwingHitPoint`, so a shot Colin fires counts too. A swing with a bat or a shove with the gun in hand does not. It writes the `shot` line and sets `R.shot`. When the rule stops holding she walks off through the usual `escape` (`why` "shot"), and with nothing near she walks along an open line away from the spot. A zombie on her is still shoved first. It ends 20 tiles from the spot or after 30 seconds. The bridge marks that 20 by 20 area on the crowd map (`docs/brain.md`, "Crowd map").
+
+**Holster.** `Reflex.holster`: to a free hotbar slot through `ISHotbar:attachItem`, else `ISUnequipAction` (a gun that came from a slot goes back to it by itself). Then `Act.equipPlan` picks the melee weapon: Colin's pick if he has one, else the best. Timed actions, never an instant swap.
+
+- With nothing near, it waits behind whatever she is doing. With a zombie within 11, it clears the queue and goes first. With one within 2, there is no time and the usual rules shove it.
+- A gun Colin puts in her hand goes away too. The hand lock is only for melee weapons. In manual mode the reflex does not run, so he can use it himself.
+- If the game refuses 3 times, she stops trying for 10 seconds, so she does not stand still with a zombie walking up.
+
+**What is unverified live.** Whether `setIsAiming(true)` holds until the shot (the game resets sprint from the keys every frame, and aiming may go the same way, so a shot may be from the hip). Whether `isZombieAttacking(p)` means what "grabbed" means here: the game has no plain call for it, and vanilla Lua does not use this one. Draw and holster times with zombies on her. Numbers to watch: `SHOOT` and `HOLSTER` in the review's "Reflex by stance", and `kind: shot` lines in `decisions.jsonl`.
 
 ## Flags
 
 ```lua
-LocalSurvivor.combat = { stomp = true, spacing = true, gates = true, doorHold = true, climb = true, hide = true, sprint = true }
+LocalSurvivor.combat = { stomp = true, spacing = true, gates = true, doorHold = true, climb = true, hide = true, sprint = true, guns = true }
 ```
 
 Set one to `false` from the debug console to switch that part off. Nothing else changes.
@@ -291,6 +375,7 @@ Set one to `false` from the debug console to switch that part off. Nothing else 
 | `climb` | no fence or window scan, no CLIMB |
 | `hide` | no HIDE: getting away is BREAK or FLEE |
 | `sprint` | BREAK does not call `setSprinting` |
+| `guns` | no fire rule and no holster: a gun in hand just stays there and she fights as if unarmed |
 
 ## Door and window hold
 
@@ -448,6 +533,14 @@ A swap needs the new weapon to score 25% over the one in hand (`Core.WEAPON.SWAP
 | sneak, creeping away | `SNEAK (reflex)` | A group that hasn't seen me. Creeping away. |
 | sneak past | the order's own | It hasn't seen me. Keeping low. |
 | climb | `CLIMB (reflex)` | Over the fence. They'll be slow on it. / Through the window. That slows them. |
+| draw | `DRAW (reflex)` | Nothing else left. Getting the gun out. |
+| shoot | `SHOOT (reflex)` | Last resort. Shooting. |
+| rack | `RACK (reflex)` | Working the slide. |
+| reload | `RELOAD (reflex)` | Reloading. |
+| aim | `AIM (reflex)` | Waiting for a clean shot. |
+| holster, a zombie near | `HOLSTER (reflex)` | No need for this. Putting the gun away. |
+| holster, nothing near | the order's own | No need for this. Putting the gun away. |
+| break or flee after a shot | `BREAK CONTACT (reflex)`, `FLEE (reflex)` | That shot will bring them. Getting out of here. |
 
 Swing and close in keep their old text.
 
@@ -497,6 +590,16 @@ Every method was checked with `node tools/pz-api.mjs` against the 42.21 jar, and
 | `ISClimbThroughWindow:new(p, window, 0)` | high | ENTER already climbs this way |
 | `AdjacentFreeTileFinder.FindWindowOrDoor(sq, obj, p)` | high | ENTER already uses it, and vanilla `luautils.walkAdjFence` uses it for fences too |
 | `IsoDoor:getNorth()`, `IsoWindow:getNorth()`, `IsoGridSquare:getRoom()` | high | in the jar, `instanceof(o, "IsoDoor")` was already used |
+| `ISReloadWeaponAction.attackHook(p, 0, gun)` | medium-high | vanilla's `Hook.Attack`, in the shipped Lua. Called directly here, not through the hook. Not seen live |
+| `ISReloadWeaponAction.canShoot`, `BeginAutomaticReload`, `ISRackFirearm:new(p, gun)` | medium-high | vanilla Lua, same arguments as its own callers. Not seen live |
+| `setIsAiming(bool)` | low | in the jar. Whether it holds until the shot is not known (see Guns) |
+| zombie `isZombieAttacking(p)` | low | in the jar, no vanilla Lua use. Read as "grabbed" |
+| `Events.OnWeaponSwingHitPoint` | high | vanilla's `onShoot` hangs off it, with the same two arguments |
+| `isDoShove()`, `getSoundRadius()`, `getMinRangeRanged()`, `getMaxRange(p)`, `haveChamber()`, `isRoundChambered()`, `isJammed()`, `isContainsClip()`, `isSelectFire()`, `getFireMode()`, `cycleFireMode()` | high | in the jar, vanilla's reload file reads them |
+| `ISUnequipAction:new(p, gun, 50)`, `ISHotbar:attachItem`, `canBeAttached`, `isInHotbar`, `equipItem`, `getPlayerHotbar` | medium-high | vanilla Lua, its hotbar menu calls them the same way. Not seen live |
+| `IsoGridSquare:getZoneType()` | medium | in the jar. That a town street reads `TownZone` is not seen live, which is why near houses also count |
+| `IsoObject:getModData()` on the player | high | in the jar |
+| `IsoDoor:isLocked()`, `isLockedByKey()`, `isBarricaded()` | high | in the jar |
 | which side of a door or fence is which | medium | the north or west edge rule is how the game lays out walls. Not seen live yet. |
 
 ## Not done

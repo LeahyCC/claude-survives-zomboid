@@ -390,19 +390,39 @@ test('EQUIP never picks a gun as the melee weapon', () => {
   assert.deepEqual(result(gunOnly), { seq: 1, verb: 'EQUIP', status: 'failed', why: 'equip: no weapon' });
 });
 
-test('EQUIP does not swap a gun in hand for a saucepan, a crowbar or an axe', () => {
+test('EQUIP takes a melee weapon up over a gun in hand, and with none carried it says so', () => {
   for (const carried of ['SAUCEPAN', 'CROWBAR', 'AXE']) {
     const lua = world(GUNS + `P.__items.items = { PISTOL, ${carried} }; P.primary = PISTOL`);
     order(lua, '1|EQUIP|0|0|||');
-    assert.deepEqual(queue(lua), [], carried);
-    assert.deepEqual(result(lua), { seq: 1, verb: 'EQUIP', status: 'done', why: 'holding the one you picked' }, carried);
+    assert.deepEqual(queue(lua), ['ISEquipWeaponAction'], carried);
+    assert.notEqual(queuedName(lua), 'Pistol', carried);
   }
+  const lua = world(GUNS + 'P.__items.items = { PISTOL }; P.primary = PISTOL');
+  order(lua, '1|EQUIP|0|0|||');
+  assert.deepEqual(result(lua), { seq: 1, verb: 'EQUIP', status: 'failed', why: 'equip: no weapon' });
 });
 
-test('a gun in hand counts as picked by hand even before anyone has looked', () => {
+test('a gun in hand is nobody\'s pick: no lock, whether it was there first or put there later', () => {
   const lua = world(GUNS + 'P.__items.items = { PISTOL, SAUCEPAN }; P.primary = PISTOL');
+  assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), false);
+  const plan = lua.run('local c = LocalSurvivor.Act.equipPlan(P); return c and c.name');
+  assert.equal(plan, 'Saucepan', 'the melee weapon is what comes out');
+  const later = world(GUNS + 'P.__items.items = { PISTOL, SAUCEPAN }; P.primary = SAUCEPAN');
+  tick(later);
+  later.run('P.primary = PISTOL');
+  tick(later);
+  assert.equal(later.run('return LocalSurvivor.Act.handChosen(P)'), false);
+});
+
+test('a melee pick survives a gun being drawn over it: holstering puts the pick back, not the best', () => {
+  const lua = world(GUNS + 'P.__items.items = { BAT, AXE, PISTOL }; P.primary = CROWBAR');
+  tick(lua);
+  lua.run('P.primary = BAT'); // Colin picks the bat
+  tick(lua);
   assert.equal(lua.run('return LocalSurvivor.Act.handChosen(P)'), true);
-  assert.equal(lua.run('return LocalSurvivor.Act.equipPlan(P)'), undefined);
+  lua.run('P.primary = PISTOL'); // the fire rule draws
+  tick(lua);
+  assert.equal(lua.run('local c = LocalSurvivor.Act.equipPlan(P); return c and c.name'), 'Baseball Bat');
 });
 
 // ---------- the weapon Colin picked by hand ----------

@@ -7,7 +7,11 @@ import { buildScenario, merge } from './eval/scenarios.mjs';
 import { buildOptions, setSearchLog } from './options.mjs';
 import { updateMemory, recordOrder, loadMemory, memorySlice, blockedWhy, emptyMemory, ENTER_ZOMBIE_MS, ENTER_ZOMBIE_MAX_MS, STRIKE_MEMORY_MS } from './memory.mjs';
 import { nextHouse } from './housejob.mjs';
-import { buildingCrowd, areaCrowd, areaKey, loadCrowd, FADE_HOURS, FAR_JUMP, CROWD_BUILDING } from './crowd.mjs';
+import { buildingCrowd, areaCrowd, areaKey, loadCrowd, markShot, crowdFor, crowdText, areaCrowded, FADE_HOURS, FAR_JUMP, CROWD_BUILDING, CROWD_AREA, SHOT_AREA } from './crowd.mjs';
+import { createReflexFollower } from './reflexlog.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 setSearchLog(() => {});
 const NOW = 1_000_000;
@@ -118,6 +122,72 @@ test('the map is saved with the rest of the memory and read back, and a bad one 
   const slice = memorySlice(m.memory, m.percept);
   assert.equal(slice.crowd.buildings.next.n, 3);
   assert.equal(slice.crowd.areas[areaKey(10662, 9830)].n, 3);
+});
+
+test('a shot marks its 20 by 20 area crowded, and only that one', () => {
+  const m = scene({ zList: [] });
+  look(m);
+  markShot(m.memory, 10662, 9831);
+  assert.equal(areaCrowd(m.memory, 10662, 9831), SHOT_AREA);
+  assert.equal(areaCrowd(m.memory, 10679, 9839), SHOT_AREA, 'the same cell');
+  assert.equal(areaCrowd(m.memory, 10681, 9831), 0, 'the next cell');
+  const cr = crowdFor(m.memory, 'nobody', 10662, 9831);
+  assert.equal(areaCrowded(cr), true);
+  assert.equal(crowdText(cr), 'a gunshot in this area lately', 'nobody counted those zombies, so the label does not claim to');
+});
+
+test('a shot is not wiped by the next look, even a complete one with few zombies in view', () => {
+  // A complete list sets an area to what she can see. That must not clear the noise.
+  const m = scene({ x: 10670, y: 9830, zList: [zed(2, 1)] });
+  look(m);
+  markShot(m.memory, 10670, 9830);
+  look(m);
+  look(m, { zList: [] });
+  assert.equal(areaCrowd(m.memory, 10670, 9830), SHOT_AREA);
+});
+
+test('a shot fades like the rest of the map, stays through a save, and goes with a far respawn', () => {
+  const m = scene({ zList: [] });
+  look(m);
+  markShot(m.memory, 10662, 9831);
+  const back = loadMemory(JSON.parse(JSON.stringify(m.memory)));
+  assert.equal(areaCrowd(back, 10662, 9831), SHOT_AREA);
+  look(m, { hoursAlive: 40 + 6 });
+  assert.equal(areaCrowd(m.memory, 10662, 9831), SHOT_AREA / 2);
+  assert.equal(areaCrowded(crowdFor(m.memory, 'x', 10662, 9831)), true, 'crowded for hours');
+  look(m, { hoursAlive: 40 + FADE_HOURS * 0.75 });
+  assert.equal(areaCrowd(m.memory, 10662, 9831) < CROWD_AREA, true, 'then not');
+  look(m, { hoursAlive: 40 + FADE_HOURS + 1 });
+  assert.equal(areaCrowd(m.memory, 10662, 9831), 0);
+  assert.deepEqual(m.memory.crowd.shots, {}, 'and the entry is gone');
+
+  const far = scene({ zList: [] });
+  look(far);
+  markShot(far.memory, 10662, 9831);
+  look(far, { hoursAlive: 0, x: 10650 + FAR_JUMP + 10 });
+  assert.deepEqual(far.memory.crowd.shots, {});
+});
+
+test('a bad shot line does nothing, and an old save with no shots still reads', () => {
+  const m = scene({ zList: [] });
+  look(m);
+  markShot(m.memory, 'x', undefined);
+  assert.deepEqual(m.memory.crowd.shots, {});
+  const old = { crowd: { clock: 1, buildings: {}, areas: {} } };
+  assert.deepEqual(loadMemory(old).crowd.shots, {});
+  assert.equal(areaCrowd({ crowd: { clock: 1, buildings: {}, areas: {} } }, 0, 0), 0, 'a map with no shots list at all');
+});
+
+test('the bridge marks the area when the reflex log says a gun went off', () => {
+  const m = scene({ zList: [] });
+  look(m);
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'crowdshot-')), 'local_reflex.txt');
+  fs.writeFileSync(file, JSON.stringify({ t: 'shot', tick: 5, gun: 'Shotgun', noiseR: 200, x: 10700, y: 9800 }) + '\n');
+  const lines = [];
+  const poll = createReflexFollower({ file, write: (l) => lines.push(l), readFrom: 'start', onShot: (l) => markShot(m.memory, l.x, l.y) });
+  assert.equal(poll(), 1);
+  assert.equal(lines[0].kind, 'shot');
+  assert.equal(areaCrowd(m.memory, 10700, 9800), SHOT_AREA);
 });
 
 test('a new character in the same place keeps the map, one far away starts clean', () => {

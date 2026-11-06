@@ -5,7 +5,7 @@
 
 import { dist, compass, segmentDistance, awayFrom } from './geom.mjs';
 import { tiles, percent, woundText, count } from './words.mjs';
-import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
+import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor, heldGun } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
 import { openJob, jobThreat, jobMenu, leaveOption, clearOption, nextHouse, doneWith, crowded } from './housejob.mjs';
 import { crowdFor, isCrowded, areaCrowded, crowdText } from './crowd.mjs';
@@ -27,6 +27,11 @@ const INTERRUPTS =new Set(['bandage', 'drink', 'eat', 'away']);
 const BAG_WORDS =/\b(bag|backpack|duffel|satchel|rucksack|hiking bag)\b/i;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+
+// The percept as the weapon rules should read it. Only a melee weapon counts as armed: a gun is a
+// last resort she puts away again (docs/combat.md, Guns), so it must not stop the search for a real
+// weapon. weaponPoor and bareHanded in senses.mjs still read a held gun as armed.
+export const withoutGun = (p) => (heldGun(p) ? { ...p, heldGun: 'none' } : p);
 
 // Where the "why is SEARCH missing" line goes. The bridge log is not reachable from here, so it
 // prints in the same shape as the log does. A test or a tool can swap it out. Under `node --test`
@@ -248,7 +253,7 @@ function needOptions(p, mem, now) {
     const started = (bInfo && bInfo.partly) || (left !== null && rooms > left);
     const state = started ? 'partly searched' : 'not searched yet';
     const roomText = left !== null ? `${count(left, 'room')} left, ` : rooms > 0 ? `${count(rooms, 'room')}, ` : '';
-    add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})${weaponPoor(p) ? ', no real weapon yet: kitchen and garage first' : ''}` });
+    add(6, { id: 'search', verb: 'SEARCH', key: `SEARCH:${here}`, label: `search this building for supplies (${roomText}${state})${weaponPoor(withoutGun(p)) ? ', no real weapon yet: kitchen and garage first' : ''}` });
   }
   if (noSearch.length) searchLog(`no SEARCH, ${noSearch.join(', ')} (${left === null ? 'rooms left unknown' : `${count(left, 'room')} left`})`);
   const bag = carriedBag(p);
@@ -292,7 +297,7 @@ export function buildOptions(p, mem, ctx = {}) {
   const dusk = num(p.hour, 12) >= 17 && num(p.hour, 12) < 21;
   const homeId = wantsHome || dusk ? plannedId : '';
   const bounce = bouncing(mem);
-  const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(p))
+  const shelters = buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, weaponPoor(withoutGun(p)))
     .filter((o) => !bounce.has(o.key) || chasers.length > 0 || (wantsHome && o.target === plannedId));
   for (const o of shelters) out.push({ prio: outdoors ? 2.5 : 8, ...o });
   const home = homeOption(p, mem, now, avoid, plannedId, shelters);

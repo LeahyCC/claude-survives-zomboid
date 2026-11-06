@@ -11,15 +11,21 @@
 //
 // Entries are { n, at }: n zombies at crowd clock `at`. The clock is game hours added up from
 // hoursAlive, so it survives a new character in the same world (hoursAlive starts again at 0).
+//
+// A gunshot goes in its own list (shots). updateCrowd sets an area to what she can see once the list
+// is complete, so a shot kept in areas would be wiped by the next percept, at the very moment the
+// noise is pulling in zombies she cannot see yet.
 
 import { zombies } from './senses.mjs';
 
 export const FADE_HOURS = 12;
 export const CELL = 20;
 // A building with this many zombies seen is crowded: left off the ENTER menu. An area with this many
-// ranks after the rest. The list holds 6, so an area can never read more than 6.
+// ranks after the rest. The list holds 6, so an area can only read more than 6 from a gunshot.
 export const CROWD_BUILDING = 3;
 export const CROWD_AREA = 5;
+// What a gunshot counts for in its area. It stays crowded for about 6.6 of the 12 hours it fades over.
+export const SHOT_AREA = 10;
 // A zombie belongs to the building whose wall (or door) is this close, or the one she is standing in.
 const BUILDING_R = 10;
 // Close enough that all zombies inside would be inside the 25 tile list.
@@ -33,7 +39,7 @@ const MAX_ENTRIES = 300;
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 export function emptyCrowd() {
-  return { clock: 0, last: null, buildings: {}, areas: {} };
+  return { clock: 0, last: null, buildings: {}, areas: {}, shots: {} };
 }
 
 function loadEntries(raw) {
@@ -56,6 +62,7 @@ export function loadCrowd(raw) {
   }
   c.buildings = loadEntries(raw.buildings);
   c.areas = loadEntries(raw.areas);
+  c.shots = loadEntries(raw.shots);
   return c;
 }
 
@@ -75,12 +82,27 @@ export function buildingCrowd(mem, id) {
 
 export function areaCrowd(mem, wx, wy) {
   const c = mem && mem.crowd;
-  return c ? Math.round(faded(c.areas[areaKey(wx, wy)], c.clock)) : 0;
+  if (!c) return 0;
+  const k = areaKey(wx, wy);
+  return Math.round(Math.max(faded(c.areas[k], c.clock), faded(c.shots && c.shots[k], c.clock)));
+}
+
+// A gun went off at wx, wy (ReflexLog's shot line). Marks its 20 by 20 area as crowded.
+export function markShot(mem, wx, wy) {
+  if (!mem || !Number.isFinite(Number(wx)) || !Number.isFinite(Number(wy))) return;
+  if (!mem.crowd) mem.crowd = emptyCrowd();
+  const c = mem.crowd;
+  if (!c.shots) c.shots = {};
+  c.shots[areaKey(wx, wy)] = { n: SHOT_AREA, at: c.clock };
 }
 
 // Both numbers for one building: its own, and its area's. wx, wy is where its door (or wall) is.
+// shot says the area number is a gunshot: nobody counted those zombies, so the label must not say so.
 export function crowdFor(mem, id, wx, wy) {
-  return { building: buildingCrowd(mem, id), area: areaCrowd(mem, wx, wy) };
+  const c = mem && mem.crowd;
+  const area = areaCrowd(mem, wx, wy);
+  const seen = c ? Math.round(faded(c.areas[areaKey(wx, wy)], c.clock)) : 0;
+  return { building: buildingCrowd(mem, id), area, ...(area > seen ? { shot: true } : {}) };
 }
 
 // The same from map memory alone, for a building that is not in this percept's list.
@@ -97,6 +119,7 @@ export const areaCrowded = (cr) => cr.area >= CROWD_AREA;
 export function crowdText(cr) {
   const z = (n) => (n === 1 ? '1 zombie' : `${n} zombies`);
   if (cr.building > 0) return `${z(cr.building)} seen here lately`;
+  if (areaCrowded(cr) && cr.shot) return 'a gunshot in this area lately';
   if (areaCrowded(cr)) return `${z(cr.area)} seen in this area lately`;
   return '';
 }
@@ -131,6 +154,7 @@ function tick(c, hours, x, y) {
       if (Math.hypot(x - l.x, y - l.y) > FAR_JUMP) {
         c.buildings = {};
         c.areas = {};
+        c.shots = {};
       }
     } else if (dh > 0) {
       c.clock += dh;
@@ -206,4 +230,5 @@ export function updateCrowd(mem, p) {
   }
   prune(c.buildings, c.clock);
   prune(c.areas, c.clock);
+  if (c.shots) prune(c.shots, c.clock);
 }

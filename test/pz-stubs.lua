@@ -125,8 +125,25 @@ for _, name in ipairs({
   "ISInventoryTransferAction", "ISOpenCloseDoor", "ISSmashWindow", "ISClimbThroughWindow",
   "ISOpenCloseCurtain", "ISRemoveBrokenGlass", "ISOpenCloseWindow", "ISWearClothing",
   "ISTakeWaterAction", "ISApplyBandage", "ISDisinfect", "ISUnequipAction", "ISRemoveGlass", "ISSitOnGround",
-  "ISLockDoor", "ISToggleLightAction", "ISClimbOverFence",
+  "ISLockDoor", "ISToggleLightAction", "ISClimbOverFence", "ISRackFirearm",
 }) do actionClass(name) end
+-- The parts of the vanilla reload file the mod calls. canShoot is copied from it. attackHook is what
+-- the attack key runs: a test sees the shot on p.hooked, and the plain attack as p:DoAttack.
+ISReloadWeaponAction = {}
+function ISReloadWeaponAction.canShoot(p, w)
+  if w:isJammed() then return false end
+  if w:haveChamber() and not w:isRoundChambered() then return false end
+  if not w:haveChamber() and w:getCurrentAmmoCount() <= 0 then return false end
+  return true
+end
+function ISReloadWeaponAction.attackHook(p, charge, w)
+  ISTimedActionQueue.clear(p)
+  p.hooked = (p.hooked or 0) + 1
+  if p.DoAttack then p:DoAttack(0) end
+end
+function ISReloadWeaponAction.BeginAutomaticReload(p, gun)
+  ISTimedActionQueue.add({ Type = "ISReloadWeaponAction", args = { p, gun } })
+end
 -- The vanilla pathfind action is built by named constructors, not new().
 ISPathFindAction = { Type = "ISPathFindAction" }
 function ISPathFindAction:pathToNearest(character, locations)
@@ -376,8 +393,18 @@ function __makeItem(opts)
   function it:isbDangerousUncooked() return false end
   function it:isCooked() return false end
   function it:getPoisonPower() return opts.poison or 0 end
-  -- opts.gun = { ammo, mag, box, loaded, max, chambered }: a firearm. Its ammo keys are full types.
+  -- opts.gun = { ammo, mag, box, loaded, max, chambered, chamber, jammed, clip, noise, minR, selectFire }:
+  -- a firearm. Its ammo keys are full types. chamber: it has one. clip: a magazine is in it.
   local gun = opts.gun
+  function it:haveChamber() return gun and gun.chamber or false end
+  function it:isJammed() return gun and gun.jammed or false end
+  function it:isContainsClip() return gun and gun.clip or false end
+  function it:getSoundRadius() return gun and gun.noise or 0 end
+  function it:getMinRangeRanged() return gun and gun.minR or 0 end
+  function it:isSelectFire() return gun and gun.selectFire ~= nil or false end
+  function it:getFireMode() return gun and gun.selectFire or nil end
+  function it:cycleFireMode() gun.selectFire = "Semi"; return "Semi" end
+  function it:getAttachmentType() return opts.attachment end
   function it:IsWeapon() return opts.melee or gun ~= nil or false end
   function it:isBareHands() return false end
   function it:isRanged() return gun ~= nil end

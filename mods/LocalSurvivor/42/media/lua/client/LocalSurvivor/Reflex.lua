@@ -34,7 +34,7 @@ if R.climbTried == nil then R.climbTried = {} end
 
 -- Each part of the fight can be switched off at run time. A key left nil counts as on.
 if LS.combat == nil then
-  LS.combat = { stomp = true, spacing = true, gates = true, doorHold = true, climb = true, hide = true, sprint = true }
+  LS.combat = { stomp = true, spacing = true, gates = true, doorHold = true, climb = true, hide = true, sprint = true, guns = true }
 end
 
 -- The thresholds live with the pure stance code. Same table, so a live edit reaches both.
@@ -63,6 +63,18 @@ Reflex.HANDBACK_NEAR = 3
 Reflex.HANDBACK_HIT_TICKS = 180
 -- Ticks. A crowd shove this recent means the next look leaves (4 seconds, a few decisions).
 Reflex.CROWD_TICKS = 240
+Reflex.GUN_TICKS = 60        -- ticks a gun not in hand is read again (the one in hand: every look)
+Reflex.HOLSTER_RETRY = 120   -- ticks before a draw or a holster that did not land is tried again
+Reflex.HOLSTER_TRIES = 3     -- holsters that did not land before she stops trying for a while
+Reflex.HOLSTER_OFF = 600     -- ticks that while lasts
+Reflex.HP_FALL_TICKS = 300   -- a hit this recent, or a wound bleeding, is hp falling
+Reflex.SHOT_LEAVE_TICKS = 1800 -- she stops walking away from a shot after this long, wherever she is
+-- A way to tell town from country. The zone under her, or this many houses near.
+Reflex.TOWN_ZONES = { TownZone = true, TrailerPark = true }
+Reflex.TOWN_BUILDINGS = 3
+-- The timed actions that work a gun. One of these at the head of the queue is left to finish.
+Reflex.GUN_WORK = { ISRackFirearm = true, ISReloadWeaponAction = true, ISInsertMagazine = true,
+  ISEjectMagazine = true, ISLoadBulletsInMagazine = true, ISInventoryTransferAction = true }
 
 -- nearest zombie + how many are within a radius
 function Reflex.nearestZombie(px, py, r)
@@ -286,6 +298,36 @@ function Reflex.findBarriers(p)
   return found
 end
 
+-- Doors within CLIMB_R she could go through, for the fire rule's "no door to break to". A locked
+-- or barricaded one is a wall to her.
+function Reflex.findDoors(p)
+  local found = {}
+  pcall(function()
+    local cell = getCell()
+    local cx, cy, pz = math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ())
+    local r = Stance.N.CLIMB_R
+    for x = cx - r, cx + r do
+      for y = cy - r, cy + r do
+        local sq = cell:getGridSquare(x, y, pz)
+        local objs = nil
+        if sq then pcall(function() objs = sq:getObjects() end) end
+        if objs then
+          for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if instanceof(o, "IsoDoor") then
+              local shut = false
+              pcall(function() shut = o:isLocked() or o:isLockedByKey() end)
+              pcall(function() if o:isBarricaded() then shut = true end end)
+              if not shut then table.insert(found, { x = x, y = y }) end
+            end
+          end
+        end
+      end
+    end
+  end)
+  return found
+end
+
 -- Pure. Where a barrier edge is from her, and which way is across. A north edge lies between
 -- y - 1 and y, a west edge between x - 1 and x (the way the game lays out walls).
 function Reflex.edgeFacts(b, px, py)
@@ -357,6 +399,71 @@ local function handScore(p)
   return R.score or 0
 end
 
+-- The gun she would use: the one in hand, else the one with the most rounds. Plain facts for the
+-- snapshot, and the item for perform. nil when she carries none. canLoad is whether the game's
+-- reload has something to work with: a magazine gun with no magazine anywhere cannot take loose
+-- rounds. rack is a round to chamber (or a jam to clear). A gun on Safe would read as not ready
+-- with rounds in it and send her to reload a full gun, so it comes off Safe here, as the key does.
+function Reflex.gunInfo(p)
+  local guns, stock = LS.Sense.gunsCarried(p)
+  local best, bestRounds = nil, -1
+  for _, g in ipairs(guns) do
+    local rounds = (tonumber(g.loaded) or 0) + LS.Sense.gunAmmo(g, stock)
+    if not best or (g.held and not best.held) or (rounds > bestRounds and not best.held) then best, bestRounds = g, rounds end
+  end
+  if not best then return nil, nil end
+  local it = best.it
+  if best.held then
+    pcall(function() if it:isSelectFire() and it:getFireMode() == "Safe" then it:cycleFireMode() end end)
+  end
+  local count, chambered, chamber, jammed, clip, ready = 0, false, false, false, false, false
+  pcall(function() count = tonumber(it:getCurrentAmmoCount()) or 0 end)
+  pcall(function() chambered = it:isRoundChambered() == true end)
+  pcall(function() chamber = it:haveChamber() == true end)
+  pcall(function() jammed = it:isJammed() == true end)
+  pcall(function() clip = it:isContainsClip() == true end)
+  pcall(function() ready = ISReloadWeaponAction.canShoot(p, it) == true end)
+  local ammo = LS.Sense.gunAmmo(best, stock)
+  local hasMag = best.magKey ~= nil and best.magKey ~= ""
+  local minR, maxR = 0, Reflex.N.RANGE
+  pcall(function() minR = tonumber(it:getMinRangeRanged()) or 0 end)
+  pcall(function() maxR = tonumber(it:getMaxRange(p)) or maxR end)
+  return {
+    n = best.n, held = best.held and true or false, loaded = tonumber(best.loaded) or 0, ammo = ammo,
+    canLoad = ammo > 0 and (not hasMag or clip or stock.mags[best.magKey] ~= nil),
+    ready = ready, rack = jammed or (chamber and not chambered and count >= 1), minR = minR, maxR = maxR,
+  }, it
+end
+
+-- The building's id. Asleep in one makes it her base, kept on the character so it survives a
+-- reload and dies with her. The bridge's planned home never reaches the mod, and where she chose
+-- to sleep is the place a shot would ruin.
+function Reflex.buildingId(p)
+  local id = nil
+  pcall(function() id = LS.Sense.defId(p:getSquare():getBuilding():getDef()) end)
+  return id
+end
+function Reflex.inBase(p)
+  local id = Reflex.buildingId(p)
+  if id == nil then return false end
+  local data = nil
+  pcall(function() data = p:getModData() end)
+  if not data then return false end
+  local asleep = false
+  pcall(function() asleep = p:isAsleep() == true end)
+  if asleep then data.lsBaseBuilding = id end
+  return data.lsBaseBuilding == id
+end
+
+-- Is this town? The zone name when the map has one, and a few houses near when it does not: a
+-- road through town is not always a town zone.
+function Reflex.inTown(p)
+  local zone = nil
+  pcall(function() zone = p:getSquare():getZoneType() end)
+  if zone and Reflex.TOWN_ZONES[tostring(zone)] then return true end
+  return #((LS.seen and LS.seen.near) or {}) >= Reflex.TOWN_BUILDINGS
+end
+
 -- Read the game into the plain table decide wants. Each call is its own pcall so one missing
 -- method only loses its own field. objs[i] is the zombie object behind snap.zombies[i], and
 -- objs.barriers[i] the fence or window behind snap.barriers[i].
@@ -423,6 +530,8 @@ function Reflex.snapshot(p)
           if not e.down and d <= N.BARRIER_R then
             e.across = Reflex.barrierBetween(cx, cy, math.floor(z:getX()), math.floor(z:getY()), cz)
           end
+          -- Hands on her. The game has no plain "grabbed", this is the nearest it says.
+          if not e.down and d <= N.ON_HIM then pcall(function() e.grab = z:isZombieAttacking(p) == true end) end
           -- One that has not noticed her, on the far side of a wall or a closed door, cannot reach
           -- her yet. Without this the reflex stood in FIGHT at one in the next room and kept
           -- SECURE from ever finishing (live 2026-11-06, five minutes). A chaser stays: it will
@@ -453,16 +562,61 @@ function Reflex.snapshot(p)
     R.holdSpot = nil
   end
 
-  -- The ground only matters with one close. Read it at most twice a second, or after a move.
   local nd = 9999
   for _, e in ipairs(snap.zombies) do if e.d < nd then nd = e.d end end
-  if nd <= N.RANGE then
+
+  -- Walk away from a shot until she is well clear of it. Not for ever: after a while the brain
+  -- has her back, and the crowd map keeps her from coming back soon.
+  if R.shot then
+    local dx, dy = R.shot.x - px, R.shot.y - py
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d >= N.SHOT_LEAVE_R or LS.tick - R.shot.tick >= Reflex.SHOT_LEAVE_TICKS then
+      R.shot = nil
+    else
+      snap.shot = { dx = dx, dy = dy, d = d }
+    end
+  end
+
+  -- The gun only matters with one close, or in her hand. Reading the pack every look is not worth
+  -- it for one in the bag, so that one is read once a second.
+  local handGun = false
+  pcall(function() handGun = Core.isGun(p:getPrimaryHandItem()) end)
+  if not handGun then R.holsterTries = 0 end
+  snap.heldGun = handGun and LS.tick >= (R.holsterOff or 0)
+  if flags.guns ~= false and (handGun or nd <= N.RANGE) then
+    if handGun or not R.gunRead or LS.tick - R.gunRead.tick >= Reflex.GUN_TICKS then
+      local g, it = Reflex.gunInfo(p)
+      R.gunRead = { tick = LS.tick, gun = g, it = it }
+    end
+    snap.gun, objs.gun = R.gunRead.gun, R.gunRead.it
+    if snap.gun then
+      -- A shot at a wall is all the noise for nothing.
+      if snap.gun.held then
+        for i, e in ipairs(snap.zombies) do
+          if not e.down and e.d <= snap.gun.maxR then e.wall = LS.Sense.wallBetween(p, objs[i]) end
+        end
+      end
+      snap.inBase = Reflex.inBase(p)
+      snap.town = Reflex.inTown(p)
+      pcall(function() snap.night = Reflex.isNightHour(getGameTime():getHour()) end)
+      snap.hpFalling = snap.bleeding > 0 or LS.tick - (R.hitTick or -99999) < Reflex.HP_FALL_TICKS
+    end
+  end
+
+  -- The ground only matters with one close, or when she has to walk off from a shot. Read it at
+  -- most twice a second, or after a move.
+  if nd <= N.RANGE or snap.shot then
     local t = R.terrain
     local moved = t and ((px - t.x) ^ 2 + (py - t.y) ^ 2 >= 4)
     if not t or moved or LS.tick - t.tick >= Reflex.TERRAIN_TICKS then
-      t = { x = px, y = py, tick = LS.tick, lines = Reflex.openLines(p) }
+      t = { x = px, y = py, tick = LS.tick, lines = Reflex.openLines(p), doors = Reflex.findDoors(p) }
       t.barriers = flags.climb ~= false and Reflex.findBarriers(p) or {}
       R.terrain = t
+    end
+    snap.doors = {}
+    for _, door in ipairs(t.doors) do
+      local dx, dy = door.x + 0.5 - px, door.y + 0.5 - py
+      table.insert(snap.doors, { dx = dx, dy = dy, d = math.sqrt(dx * dx + dy * dy) })
     end
     -- A run that went nowhere since the lines were read is off the list at once.
     for _, l in ipairs(t.lines) do
@@ -509,7 +663,136 @@ local THOUGHTS = {
   climbFence = "Over the fence. They'll be slow on it.",
   climbWindow = "Through the window. That slows them.",
   climbing = "Climbing.",
+  draw = "Nothing else left. Getting the gun out.",
+  shoot = "Last resort. Shooting.",
+  rack = "Working the slide.",
+  reload = "Reloading.",
+  aim = "Waiting for a clean shot.",
+  holster = "No need for this. Putting the gun away.",
+  shot = "That shot will bring them. Getting out of here.",
 }
+
+-- Put the gun away: a free back or holster slot if the game has one, else the pack, then the best
+-- melee weapon comes out (the one Colin picked, if he did). Timed actions, the way the game does
+-- it. urgent clears what she was doing, with a zombie near. Otherwise it waits its turn behind
+-- a walk or a search, so a gun Colin hands her does not cut the job short.
+function Reflex.holster(p, urgent)
+  local gun = nil
+  pcall(function() gun = p:getPrimaryHandItem() end)
+  if not Core.isGun(gun) or LS.tick < (R.holsterRetry or 0) then return false end
+  R.holsterRetry = LS.tick + Reflex.HOLSTER_RETRY
+  -- None of this has run in the live game. If the game keeps refusing, she must not stand still
+  -- trying with a zombie walking up, so she gives up on it for a while and fights as she is.
+  R.holsterTries = (R.holsterTries or 0) + 1
+  if R.holsterTries > Reflex.HOLSTER_TRIES then
+    R.holsterOff, R.holsterTries = LS.tick + Reflex.HOLSTER_OFF, 0
+    return false
+  end
+  if urgent then
+    ISTimedActionQueue.clear(p)
+    LS.travel.active = false
+    LS.reflexTick = LS.tick
+  end
+  if not Reflex.attachGun(p, gun) then
+    ISTimedActionQueue.add(ISUnequipAction:new(p, gun, 50))
+  end
+  local c = nil
+  pcall(function() c = LS.Act.equipPlan(p) end)
+  if c then LS.Act.queueEquip(p, c) end
+  return true
+end
+
+-- True when the gun went to a free slot. A gun that came out of a slot goes back by itself: the
+-- game's unequip knows it is in the hotbar, so that case is left to ISUnequipAction.
+function Reflex.attachGun(p, gun)
+  local done = false
+  pcall(function()
+    local bar = getPlayerHotbar(p:getPlayerNum())
+    if not bar or not bar.availableSlot or bar:isInHotbar(gun) then return end
+    for i, slot in pairs(bar.availableSlot) do
+      if not bar.attachedItems[i] and bar:canBeAttached(slot, gun) then
+        bar:attachItem(gun, slot.def.attachments[gun:getAttachmentType()], i, slot.def, true)
+        done = true
+        return
+      end
+    end
+  end)
+  return done
+end
+
+-- Take the gun up. The queue is cleared once: this is the fire rule, whatever she was doing is over.
+function Reflex.drawGun(p, gun)
+  if not gun or LS.tick < (R.drawRetry or 0) then return end
+  R.drawRetry = LS.tick + Reflex.HOLSTER_RETRY
+  ISTimedActionQueue.clear(p)
+  LS.travel.active = false
+  LS.reflexTick = LS.tick
+  local onBar = false
+  pcall(function()
+    local bar = getPlayerHotbar(p:getPlayerNum())
+    if bar and bar:isInHotbar(gun) then
+      bar:equipItem(gun)
+      onBar = true
+    end
+  end)
+  if onBar then return end
+  local name, two = "gun", false
+  pcall(function() name = gun:getDisplayName() end)
+  pcall(function() two = gun:isTwoHandWeapon() == true end)
+  LS.Act.queueEquip(p, { it = gun, name = name, two = two })
+end
+
+-- Rack or reload, once. Work already at the head of the queue is left alone: starting a reload
+-- again every 5 ticks would never finish one.
+function Reflex.workGun(p, gun, kind)
+  if not gun or Reflex.GUN_WORK[Move.headType(p) or ""] then return end
+  ISTimedActionQueue.clear(p)
+  LS.travel.active = false
+  LS.reflexTick = LS.tick
+  pcall(function()
+    if kind == "rack" then
+      ISTimedActionQueue.add(ISRackFirearm:new(p, gun))
+    else
+      ISReloadWeaponAction.BeginAutomaticReload(p, gun)
+    end
+  end)
+end
+
+-- One shot. attackHook is what the game's own attack key runs: the sound, the noise in the world
+-- and DoAttack. DoAttack alone fires in silence, which would hide the very cost this rule weighs.
+-- Aiming is set right before it because the game resets it from the keys (the same way it resets
+-- sprint), and a shot from the hip misses more. Whether it holds is a live check.
+function Reflex.shoot(p, z, gun)
+  if z then pcall(function() p:faceThisObject(z) end) end
+  pcall(function() p:setIsAiming(true) end)
+  R.aimSet = true
+  local started = false
+  pcall(function() started = p:isAttackStarted() end)
+  if started then return end
+  LS.travel.active = false
+  LS.reflexTick = LS.tick
+  pcall(function() p:setDoShove(false) end)
+  local ok = pcall(function() ISReloadWeaponAction.attackHook(p, 0, gun) end)
+  if not ok then
+    local fired, err = pcall(function() p:DoAttack(0) end)
+    if not fired then LS.lastError = "fight:" .. tostring(err) end
+  end
+end
+
+-- The game calls this for every swing that lands, and a gun going off is one, whoever pulled the
+-- trigger. It is the only sure sign a round left the gun: an attack call can be refused.
+function Reflex.onShot(p, weapon)
+  if not p or not Core.isGun(weapon) then return end
+  local shoved = false
+  pcall(function() shoved = p:isDoShove() == true end)
+  if shoved then return end
+  local x, y, n, noise = 0, 0, "?", 0
+  pcall(function() x, y = p:getX(), p:getY() end)
+  pcall(function() n = weapon:getDisplayName() end)
+  pcall(function() noise = tonumber(weapon:getSoundRadius()) or 0 end)
+  R.shot = { x = x, y = y, tick = LS.tick }
+  LS.ReflexLog.shot(n, noise, x, y, LS.tick)
+end
 
 -- Walk a few tiles along the heading decide gave, once. A new walk every tick restarts the path.
 function Reflex.backOff(p, a)
@@ -661,6 +944,10 @@ function Reflex.perform(p, a, snap, objs)
   if kind ~= "hide" and kind ~= "sneak" then R.slipWalk = false end
   if kind ~= "climb" and kind ~= "wait" then R.climbKey = nil end
   Reflex.setSprint(p, kind == "break")
+  if R.aimSet and kind ~= "shoot" and kind ~= "aim" then
+    pcall(function() p:setIsAiming(false) end)
+    R.aimSet = false
+  end
   if kind ~= "none" then
     R.stance, R.stanceTick = a.stance or Stance.OF[kind] or "NONE", LS.tick
     -- The death record reads these: what she was doing in her last seconds.
@@ -668,6 +955,14 @@ function Reflex.perform(p, a, snap, objs)
     Reflex.setSneak(p, kind == "hide" or kind == "sneak")
   end
   if kind == "none" then return false end
+  -- With nothing near this waits behind the job she is on, so the job keeps the tick.
+  if kind == "holster" then
+    Reflex.holster(p, a.urgent)
+    hud.thought = THOUGHTS.holster
+    if not a.urgent then return false end
+    hud.action = "HOLSTER (reflex)"
+    return true
+  end
   -- Creeping past ones that have not seen her: crouch and let the walk go on.
   if kind == "sneak" and not moving then
     hud.thought = THOUGHTS.sneak
@@ -690,6 +985,24 @@ function Reflex.perform(p, a, snap, objs)
     if a.why == "crowd" then R.crowdShoveTick = LS.tick end
     hud.action = "SHOVE (reflex)"
     hud.thought = (a.why == "crowd" and THOUGHTS.crowd) or (a.why == "unarmed" and THOUGHTS.shoveUnarmed) or THOUGHTS.shove
+  elseif kind == "draw" then
+    Reflex.drawGun(p, objs.gun)
+    hud.action = "DRAW (reflex)"
+    hud.thought = THOUGHTS.draw
+  elseif kind == "shoot" then
+    Reflex.shoot(p, z, objs.gun)
+    hud.action = "SHOOT (reflex)"
+    hud.thought = THOUGHTS.shoot
+  elseif kind == "rack" or kind == "reload" then
+    Reflex.workGun(p, objs.gun, kind)
+    hud.action = kind == "rack" and "RACK (reflex)" or "RELOAD (reflex)"
+    hud.thought = THOUGHTS[kind]
+  elseif kind == "aim" then
+    if z then pcall(function() p:faceThisObject(z) end) end
+    pcall(function() p:setIsAiming(true) end)
+    R.aimSet = true
+    hud.action = "AIM (reflex)"
+    hud.thought = THOUGHTS.aim
   elseif kind == "backoff" then
     Reflex.backOff(p, a)
     hud.action = "BACK OFF (reflex)"
@@ -714,7 +1027,7 @@ function Reflex.perform(p, a, snap, objs)
   elseif kind == "break" or kind == "flee" then
     Reflex.runAlong(p, a, Reflex.N.RUN_STEP)
     hud.action = kind == "break" and "BREAK CONTACT (reflex)" or "FLEE (reflex)"
-    hud.thought = kind == "break" and THOUGHTS.breakContact or THOUGHTS.flee
+    hud.thought = (a.why == "shot" and THOUGHTS.shot) or (kind == "break" and THOUGHTS.breakContact) or THOUGHTS.flee
   elseif kind == "hide" or kind == "sneak" then
     if kind == "hide" then
       if not R.hideSince then R.hideSince = LS.tick end

@@ -501,7 +501,7 @@ test('a pistol is listed with the ammo for it, and a held one is named in heldGu
   // Rounds loaded: 3 in the magazine and one chambered. Rounds carried: 5 loose and 9 in a spare magazine.
   assert.deepEqual(p.guns, [{ n: 'Pistol', ammo: 14, loaded: 4, held: true }]);
   assert.deepEqual(p.weapons.map((w) => w.n), ['Saucepan'], 'the melee weapons carried are listed as before');
-  assert.equal(p.weaponByHand, true, 'a gun in hand is always the survivor\'s pick');
+  assert.equal(p.weaponByHand, false, 'a gun is not locked in her hand: the reflex holsters it');
 });
 
 test('with nothing held, guns still lists what is in the pack and heldGun is none', () => {
@@ -535,7 +535,7 @@ test('the HUD names a held gun', () => {
   const lua = body();
   lua.run(ARMS + '__players[0] = __makePlayer({ x = 10, y = 10, items = { PISTOL }, primary = PISTOL })');
   percept(lua);
-  assert.equal(lua.get('LocalSurvivor.hudData.weapon'), 'Pistol (your pick)');
+  assert.equal(lua.get('LocalSurvivor.hudData.weapon'), 'Pistol');
 });
 
 test('summarizeGuns puts the held gun first, then the best supplied, and keeps two', () => {

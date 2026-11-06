@@ -5,6 +5,8 @@
 --
 --   call  written when the stance changes (or comes back after a quiet spell)
 --   out   written OUTCOME_TICKS later: escaped or not, hp lost, hits, kills, still chased
+--   count the standing count rose during a fight
+--   shot  a gun went off: which gun, how far it carries, and where
 --
 -- The pure parts (when to log, the outcome sums, the summary) take plain values. Only flush
 -- touches a file.
@@ -27,7 +29,7 @@ Log.CLEAR_TICKS = 180       -- nothing chasing for this long ends an escape loop
 Log.FIGHT_GAP = 300         -- a fight or shove this recent still counts as a fight for the count line
 Log.COUNT_GAP = 60          -- at most one count line a second
 -- The stances that trade blows. The standing count rising in these is the line worth having.
-Log.FIGHTING = { FIGHT = true, SHOVE = true }
+Log.FIGHTING = { FIGHT = true, SHOVE = true, SHOOT = true }
 -- The stances that try to get away. Only these count toward a loop.
 Log.ESCAPE = { FLEE = true, HIDE = true, BREAK = true }
 
@@ -177,6 +179,15 @@ function Log.health(drop, tick)
     table.insert(st.hits, tick)
     while #st.hits > 0 and tick - st.hits[1] > Log.HIT_WINDOW do table.remove(st.hits, 1) end
   end
+end
+
+-- A shot, so the bridge can mark the spot on the crowd map. It goes out at once: the shot that
+-- matters most is often the last thing she does.
+function Log.shot(gun, noiseR, x, y, tick)
+  local st = LS.reflexLog
+  table.insert(st.buf, { t = "shot", tick = tick, gun = tostring(gun or "?"), noiseR = tonumber(noiseR) or 0,
+    x = math.floor(tonumber(x) or 0), y = math.floor(tonumber(y) or 0) })
+  Log.flush(tick)
 end
 
 local function stamp()

@@ -53,6 +53,16 @@ Stance.N = {
   PANIC_MAX = 3,
   HEAVY_MAX = 2,
   TIRED_MAX = 3,
+  FIRE_REACH = 3,      -- this many standing within REACH_R is cornered, if nothing else opens up
+  FIRE_GROUP_MIN = 2,  -- a gun is never for one zombie
+  FIRE_GROUP_MAX = 4,  -- more than this on the way out is a pack: a few shots will not clear it
+  FIRE_HP = 50,        -- at night in town she only fires when cornered and under this
+  RELOAD_CLEAR = 2,    -- a zombie this close gets a shove, not a reload
+  HOLSTER_CLEAR = 2,   -- a zombie this close: no time to put a gun away
+  LINE_NEAR = 8,       -- a standing zombie this close on a line is in the way of it
+  LINE_COS = 0.8,      -- and this much along it (a cosine)
+  DOOR_CLEAR = 1.5,    -- a standing zombie this close to a door has that door
+  SHOT_LEAVE_R = 20,   -- after a shot, walk on until this far from it (one crowd map cell)
 }
 
 -- The brain's posture shifts the fight thresholds. Anything not listed keeps the normal value.
@@ -86,6 +96,7 @@ Stance.OF = {
   shove = "SHOVE", backoff = "SHOVE",
   hold = "HOLD", ["break"] = "BREAK", hide = "HIDE", sneak = "SNEAK", climb = "CLIMB", wait = "CLIMB",
   flee = "FLEE", none = "NONE",
+  draw = "SHOOT", shoot = "SHOOT", rack = "SHOOT", reload = "SHOOT", aim = "SHOOT", holster = "HOLSTER",
 }
 
 local function num(v, d) return tonumber(v) or d end
@@ -112,6 +123,11 @@ function Stance.awayFrom(zs, radius, standingOnly, nearestIdx)
   return fx / len, fy / len
 end
 
+-- Pure. Is this standing zombie in the way of a heading (a unit vector)?
+function Stance.onLine(z, lx, ly, N)
+  return not z.isDown and z.d > 0.1 and z.d <= N.LINE_NEAR and (z.dx * lx + z.dy * ly) / z.d > N.LINE_COS
+end
+
 -- Pure. The best open line to run along: lines are the compass headings the snapshot found
 -- clear for a few tiles. A line is good when it points away from them and no standing zombie
 -- sits near it. Without lines (or with none worth taking) it is the plain away vector, which is
@@ -126,9 +142,7 @@ function Stance.pickLine(lines, zs, ax, ay)
       lx, ly = lx / len, ly / len
       local score = lx * ax + ly * ay
       for _, z in ipairs(zs) do
-        if not z.isDown and z.d > 0.1 and z.d <= 8 and (z.dx * lx + z.dy * ly) / z.d > 0.8 then
-          score = score - 2 / math.max(1, z.d)
-        end
+        if Stance.onLine(z, lx, ly, Stance.N) then score = score - 2 / math.max(1, z.d) end
       end
       if score > bestScore then best, bestScore = i, score end
     end
@@ -163,7 +177,8 @@ function Stance.assess(snap, N)
     pack = 0, close2 = 0, reachN = 0, reachD = 9999, chasers = 0, seers = 0, unaware = 0, across = 0, nearSide = 0, threat = 0 }
   for _, z in ipairs(snap.zombies or {}) do
     local e = { d = num(z.d, 9999), dx = num(z.dx, 0), dy = num(z.dy, 0), chase = z.chase, outside = z.outside,
-      across = z.across and true or false, crawl = z.crawl and true or false }
+      across = z.across and true or false, crawl = z.crawl and true or false, grab = z.grab and true or false,
+      wall = z.wall and true or false }
     -- Unknown sight counts as seeing her: that is the safe guess.
     e.sees = z.sees ~= false
     -- Stomping off means downed zombies are fought like any other, the way it was before.
@@ -261,6 +276,80 @@ function Stance.pickBarrier(snap, A, N, ax, ay)
   return best
 end
 
+-- Pure. Can she get to this door? Not with a standing zombie at it, or on the way to it.
+function Stance.doorFree(door, zs, N)
+  local d = num(door.d, 9999)
+  if d <= 0.1 then return true end
+  local lx, ly = num(door.dx, 0) / d, num(door.dy, 0) / d
+  for _, z in ipairs(zs) do
+    if not z.isDown then
+      local ex, ey = z.dx - num(door.dx, 0), z.dy - num(door.dy, 0)
+      if math.sqrt(ex * ex + ey * ey) <= N.DOOR_CLEAR then return false end
+      if z.d < d and Stance.onLine(z, lx, ly, N) then return false end
+    end
+  end
+  return true
+end
+
+-- Pure. May she use a gun right now? Colin's rule (2026-11-06): "she should do what the most logic
+-- choice is use it or holster it if there's no need for it". A shot pulls zombies from 100 tiles
+-- (docs/pro-rules.md), so it is the last resort: for when the shove and the walk have nothing left.
+-- snap is Reflex.snapshot's table. Returns { yes, why }. why names the case, or what ruled it out.
+--   cornered  3 or more standing in reach, or grabbed, no door, fence or window to break to, hp falling
+--   blocked   2 to 4 standing, one awake to her, every way out she can see has one of them on it
+-- Never for one zombie, never in the building she sleeps in, and at night in town only when
+-- cornered under FIRE_HP: the noise brings more than she can see, and she cannot see them coming.
+function Stance.fireRule(snap, A, N)
+  snap = snap or {}
+  N = N or Stance.params(snap.posture)
+  A = A or Stance.assess(snap, N)
+  local function no(why) return { yes = false, why = why } end
+  if (snap.flags or LS.combat or {}).guns == false then return no("off") end
+  local gun = snap.gun
+  if not gun or (num(gun.loaded, 0) <= 0 and (gun.canLoad == false or num(gun.ammo, 0) <= 0)) then return no("no gun") end
+  if snap.inBase then return no("base") end
+  local standing, grabbed = 0, false
+  for _, z in ipairs(A.zs) do
+    if not z.isDown then
+      if z.grab then grabbed = true end
+      if z.d <= N.SWARM_R and not z.across then standing = standing + 1 end
+    end
+  end
+  if standing < N.FIRE_GROUP_MIN then return no("one") end
+
+  local ax, ay = Stance.awayFrom(A.zs, 22, false, A.near)
+  local doorOut = false
+  for _, door in ipairs(snap.doors or {}) do
+    if Stance.doorFree(door, A.zs, N) then doorOut = true end
+  end
+  local wayOut = doorOut or Stance.pickBarrier(snap, A, N, ax, ay) ~= nil
+
+  local cornered = (A.reachN >= N.FIRE_REACH or grabbed) and snap.hpFalling and not wayOut
+
+  -- Unknown ground is not a blocked way: with no line and no door to look at she does not fire.
+  -- A door counts as shut here, since wayOut already said no door is free.
+  local blocked = false
+  if not wayOut and standing <= N.FIRE_GROUP_MAX and A.chasers > 0 then
+    local ways, shut = #(snap.doors or {}), #(snap.doors or {})
+    for _, l in ipairs(type(snap.lines) == "table" and snap.lines or {}) do
+      local lx, ly = num(l.dx, 0), num(l.dy, 0)
+      local len = math.sqrt(lx * lx + ly * ly)
+      if not l.blocked and len > 0.01 then
+        ways = ways + 1
+        for _, z in ipairs(A.zs) do
+          if Stance.onLine(z, lx / len, ly / len, N) then shut = shut + 1; break end
+        end
+      end
+    end
+    blocked = ways > 0 and shut == ways
+  end
+
+  if snap.night and snap.town and not (cornered and num(snap.hp, 100) < N.FIRE_HP) then return no("night") end
+  if cornered then return { yes = true, why = "cornered" } end
+  if blocked then return { yes = true, why = "blocked" } end
+  return no("no need")
+end
+
 -- Pure. The decision. snap is the table Reflex.snapshot builds (docs/combat.md lists every
 -- field). Returns { kind, stance, index, why, dx, dy, target, threat, level }. kind is what
 -- Reflex.perform does, stance is the name it is logged under. The first rule that fits wins.
@@ -282,7 +371,45 @@ function Stance.choose(snap)
   -- starting a walk now would cut it, so wait it out.
   if snap.climbing then return act("wait", nil, "climbing") end
 
+  -- The gun comes first, because the rules below are what has run out when it is needed. While
+  -- the fire rule holds she works the gun. A zombie too close for the next step gets a shove.
+  local fire = Stance.fireRule(snap, A, N)
+  if fire.yes then
+    local gun = snap.gun
+    if not gun.held then return act("draw", A.stand, fire.why) end
+    if gun.rack then return act("rack", A.stand, fire.why) end
+    if not gun.ready then
+      if A.standD <= N.RELOAD_CLEAR then return act("shove", A.stand, "reload") end
+      return act("reload", A.stand, fire.why)
+    end
+    local target, targetD = nil, 9999
+    for i, z in ipairs(zs) do
+      if not z.isDown and not z.wall and z.d >= num(gun.minR, 0) and z.d <= num(gun.maxR, N.RANGE) and z.d < targetD then
+        target, targetD = i, z.d
+      end
+    end
+    if target then return act("shoot", target, fire.why) end
+    if A.standD <= N.ON_HIM then return act("shove", A.stand, "too close") end
+    return act("aim", A.stand, fire.why)
+  end
+  -- No use for it: put it away. With one right on her the rules below shove it first.
+  if snap.heldGun and flags.guns ~= false and A.standD > N.HOLSTER_CLEAR then
+    local a = act("holster", nil, fire.why)
+    a.urgent = A.nearD <= N.RANGE
+    return a
+  end
+
   if not A.near or A.nearD > N.RANGE then
+    -- Nothing near yet, and the noise is still out there. Walk on, away from where it went off.
+    if snap.shot then
+      local d = num(snap.shot.d, 0)
+      local bx, by = 0, 0
+      if d >= 1 then bx, by = num(snap.shot.dx, 0) / -d, num(snap.shot.dy, 0) / -d end
+      local dx, dy = Stance.pickLine(snap.lines, zs, bx, by)
+      if math.abs(dx) + math.abs(dy) > 0.01 then
+        return act(num(snap.endurance, 1) >= N.END_SPRINT and "break" or "flee", nil, "shot", dx, dy)
+      end
+    end
     if not A.chasingAny and A.unaware > 0 then return act("sneak", nil, "unaware") end
     return NONE
   end
@@ -380,6 +507,9 @@ function Stance.choose(snap)
     if A.canFight and A.close2 <= 1 then return act("swing", A.stand) end
     return act("shove", A.stand, A.armed and (A.gate or "spacing") or "unarmed")
   end
+
+  -- A shot went off here and whatever heard it is on its way (docs/combat.md, Guns).
+  if snap.shot then return escape("shot") end
 
   if num(snap.hp, 100) < N.HP_FLEE then
     if A.nearD <= Core.FLEE_TRIGGER then return escape("hurt") end
