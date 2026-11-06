@@ -8,6 +8,7 @@ import { tiles, percent, woundText, count } from './words.mjs';
 import { zombies, reaches, unaware, inside, heavy, untreated, isNight, running, panic01, canTreat, betterWeapon, weaponPoor } from './senses.mjs';
 import { blockedWhy, building, securedThisVisit, safehouseScore } from './memory.mjs';
 import { openJob, jobThreat, jobMenu, leaveOption, nextHouse, doneWith, crowded } from './housejob.mjs';
+import { crowdFor, isCrowded, areaCrowded, crowdText } from './crowd.mjs';
 
 export const MAX_OPTIONS = 8;
 const MAX_BUILDINGS = 3;
@@ -47,7 +48,7 @@ function kindOf(b, seen) {
   return 'building';
 }
 
-function buildingTags(b, planned) {
+function buildingTags(b, planned, crowd = '') {
   const tags = [];
   if (planned) tags.push('your planned home');
   if (!b || !b.visited) tags.push('not visited');
@@ -59,7 +60,9 @@ function buildingTags(b, planned) {
     if (b && b.water) tags.push('has water');
     if (b && b.bed) tags.push('has a bed');
   }
-  if (b && b.zombies >= 2) tags.push(`${b.zombies} zombies seen`);
+  // The crowd map (crowd.mjs) fades; b.zombies was only counted from inside and never does. It speaks only when the map is silent.
+  if (crowd) tags.push(crowd);
+  else if (b && b.zombies >= 2) tags.push(`${b.zombies} zombies seen`);
   return tags.join(', ');
 }
 
@@ -72,7 +75,7 @@ const stageOf = (c, hours) => (doneWith(c.mem, hours) ? 2 : c.mem && (c.mem.visi
 function rankBuildings(cands, wantsHome, homeId, poor, hours) {
   const homeFirst = (c) => (homeId && String(c.seen.id) === homeId ? -1 : wantsHome && safehouseScore(c.mem) >= 5 ? 0 : 1);
   const houseFirst = (c) => (poor && kindOf(c.mem, c.seen) !== 'house' ? 1 : 0);
-  const crowdLast = (c) => (crowded(c.mem) ? 1 : 0);
+  const crowdLast = (c) => (crowded(c.mem) || areaCrowded(c.crowd) ? 1 : 0);
   return cands.sort((x, y) => homeFirst(x) - homeFirst(y) || stageOf(x, hours) - stageOf(y, hours) || crowdLast(x) - crowdLast(y) || houseFirst(x) - houseFirst(y) || x.d - y.d);
 }
 
@@ -93,17 +96,20 @@ function buildingCandidates(p, mem, now, avoid) {
     const tx = door ? door.x - num(p.x) : num(seen.dx);
     const ty = door ? door.y - num(p.y) : num(seen.dy);
     if (!pathClear(tx, ty, avoid)) continue;
-    cands.push({ seen, key, tx, ty, d: Math.max(num(seen.d), 0), mem: building(mem, seen.id) });
+    const crowd = crowdFor(mem, seen.id, num(p.x) + tx, num(p.y) + ty);
+    cands.push({ seen, key, tx, ty, d: Math.max(num(seen.d), 0), mem: building(mem, seen.id), crowd });
   }
   return cands;
 }
 
 function buildingOptions(p, mem, now, avoid, wantsHome, homeId, plannedId, poor) {
-  const cands = buildingCandidates(p, mem, now, avoid);
+  // A building with a crowd seen in it lately is not offered at all: 11 zombies in one was a death.
+  // An area with a crowd only ranks after the rest, and the label says so.
+  const cands = buildingCandidates(p, mem, now, avoid).filter((c) => !isCrowded(c.crowd));
   const hours = num(p.hoursAlive);
   return rankBuildings(cands, wantsHome, homeId, poor, hours).slice(0, MAX_BUILDINGS).map((c, i) => {
     const where = c.d < 1 ? 'right here' : `${tiles(c.d)} ${compass(c.tx, c.ty)}`;
-    const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId);
+    const tags = buildingTags(c.mem || { visited: !!c.seen.visited }, !!plannedId && String(c.seen.id) === plannedId, crowdText(c.crowd));
     // Said only of a house not yet searched, the place to look. A shop or a searched house is not sold as one.
     const hunt = poor && stageOf(c, hours) < 2 && kindOf(c.mem, c.seen) === 'house' ? ', no real weapon yet, look here' : '';
     return {
@@ -131,6 +137,8 @@ function homeOption(p, mem, now, avoid, plannedId, shelters) {
   const ty = b.door.y - num(p.y);
   const d = Math.hypot(tx, ty);
   if (d > MAX_HOME_WALK || !pathClear(tx, ty, avoid)) return null;
+  // A walk home to a crowd is no better than an ENTER into one.
+  if (isCrowded(crowdFor(mem, plannedId, b.door.x, b.door.y))) return null;
   if (isNight(p) && !inside(p) && shelters.some((s) => s.d < d)) return null;
   return {
     id: 'home', verb: 'GOTO', a: b.door.x, b: b.door.y, target: '', key,

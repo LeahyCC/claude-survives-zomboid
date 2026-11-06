@@ -1,7 +1,7 @@
 // Scenario files for the eval (docs/eval.md). Each is a patch over base.json, so a file only
 // says what is different about that moment.
 //
-//   { name, note, patch, memory: { current, buildings, fails }, plan: { goal, steps, home }, history: [orders], accept: [ids], wrong: [ids] }
+//   { name, note, patch, memory: { current, buildings, fails, job, crowd }, plan: { goal, steps, home }, history: [orders], accept: [ids], wrong: [ids] }
 //
 // plan is the planner's day plan, only for a moment that depends on it (the walk home).
 // memory.fails is { key: { why, ago } }: orders that failed `ago` seconds ago (they stay off the menu while
@@ -13,6 +13,7 @@
 
 import fs from 'node:fs';
 import { emptyMemory, updateMemory } from '../memory.mjs';
+import { loadCrowd } from '../crowd.mjs';
 
 const DIR = new URL('./', import.meta.url);
 
@@ -44,6 +45,7 @@ export function buildScenario(s, now = 1_000_000) {
   const seed = s.memory || {};
   if (seed.current) memory.current = String(seed.current);
   if (seed.job) memory.job = seed.job;
+  if (seed.crowd) memory.crowd = loadCrowd(seed.crowd);
   for (const [id, b] of Object.entries(seed.buildings || {})) {
     memory.buildings[id] = { id, firstSeen: 0, lastSeen: 0, lastVisit: 0, visited: false, searched: false, partly: false,
       took: [], water: false, bed: false, res: false, shop: false, zombies: 0, securedAt: null, enteredAt: null, ...b };

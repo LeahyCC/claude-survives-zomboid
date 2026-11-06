@@ -3,6 +3,7 @@
 // taken, where water and beds are, and which orders failed and why.
 
 import { stepHouseJob, noteJobOrder, validJob } from './housejob.mjs';
+import { emptyCrowd, loadCrowd, updateCrowd, areaKey } from './crowd.mjs';
 
 const MAX_BUILDINGS = 300;
 const MAX_ORDERS = 12;
@@ -16,11 +17,17 @@ const RETRY_MS = {
   'not heavy': 3 * 60_000, 'nothing to drop': 10 * 60_000, 'equip: no weapon': 10 * 60_000,
 };
 const DEFAULT_RETRY_MS = 45_000;
+// A failed ENTER with "zombie" means the way in is not clear. Thirty seconds sent her straight back
+// to it (docs/pro-rules.md: 45 repeats). Five minutes, then double for each failure again within an
+// hour, to half an hour at most. A strike is forgotten after an hour of quiet, or when she gets in.
+export const ENTER_ZOMBIE_MS = 5 * 60_000;
+export const ENTER_ZOMBIE_MAX_MS = 30 * 60_000;
+export const STRIKE_MEMORY_MS = 60 * 60_000;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 export function emptyMemory() {
-  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [] };
+  return { buildings: {}, current: null, orders: [], fails: {}, handled: '', sleep: null, job: null, jobEvents: [], crowd: emptyCrowd(), strikes: {} };
 }
 
 // An old or hand-edited pz-state.json must not crash the bridge.
@@ -34,6 +41,12 @@ export function loadMemory(raw) {
   if (typeof raw.handled === 'string') m.handled = raw.handled;
   if (raw.sleep && typeof raw.sleep === 'object') m.sleep = raw.sleep;
   if (validJob(raw.job)) m.job = raw.job;
+  m.crowd = loadCrowd(raw.crowd);
+  if (raw.strikes && typeof raw.strikes === 'object') {
+    for (const [k, v] of Object.entries(raw.strikes)) {
+      if (v && Number.isFinite(Number(v.n)) && Number.isFinite(Number(v.at))) m.strikes[k] = { n: Number(v.n), at: Number(v.at) };
+    }
+  }
   return m;
 }
 
@@ -53,7 +66,8 @@ export function tookItems(why) {
   return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
-function prune(mem) {
+function prune(mem, now) {
+  for (const [k, s] of Object.entries(mem.strikes || {})) if (now - num(s.at) > STRIKE_MEMORY_MS) delete mem.strikes[k];
   const ids = Object.keys(mem.buildings);
   if (ids.length <= MAX_BUILDINGS) return;
   ids.sort((a, b) => num(mem.buildings[a].lastSeen) - num(mem.buildings[b].lastSeen));
@@ -82,7 +96,10 @@ function applyResult(mem, p, now, hours) {
   const bldgId = (order && order.bldg) || (p.inBldg ? String(p.inBldg.id) : null);
   const b = bldgId ? entry(mem, bldgId, hours) : null;
   if (r.status === 'done') {
-    if (order) delete mem.fails[order.key];
+    if (order) {
+      delete mem.fails[order.key];
+      delete mem.strikes[order.key];
+    }
     if (r.verb === 'SEARCH' && b) {
       b.partly = true;
       // A SEARCH that finished rooms and left some (a room not loaded, a way that led outside) is
@@ -105,7 +122,13 @@ function applyResult(mem, p, now, hours) {
     b.searched = true;
     b.partly = true;
   }
-  if (order) mem.fails[order.key] = { why, at: now };
+  if (order) {
+    mem.fails[order.key] = { why, at: now };
+    if (r.verb === 'ENTER' && why === 'zombie') {
+      const old = mem.strikes[order.key];
+      mem.strikes[order.key] = { n: (old && now - num(old.at) < STRIKE_MEMORY_MS ? old.n : 0) + 1, at: now };
+    }
+  }
 }
 
 // With the game's asleep flag there is nothing to guess, so a guess left from a SLEEP result
@@ -126,6 +149,7 @@ function updateSleep(mem, p, hours) {
 export function updateMemory(mem, p, now = Date.now()) {
   if (!p || typeof p !== 'object' || p.dead) return mem;
   const hours = num(p.hoursAlive);
+  if (!mem.strikes) mem.strikes = {};
   const here = p.inBldg && p.inBldg.id != null && !p.outside ? String(p.inBldg.id) : null;
   // Read before the list below marks it: the job log counts walking back into a house.
   const wasVisited = !!(here && mem.buildings[here] && mem.buildings[here].visited);
@@ -162,9 +186,15 @@ export function updateMemory(mem, p, now = Date.now()) {
     mem.buildings[here].searched = true;
   }
   updateSleep(mem, p, hours);
+  updateCrowd(mem, p);
   stepHouseJob(mem, p, now, { entered, wasVisited });
-  prune(mem);
+  prune(mem, now);
   return mem;
+}
+
+function enterZombieWait(mem, key) {
+  const n = Math.max(1, num(mem.strikes && mem.strikes[key] && mem.strikes[key].n, 1));
+  return Math.min(ENTER_ZOMBIE_MAX_MS, ENTER_ZOMBIE_MS * 2 ** (n - 1));
 }
 
 export function blockedWhy(mem, key, now = Date.now()) {
@@ -172,7 +202,7 @@ export function blockedWhy(mem, key, now = Date.now()) {
   if (!f) return '';
   // The mod names the container in this why ("nothing came out of Mug"), so match its start.
   const dry = String(f.why || '').startsWith('nothing came out') ? 5 * 60_000 : undefined;
-  const wait = RETRY_MS[f.why] ?? dry ?? DEFAULT_RETRY_MS;
+  const wait = f.why === 'zombie' && String(key).startsWith('ENTER:') ? enterZombieWait(mem, key) : RETRY_MS[f.why] ?? dry ?? DEFAULT_RETRY_MS;
   if (now - num(f.at) < wait) return f.why || 'failed';
   delete mem.fails[key];
   return '';
@@ -218,7 +248,18 @@ export function memorySlice(mem, p) {
       ...(b.leftAt != null ? { leftAt: b.leftAt } : {}),
     };
   }
-  return { current: mem.current || null, buildings, ...(mem.job ? { job: mem.job } : {}) };
+  // The crowd entries for these buildings and their areas, so the eval rebuilds the same labels.
+  const c = mem.crowd;
+  const crowd = { clock: c ? c.clock : 0, buildings: {}, areas: {} };
+  for (const id of Object.keys(buildings)) {
+    const b = mem.buildings[id];
+    if (c && c.buildings[id]) crowd.buildings[id] = c.buildings[id];
+    const at = b.door || (Number.isFinite(b.x) && Number.isFinite(b.y) ? b : null);
+    const k = at ? areaKey(at.x, at.y) : null;
+    if (c && k && c.areas[k]) crowd.areas[k] = c.areas[k];
+  }
+  const hasCrowd = Object.keys(crowd.buildings).length || Object.keys(crowd.areas).length;
+  return { current: mem.current || null, buildings, ...(hasCrowd ? { crowd } : {}), ...(mem.job ? { job: mem.job } : {}) };
 }
 
 export function memoryStats(mem) {

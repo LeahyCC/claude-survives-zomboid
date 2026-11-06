@@ -95,7 +95,9 @@ test('blocked lines name the house by where it is now, with the reason and how l
 
 test('blocked lines skip expired fails, a building the percept does not list, and the EQUIP park', () => {
   const p = readBase();
-  assert.deepEqual(blockedLines(failedHouse('zombie', 31_000), p, NOW), [], 'zombie retry is 30 s');
+  // A failed ENTER with zombies stays off for 5 minutes now (memory.mjs, ENTER_ZOMBIE_MS), other orders 30 s.
+  assert.equal(blockedLines(failedHouse('zombie', 31_000), p, NOW).length, 1);
+  assert.deepEqual(blockedLines(failedHouse('zombie', 5 * 60_000 + 1000), p, NOW), []);
   const elsewhere = emptyMemory();
   elsewhere.fails['ENTER:9999'] = { why: 'locked', at: NOW - 1000 };
   assert.deepEqual(blockedLines(elsewhere, p, NOW), []);
